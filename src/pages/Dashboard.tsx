@@ -1,60 +1,95 @@
 import React, { useEffect, useState } from 'react';
-import { FileText, Users, TrendingUp, Calendar } from 'lucide-react';
+import { 
+  FileText, 
+  TrendingUp, 
+  Calendar, 
+  ShoppingCart, 
+  ArrowRight, 
+  MoreHorizontal,
+  BookOpen
+} from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 import { format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 interface DashboardStats {
   totalInquiries: number;
-  drapesCount: number;
+  totalSelections: number;
+  curtainsCount: number;
   blindsCount: number;
   rugsCount: number;
   thisMonthInquiries: number;
+  pendingSelections: number;
 }
 
 const Dashboard: React.FC = () => {
-  const { profile, role } = useAuth();
+  const { profile } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
     totalInquiries: 0,
-    drapesCount: 0,
+    totalSelections: 0,
+    curtainsCount: 0,
     blindsCount: 0,
     rugsCount: 0,
     thisMonthInquiries: 0,
+    pendingSelections: 0,
   });
   const [recentInquiries, setRecentInquiries] = useState<any[]>([]);
+  const [recentSelections, setRecentSelections] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        // Fetch all inquiries for stats
-        const { data: inquiries, error } = await supabase
-          .from('inquiries')
-          .select('*, profiles!inquiries_sales_person_id_fkey(name)')
-          .order('created_at', { ascending: false });
+        const [inquiriesRes, selectionsRes, companiesRes] = await Promise.all([
+          api.get('/inquiries'),
+          api.get('/selections'),
+          api.get('/companies')
+        ]);
 
-        if (error) throw error;
+        const inquiries = inquiriesRes.data;
+        const selections = selectionsRes.data;
+        const companies = companiesRes.data;
+        const thisMonth = format(new Date(), 'yyyy-MM');
 
-        const now = new Date();
-        const thisMonth = format(now, 'yyyy-MM');
+        let curtains = 0;
+        let blinds = 0;
+        let rugs = 0;
 
-        const drapesCount = inquiries?.filter(i => i.product_category === 'drapes').length || 0;
-        const blindsCount = inquiries?.filter(i => i.product_category === 'blinds').length || 0;
-        const rugsCount = inquiries?.filter(i => i.product_category === 'rugs').length || 0;
-        const thisMonthInquiries = inquiries?.filter(i => 
+        if (companies && Array.isArray(companies)) {
+          companies.forEach((comp: any) => {
+            if (comp.catalogs && Array.isArray(comp.catalogs)) {
+              const hasCurtains = comp.catalogs.some((cat: any) => (cat.type || '').toLowerCase().includes('curtain'));
+              const hasBlinds = comp.catalogs.some((cat: any) => (cat.type || '').toLowerCase().includes('blind'));
+              const hasRugs = comp.catalogs.some((cat: any) => (cat.type || '').toLowerCase().includes('rug'));
+              if (hasCurtains) curtains++;
+              if (hasBlinds) blinds++;
+              if (hasRugs) rugs++;
+            }
+          });
+        }
+
+        const thisMonthInquiriesCount = inquiries?.filter((i: any) => 
           format(new Date(i.created_at), 'yyyy-MM') === thisMonth
+        ).length || 0;
+        
+        const pendingSelectionsCount = selections?.filter((s: any) => 
+          s.status === 'pending'
         ).length || 0;
 
         setStats({
           totalInquiries: inquiries?.length || 0,
-          drapesCount,
-          blindsCount,
-          rugsCount,
-          thisMonthInquiries,
+          totalSelections: selections?.length || 0,
+          curtainsCount: curtains,
+          blindsCount: blinds,
+          rugsCount: rugs,
+          thisMonthInquiries: thisMonthInquiriesCount,
+          pendingSelections: pendingSelectionsCount,
         });
 
         setRecentInquiries(inquiries?.slice(0, 5) || []);
+        setRecentSelections(selections?.slice(0, 5) || []);
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       } finally {
@@ -66,161 +101,228 @@ const Dashboard: React.FC = () => {
   }, []);
 
   const statCards = [
-    {
-      title: 'Total Inquiries',
-      value: stats.totalInquiries,
-      icon: FileText,
-      color: 'bg-primary',
-    },
-    {
-      title: 'This Month',
-      value: stats.thisMonthInquiries,
-      icon: Calendar,
-      color: 'bg-accent',
-    },
-    {
-      title: 'Drapes',
-      value: stats.drapesCount,
-      icon: TrendingUp,
-      color: 'bg-foreground/80',
-    },
-    {
-      title: 'Blinds',
-      value: stats.blindsCount,
-      icon: TrendingUp,
-      color: 'bg-foreground/60',
-    },
+    { title: 'Total Inquiries', value: stats.totalInquiries, icon: FileText, color: 'bg-primary', shadow: 'shadow-primary/20', link: '/inquiries' },
+    { title: 'Total Selections', value: stats.totalSelections, icon: ShoppingCart, color: 'bg-success', shadow: 'shadow-success/20', link: '/selections' },
+    { title: 'Pending Selections', value: stats.pendingSelections, icon: Calendar, color: 'bg-accent', shadow: 'shadow-accent/20', link: '/selections' },
+    { title: 'This Month', value: stats.thisMonthInquiries, icon: TrendingUp, color: 'bg-foreground/80', shadow: 'shadow-foreground/20', link: '/inquiries' },
   ];
 
-  const getCategoryBadge = (category: string) => {
+  const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
-      drapes: 'bg-accent/10 text-accent',
-      blinds: 'bg-primary/10 text-primary',
-      rugs: 'bg-success/10 text-success',
+      pending: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
+      confirmed: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
+      in_progress: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
+      completed: 'bg-green-500/10 text-green-600 border-green-500/20',
+      cancelled: 'bg-red-500/10 text-red-600 border-red-500/20',
     };
-    return styles[category] || 'bg-muted text-muted-foreground';
+    return styles[status] || 'bg-muted text-muted-foreground';
   };
+
+  const totalCompanies = stats.curtainsCount + stats.blindsCount + stats.rugsCount;
 
   return (
     <DashboardLayout>
-      <div className="animate-fade-in">
+      <div className="animate-fade-in max-w-7xl mx-auto space-y-6 md:space-y-8">
+        
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground">
-            Welcome back, {profile?.name?.split(' ')[0] || 'User'}
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Here's what's happening with your inquiries today.
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight">
+              Dashboard
+            </h1>
+            <p className="text-sm md:text-base text-muted-foreground mt-1">
+              Welcome back, <span className="font-semibold text-foreground">{profile?.name?.split(' ')[0] || 'User'}</span>. Here's your daily overview.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <span className="text-xs md:text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full border border-border/50">
+              {format(new Date(), 'EEEE, MMMM do, yyyy')}
+            </span>
+          </div>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           {statCards.map((stat, index) => (
-            <div
+            <Link 
+              to={stat.link} 
               key={stat.title}
-              className="card-premium p-6 animate-fade-in"
+              className="card-premium p-4 md:p-6 animate-fade-in group hover:-translate-y-1 transition-all duration-300 hover:shadow-lg border border-border/50 cursor-pointer"
               style={{ animationDelay: `${index * 100}ms` }}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">{stat.title}</p>
-                  <p className="text-3xl font-bold text-foreground mt-1">
-                    {loading ? '—' : stat.value}
+                  <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
+                  <p className="text-3xl md:text-4xl font-bold text-foreground mt-2 tracking-tight">
+                    {loading ? (
+                      <span className="animate-pulse bg-muted h-8 w-12 block rounded"/>
+                    ) : stat.value}
                   </p>
                 </div>
-                <div className={`${stat.color} p-3 rounded-xl`}>
-                  <stat.icon className="h-6 w-6 text-primary-foreground" />
+                <div className={`${stat.color} ${stat.shadow} p-2 md:p-3 rounded-2xl shadow-lg transition-transform group-hover:scale-110`}>
+                  <stat.icon className="h-5 w-5 md:h-6 md:w-6 text-primary-foreground" />
                 </div>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
 
-        {/* Category Distribution */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div className="lg:col-span-2 card-premium p-6">
-            <h2 className="text-lg font-semibold text-foreground mb-4">Recent Inquiries</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Inquiries */}
+          <div className="card-premium p-4 md:p-6 border border-border/50 h-full flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                Recent Inquiries
+              </h2>
+              <Link to="/inquiries" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                View All <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+            
             {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />
-                ))}
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-muted/50 rounded-xl animate-pulse" />)}
               </div>
             ) : recentInquiries.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <FileText className="h-12 w-12 mx-auto mb-3 opacity-40" />
-                <p>No inquiries yet. Create your first inquiry!</p>
+              <div className="text-center py-12 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
+                <FileText className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                <p>No inquiries found.</p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 flex-1">
                 {recentInquiries.map((inquiry) => (
-                  <div
+                  <Link
+                    to={`/inquiries`}
                     key={inquiry.id}
-                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                    className="group flex items-center justify-between p-3 md:p-4 rounded-xl bg-card hover:bg-muted/40 border border-transparent hover:border-border/50 transition-all duration-200"
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-semibold text-sm">
-                        {inquiry.inquiry_number?.slice(-3)}
+                    <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
+                      <div className="flex-shrink-0 flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm shadow-sm">
+                        {inquiry.client_name?.charAt(0)}
                       </div>
-                      <div>
-                        <p className="font-medium text-foreground">{inquiry.client_name}</p>
-                        <p className="text-sm text-muted-foreground">{inquiry.inquiry_number}</p>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-foreground text-sm truncate">{inquiry.client_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{inquiry.inquiry_number}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`badge-category ${getCategoryBadge(inquiry.product_category)}`}>
-                        {inquiry.product_category}
-                      </span>
-                      <span className="text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+                      <span className="text-xs text-muted-foreground">
                         {format(new Date(inquiry.created_at), 'MMM d')}
                       </span>
+                      <MoreHorizontal className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hidden md:block" />
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="card-premium p-6">
-            <h2 className="text-lg font-semibold text-foreground mb-4">Categories</h2>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Drapes</span>
-                <span className="font-semibold text-foreground">{stats.drapesCount}</span>
+          {/* Recent Selections */}
+          <div className="card-premium p-4 md:p-6 border border-border/50 h-full flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                <ShoppingCart className="h-5 w-5 text-success" />
+                Recent Selections
+              </h2>
+              <Link to="/selections" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
+                View All <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            {loading ? (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-muted/50 rounded-xl animate-pulse" />)}
               </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
+            ) : recentSelections.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
+                <ShoppingCart className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                <p>No selections found.</p>
+              </div>
+            ) : (
+              <div className="space-y-3 flex-1">
+                {recentSelections.map((selection) => (
+                  <Link
+                    to={`/selections/${selection.id}`}
+                    key={selection.id}
+                    className="group flex items-center justify-between p-3 md:p-4 rounded-xl bg-card hover:bg-muted/40 border border-transparent hover:border-border/50 transition-all duration-200"
+                  >
+                    <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
+                      <div className="flex-shrink-0 flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-full bg-success/10 text-success font-bold text-sm shadow-sm">
+                        {selection.items?.length || 0}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-foreground text-sm truncate">{selection.inquiry?.client_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{selection.selection_number}</p>
+                      </div>
+                    </div>
+                    <span className={`badge-category border px-2 py-0.5 rounded-full text-[10px] md:text-xs font-medium capitalize ${getStatusBadge(selection.status)}`}>
+                      {selection.status?.replace('_', ' ')}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Catalog Inventory Distribution */}
+        <div className="card-premium p-4 md:p-6 border border-border/50">
+          <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
+            <BookOpen className="h-5 w-5 text-primary" />
+            Catalog Inventory
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+            {/* Curtains */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-foreground">Curtains</span>
+                <span className="text-muted-foreground">
+                  {stats.curtainsCount} <span className="text-xs opacity-70">
+                  ({totalCompanies ? Math.round((stats.curtainsCount / totalCompanies) * 100) : 0}%)
+                  </span>
+                </span>
+              </div>
+              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
                 <div
-                  className="h-full bg-accent transition-all duration-500"
-                  style={{
-                    width: `${stats.totalInquiries ? (stats.drapesCount / stats.totalInquiries) * 100 : 0}%`,
-                  }}
+                  className="h-full bg-orange-500 transition-all duration-1000 ease-out rounded-r-full"
+                  style={{ width: `${totalCompanies ? (stats.curtainsCount / totalCompanies) * 100 : 0}%` }}
                 />
               </div>
+            </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-muted-foreground">Blinds</span>
-                <span className="font-semibold text-foreground">{stats.blindsCount}</span>
+            {/* Blinds */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-foreground">Blinds</span>
+                <span className="text-muted-foreground">
+                  {stats.blindsCount} <span className="text-xs opacity-70">
+                    ({totalCompanies ? Math.round((stats.blindsCount / totalCompanies) * 100) : 0}%)
+                  </span>
+                </span>
               </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
                 <div
-                  className="h-full bg-primary transition-all duration-500"
-                  style={{
-                    width: `${stats.totalInquiries ? (stats.blindsCount / stats.totalInquiries) * 100 : 0}%`,
-                  }}
+                  className="h-full bg-blue-500 transition-all duration-1000 ease-out rounded-r-full"
+                  style={{ width: `${totalCompanies ? (stats.blindsCount / totalCompanies) * 100 : 0}%` }}
                 />
               </div>
+            </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-muted-foreground">Rugs</span>
-                <span className="font-semibold text-foreground">{stats.rugsCount}</span>
+            {/* Rugs */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-foreground">Rugs</span>
+                <span className="text-muted-foreground">
+                  {stats.rugsCount} <span className="text-xs opacity-70">
+                    ({totalCompanies ? Math.round((stats.rugsCount / totalCompanies) * 100) : 0}%)
+                  </span>
+                </span>
               </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
                 <div
-                  className="h-full bg-success transition-all duration-500"
-                  style={{
-                    width: `${stats.totalInquiries ? (stats.rugsCount / stats.totalInquiries) * 100 : 0}%`,
-                  }}
+                  className="h-full bg-green-500 transition-all duration-1000 ease-out rounded-r-full"
+                  style={{ width: `${totalCompanies ? (stats.rugsCount / totalCompanies) * 100 : 0}%` }}
                 />
               </div>
             </div>

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 
 type AppRole = 'super_admin' | 'sales' | 'accounting' | 'admin_hr';
 
@@ -12,13 +11,11 @@ interface Profile {
 }
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
+  user: any | null; // Using any to match flexible user object
   profile: Profile | null;
   role: AppRole | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, name: string, mobileNumber?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   isAuthenticated: boolean;
 }
@@ -34,115 +31,71 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserData = async (userId: string) => {
-    // Fetch profile
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (profileData) {
-      setProfile(profileData);
-    }
-
-    // Fetch role
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .single();
-
-    if (roleData) {
-      setRole(roleData.role as AppRole);
-    }
-  };
-
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-
-        // Defer Supabase calls with setTimeout
-        if (session?.user) {
-          setTimeout(() => {
-            fetchUserData(session.user.id);
-          }, 0);
-        } else {
-          setProfile(null);
-          setRole(null);
-        }
+    const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setLoading(false);
+        return;
       }
-    );
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        fetchUserData(session.user.id).finally(() => {
-          setLoading(false);
-        });
-      } else {
+      try {
+        const { data } = await api.get('/auth/me');
+        setUser(data);
+        setProfile(data); // In your schema, user and profile are the same table
+        setRole(data.role as AppRole);
+      } catch (error) {
+        console.error("Session expired or invalid");
+        localStorage.removeItem('token');
+        setUser(null);
+        setProfile(null);
+        setRole(null);
+      } finally {
         setLoading(false);
       }
-    });
+    };
 
-    return () => subscription.unsubscribe();
+    checkAuth();
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { error: error as Error | null };
-  };
-
-  const signUp = async (email: string, password: string, name: string, mobileNumber?: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-    
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: {
-          name,
-          mobile_number: mobileNumber,
-        },
-      },
-    });
-    return { error: error as Error | null };
+    try {
+      const { data } = await api.post('/auth/login', { email, password });
+      localStorage.setItem('token', data.token);
+      
+      setUser(data.user);
+      setProfile(data.user);
+      setRole(data.user.role as AppRole);
+      
+      return { error: null };
+    } catch (error: any) {
+      return { 
+        error: new Error(error.response?.data?.error || 'Invalid credentials') 
+      };
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem('token');
     setUser(null);
-    setSession(null);
     setProfile(null);
     setRole(null);
+    window.location.href = '/auth'; // Hard redirect to ensure clean state
   };
 
   const value = {
     user,
-    session,
     profile,
     role,
     loading,
     signIn,
-    signUp,
     signOut,
-    isAuthenticated: !!session,
+    isAuthenticated: !!user,
   };
 
   return (

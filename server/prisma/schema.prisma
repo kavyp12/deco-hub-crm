@@ -1,0 +1,463 @@
+// [FILE: schema.prisma]
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // or "mysql" depending on your setup
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Role {
+  super_admin
+  sales
+  accounting
+  admin_hr
+}
+
+enum SelectionStatus {
+  pending
+  confirmed
+  in_progress
+  completed
+  cancelled
+}
+
+// ==========================================
+// USER & INQUIRY MANAGEMENT
+// ==========================================
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password      String
+  name          String
+  mobile_number String?
+  role          Role     @default(sales)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  inquiries_sold     Inquiry[]   @relation("SalesPerson")
+  inquiries_created  Inquiry[]   @relation("CreatedBy")
+  selections_created Selection[] @relation("SelectionCreatedBy")
+
+  quotations_created Quotation[]
+}
+
+model Inquiry {
+  id                  String    @id @default(uuid())
+  inquiry_number      String    @unique
+  client_name         String
+  architect_id_name   String?
+  mobile_number       String
+  inquiry_date        DateTime  @default(now())
+  address             String
+  expected_final_date DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  sales_person_id String
+  sales_person    User   @relation("SalesPerson", fields: [sales_person_id], references: [id])
+
+  created_by_id String
+  created_by    User   @relation("CreatedBy", fields: [created_by_id], references: [id])
+
+  selections Selection[]
+}
+
+model InquiryCounter {
+  id         String   @id @default(uuid())
+  year_month String   @unique
+  counter    Int      @default(0)
+  created_at DateTime @default(now())
+}
+
+model DeepCalculation {
+  id          String    @id @default(uuid())
+  selectionId String    @unique
+  selection   Selection @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+
+  items DeepCalculationItem[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model DeepCalculationItem {
+  id                String          @id @default(uuid())
+  deepCalculationId String
+  deepCalculation   DeepCalculation @relation(fields: [deepCalculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  // Dimensions (stored in DeepCalculation)
+  width  Float  @default(0)
+  height Float  @default(0)
+  unit   String @default("mm")
+
+  // Quantities
+  panna       Float @default(0)
+  part        Float @default(1)  // ✅ ADD THIS LINE IF IT'S MISSING
+  channel     Float @default(0)
+  fabric      Float @default(0)
+  blackout    Float @default(0)
+  sheer       Float @default(0)
+  labour      Float @default(0)
+  fitting     Float @default(0)
+  weightChain Float @default(0)
+
+  // Rates
+  fabricRate   Float @default(0)
+  blackoutRate Float @default(0)
+  sheerRate    Float @default(0)
+  channelRate  Float @default(285)
+  labourRate   Float @default(450)
+  fittingRate  Float @default(355)
+
+  // Toggles
+  hasBlackout Boolean @default(false)
+  hasSheer    Boolean @default(false)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// ==========================================
+// SELECTION MANAGEMENT
+// ==========================================
+
+model Selection {
+  id               String  @id @default(uuid())
+  selection_number String  @unique
+  inquiryId        String
+  inquiry          Inquiry @relation(fields: [inquiryId], references: [id])
+
+  status         SelectionStatus @default(pending)
+  selection_date DateTime        @default(now())
+  delivery_date  DateTime?
+  notes          String?
+  items          SelectionItem[]
+
+  created_by_id String
+  created_by    User   @relation("SelectionCreatedBy", fields: [created_by_id], references: [id])
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // RELATIONS TO CALCULATIONS
+  calculation       Calculation? // Legacy/Generic
+  localCalculation  LocalCalculation? // Dedicated Local
+  deepCalculation   DeepCalculation?
+  forestCalculation ForestCalculation? // Dedicated Forest
+  somfyCalculation  SomfyCalculation? // Dedicated Somfy (NEW)
+
+  quotations Quotation[]
+}
+
+// [FILE: schema.prisma]
+
+model SelectionItem {
+  id          String    @id @default(uuid())
+  selectionId String
+  selection   Selection @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+
+  orderIndex Int @default(0)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+
+  productName String
+  quantity    Float  @default(1)
+  price       Float  @default(0)
+  total       Float  @default(0)
+
+  details Json?
+  unit    String? @default("mm")
+  width   Float?
+  height  Float?
+
+  // === ADD THIS NEW FIELD ===
+  calculationType String @default("Local")
+  // ==========================
+
+  type             String?
+  motorizationMode String?
+  opsType          String?
+  pelmet           Float?
+  openingType      String?
+  created_at       DateTime @default(now())
+
+  // Relations to calculation items
+  calculationItems CalculationItem[]
+  localItems       LocalCalculationItem[]
+  deepItems        DeepCalculationItem[]
+  forestItems      ForestCalculationItem[]
+  somfyItems       SomfyCalculationItem[]
+}
+
+model SelectionCounter {
+  id         String   @id @default(uuid())
+  year_month String   @unique
+  counter    Int      @default(0)
+  created_at DateTime @default(now())
+}
+
+// ==========================================
+// CATALOG MANAGEMENT
+// ==========================================
+
+model Company {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  logo      String?
+  catalogs  Catalog[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Catalog {
+  id        String    @id @default(uuid())
+  name      String
+  type      String?
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([name, companyId])
+}
+
+model Product {
+  id         String   @id @default(uuid())
+  name       String
+  catalogId  String
+  catalog    Catalog  @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  price      String
+  imageUrl   String?
+  attributes Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  selectionItems SelectionItem[]
+}
+
+// ==========================================
+// GENERIC CALCULATION (Roman/Blinds)
+// ==========================================
+
+model Calculation {
+  id          String            @id @default(uuid())
+  selectionId String            @unique
+  selection   Selection         @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+  items       CalculationItem[]
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+}
+
+model CalculationItem {
+  id            String      @id @default(uuid())
+  calculationId String
+  calculation   Calculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  category String @default("Standard")
+  type     String @default("Local")
+
+  panna   Float @default(0)
+  channel Float @default(0)
+  fabric  Float @default(0)
+  part    Float @default(0)
+  sqft    Float @default(0)
+
+  // ✅ ADD THESE MISSING FIELDS
+  sqftRate    Float @default(0)
+  labourRate  Float @default(0)
+  fittingRate Float @default(0)
+  fabricRate  Float @default(0)
+  channelRate Float @default(0)
+
+  hasBlackout Boolean @default(false)
+  blackout    Float   @default(0)
+
+  hasSheer Boolean @default(false)
+  sheer    Float   @default(0)
+
+  weightChain Float @default(0)
+}
+
+// ==========================================
+// LOCAL COMPANY CALCULATION
+// ==========================================
+
+model LocalCalculation {
+  id          String                 @id @default(uuid())
+  selectionId String                 @unique
+  selection   Selection              @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+  items       LocalCalculationItem[]
+  created_at  DateTime               @default(now())
+  updated_at  DateTime               @updatedAt
+}
+
+model LocalCalculationItem {
+  id            String           @id @default(uuid())
+  calculationId String
+  calculation   LocalCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  // Quantities
+  panna   Float @default(0)
+  channel Float @default(0)
+  fabric  Float @default(0)
+  labour  Float @default(0)
+  fitting Float @default(0)
+
+  // Rates
+  fabricRate   Float @default(0)
+  blackoutRate Float @default(0)
+  sheerRate    Float @default(0)
+  channelRate  Float @default(0)
+  labourRate   Float @default(0)
+  fittingRate  Float @default(0)
+
+  // Toggles & Extras
+  hasBlackout Boolean @default(false)
+  blackout    Float   @default(0)
+
+  hasSheer Boolean @default(false)
+  sheer    Float   @default(0)
+
+  weightChain Float @default(0)
+}
+
+// ==========================================
+// FOREST COMPANY CALCULATION
+// ==========================================
+
+model ForestCalculation {
+  id          String                  @id @default(uuid())
+  selectionId String                  @unique
+  selection   Selection               @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+  items       ForestCalculationItem[]
+  created_at  DateTime                @default(now())
+  updated_at  DateTime                @updatedAt
+}
+model ForestCalculationItem {
+  id              String            @id @default(uuid())
+  calculationId   String
+  calculation     ForestCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem     @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  trackType   String @default("white")
+  trackPrice  Float  @default(0)
+  runnerType  String @default("FES BASE AND FLEX HOOK")
+  runnerPrice Float  @default(0)
+  tapeType    String @default("FLEX TAPE TRANSPARENT")
+  tapePrice   Float  @default(0)
+
+  motorType  String @default("none")
+  remoteType String @default("none")
+
+  motorPrice  Float @default(0)
+  motorGst    Float @default(0)
+  remotePrice Float @default(0)
+
+  totalBeforeGst Float @default(0)
+  gst            Float @default(0)
+
+  // ✅ ADD THESE 3 NEW FIELDS
+  trackFinal     Float @default(0)
+  motorFinal     Float @default(0)
+  remoteFinal    Float @default(0)
+}
+
+// ==========================================
+// SOMFY COMPANY CALCULATION (NEW)
+// ==========================================
+
+model SomfyCalculation {
+  id          String                 @id @default(uuid())
+  selectionId String                 @unique
+  selection   Selection              @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+  items       SomfyCalculationItem[]
+  created_at  DateTime               @default(now())
+  updated_at  DateTime               @updatedAt
+}
+// [UPDATE THIS MODEL IN schema.prisma]
+model SomfyCalculationItem {
+  id              String           @id @default(uuid())
+  calculationId   String
+  calculation     SomfyCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem    @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  trackType  String @default("Ripple")
+  trackDuty  String @default("Medium")
+  trackPrice Float  @default(0)
+
+  motorName  String?
+  motorPrice Float   @default(0)
+
+  remoteName  String?
+  remotePrice Float   @default(0)
+
+  rippleTapePrice Float @default(0)
+  totalPrice      Float @default(0)
+
+  // ✅ ADD THESE 3 NEW FIELDS
+  trackFinal      Float @default(0)
+  motorFinal      Float @default(0)
+  remoteFinal     Float @default(0)
+}
+
+// [APPEND TO schema.prisma]
+
+// ==========================================
+// QUOTATION MANAGEMENT
+// ==========================================
+
+model Quotation {
+  id               String @id @default(uuid())
+  quotation_number String @unique
+
+  selectionId String
+  selection   Selection @relation(fields: [selectionId], references: [id])
+
+  date   DateTime @default(now())
+  status String   @default("draft") // draft, sent, approved
+
+  // Financials
+  subTotal   Float @default(0)
+  taxAmount  Float @default(0)
+  grandTotal Float @default(0)
+
+  // Snapshot: Stores the calculated items as JSON at the time of creation
+  // This prevents the quote from changing if calculations are edited later
+  snapshotData Json?
+
+  created_by_id String
+  created_by    User   @relation(fields: [created_by_id], references: [id])
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model QuotationCounter {
+  id         String   @id @default(uuid())
+  year_month String   @unique
+  counter    Int      @default(0)
+  created_at DateTime @default(now())
+}
