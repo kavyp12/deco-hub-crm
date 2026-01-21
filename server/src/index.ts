@@ -16,7 +16,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://72.62.197.64:7890', // frontend URL
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  credentials: true
+}));
+
+
 app.use(express.json());
 
 // ==========================================
