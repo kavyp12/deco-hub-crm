@@ -96,6 +96,8 @@ model DeepCalculationItem {
   selectionItemId String
   selectionItem   SelectionItem @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
 
+  category String @default("Local")
+
   // Dimensions (stored in DeepCalculation)
   width  Float  @default(0)
   height Float  @default(0)
@@ -247,6 +249,9 @@ model Product {
 
   selectionItems SelectionItem[]
 }
+
+
+
 
 // ==========================================
 // GENERIC CALCULATION (Roman/Blinds)
@@ -426,30 +431,73 @@ model SomfyCalculationItem {
 // [APPEND TO schema.prisma]
 
 // ==========================================
-// QUOTATION MANAGEMENT
+// QUOTATION MANAGEMENT (UPDATED)
 // ==========================================
+// Update the Quotation model in schema.prisma
+
+enum QuotationType {
+  simple
+  detailed
+}
 
 model Quotation {
   id               String @id @default(uuid())
   quotation_number String @unique
 
-  selectionId String
-  selection   Selection @relation(fields: [selectionId], references: [id])
+  quotationType    QuotationType @default(detailed)
+
+  selectionId String?
+  selection   Selection? @relation(fields: [selectionId], references: [id])
 
   date   DateTime @default(now())
-  status String   @default("draft") // draft, sent, approved
+  status String   @default("draft") // draft, confirmed, sent
 
-  // Financials
-  subTotal   Float @default(0)
-  taxAmount  Float @default(0)
-  grandTotal Float @default(0)
+  // Client Details
+  clientName    String
+  clientAddress String?
+  
+  // Financials - ✅ FIXED FIELD NAMES
+  subTotal             Float @default(0) // Sum of all item subtotals (Qty × Rate)
+  discountTotal        Float @default(0) // Sum of all discounts
+  taxableValue         Float @default(0) // subTotal - discountTotal
+  gstTotal             Float @default(0) // Sum of all GST amounts
+  transportationCharge Float @default(0)
+  installationCharge   Float @default(0)
+  grandTotal           Float @default(0) // taxableValue + gstTotal + charges
 
-  // Snapshot: Stores the calculated items as JSON at the time of creation
-  // This prevents the quote from changing if calculations are edited later
-  snapshotData Json?
+  // Items
+  items QuotationItem[]
 
   created_by_id String
   created_by    User   @relation(fields: [created_by_id], references: [id])
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+model QuotationItem {
+  id          String    @id @default(uuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  srNo        Int     @default(0)
+  description String
+  quantity    Float   @default(1)
+  unit        String  @default("Nos")
+  
+  unitPrice   Float   @default(0)
+  
+  // Discount
+  discountPercent Float @default(0)
+  discountAmount  Float @default(0)
+
+  // Tax
+  gstPercent  Float @default(0)
+  gstAmount   Float @default(0)
+
+  // Subtotal & Final
+  subtotal     Float   @default(0) // Qty × UnitPrice
+  taxableValue Float   @default(0) // subtotal - discountAmount
+  total        Float   @default(0) // taxableValue + gstAmount
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -460,4 +508,5 @@ model QuotationCounter {
   year_month String   @unique
   counter    Int      @default(0)
   created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 }

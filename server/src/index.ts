@@ -17,14 +17,35 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors({
-  origin: 'http://72.62.197.64:7890', // frontend URL
+  origin: true, // Allow connections
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   credentials: true
 }));
 
 
+
 app.use(express.json());
 
+
+const calculateRow = (item: any) => {
+  const qty = parseFloat(item.quantity) || 0;
+  const rate = parseFloat(item.unitPrice) || 0;
+  const baseTotal = qty * rate;
+  
+  const discPct = parseFloat(item.discountPercent) || 0;
+  const discAmt = baseTotal * (discPct / 100);
+  
+  const taxable = baseTotal - discAmt;
+  
+  const gstPct = parseFloat(item.gstPercent) || 0;
+  const gstAmt = taxable * (gstPct / 100);
+  
+  return {
+    discountAmount: discAmt,
+    gstAmount: gstAmt,
+    total: taxable + gstAmt
+  };
+};
 // ==========================================
 // 1. AUTH ROUTES
 // ==========================================
@@ -504,7 +525,8 @@ app.get('/api/selections/:id', authenticateToken, async (req: Request, res: Resp
           }
         },
         items: {
-          orderBy: { orderIndex: 'asc' } // ✅ ADD THIS
+          include: { product: true }, // <--- 🔥 THIS WAS MISSING. ADD IT!
+          orderBy: { orderIndex: 'asc' }
         },
         created_by: { select: { name: true } }
       }
@@ -627,6 +649,7 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
     res.status(500).json({ error: 'Failed to create selection' });
   }
 });
+// [In src/index.ts]
 
 app.put('/api/selections/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -635,25 +658,47 @@ app.put('/api/selections/:id', authenticateToken, async (req: Request, res: Resp
   try {
     console.log('🔥 Received Update Request:', { 
       selectionId: id, 
-      itemsCount: items?.length,
-      items: items?.map((i: any, idx: number) => ({ 
-        index: idx,
-        productName: i.productName, 
-        calculationType: i.calculationType,
-        areaName: i.areaName,
-        orderIndex: i.orderIndex // ✅ Check if frontend sends this
-      }))
+      itemsCount: items?.length 
     });
+
+    // ==================================================================
+    // 🛡️ STEP 0: VALIDATE PRODUCT IDs (CRITICAL FIX)
+    // We check which IDs actually exist in the Product table.
+    // Any ID sent by frontend that isn't in this list will be set to NULL.
+    // ==================================================================
+    let validProductIds = new Set<string>();
+
+    if (items && Array.isArray(items)) {
+      // 1. Extract all potential UUIDs from the request
+      const potentialIds = items
+        .map((i: any) => i.productId)
+        .filter((pid: any) => 
+          pid && 
+          typeof pid === 'string' && 
+          !pid.startsWith('temp-') && 
+          pid !== 'manual'
+        );
+
+      if (potentialIds.length > 0) {
+        // 2. Query DB to see which ones are real Products
+        const foundProducts = await prisma.product.findMany({
+          where: { id: { in: potentialIds } },
+          select: { id: true }
+        });
+        
+        // 3. Create a Set for fast lookup
+        foundProducts.forEach(p => validProductIds.add(p.id));
+      }
+    }
+    // ==================================================================
     
-    // STEP 1: Fetch existing items ONLY as fallback reference
+    // STEP 1: Fetch existing items to preserve calculation types if needed
     const existingSelection = await prisma.selection.findUnique({
       where: { id },
       include: { items: true }
     });
 
-    // Create a map to use OLD calculationType ONLY if frontend doesn't send one
     const calcTypeMap = new Map<string, string>();
-    
     if (existingSelection) {
       existingSelection.items.forEach(item => {
         const productKey = item.productId || 'manual';
@@ -665,75 +710,66 @@ app.put('/api/selections/:id', authenticateToken, async (req: Request, res: Resp
       });
     }
 
-    // STEP 2: Delete ALL existing items (clean slate)
+    // STEP 2: Delete ALL existing items
     await prisma.selectionItem.deleteMany({
       where: { selectionId: id }
     });
 
-    // STEP 3: Recreate items with PRESERVED ORDER
+    // STEP 3: Recreate items with VALIDATED productId
     if (items && Array.isArray(items)) {
-  const itemsToCreate = items.map((item: any, index: number) => {
-    // Create matching key for fallback lookup
-    const productKey = (item.productId && !String(item.productId).startsWith('temp-')) 
-      ? item.productId 
-      : 'manual';
-    const areaKey = item.details?.areaName || item.areaName || '';
-    const matchKey = `${productKey}:${areaKey}`;
-    
-    // 🔥 Frontend value FIRST, then fallback to old value, then default
-    // ✅ Support all calculation types including Forest (Manual) and Forest (Auto)
-    const calculationType = item.calculationType || calcTypeMap.get(matchKey) || 'Local';
-    
-    // ✅ Use explicit orderIndex if provided, otherwise use array index
-    const finalOrderIndex = item.orderIndex !== undefined ? item.orderIndex : index;
+      const itemsToCreate = items.map((item: any, index: number) => {
+        
+        // Logic to restore calculation type
+        const rawProductId = (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : 'manual';
+        const areaKey = item.details?.areaName || item.areaName || '';
+        const matchKey = `${rawProductId}:${areaKey}`;
+        const calculationType = item.calculationType || calcTypeMap.get(matchKey) || 'Local';
+        
+        const finalOrderIndex = item.orderIndex !== undefined ? item.orderIndex : index;
 
-    console.log(`✅ Processing Item ${index + 1}:`, {
-      productName: item.productName,
-      areaName: areaKey,
-      calculationType: calculationType,
-      orderIndex: finalOrderIndex
-    });
+        // 🔥 FINAL CHECK: Only use productId if it was found in the DB in Step 0
+        const dbSafeProductId = (item.productId && validProductIds.has(item.productId)) 
+          ? item.productId 
+          : null;
 
-    return {
-      selectionId: id,
-      productId: (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : null,
-      productName: item.productName || 'Custom Item',
-      quantity: parseFloat(String(item.quantity)) || 1,
-      price: parseFloat(String(item.price)) || 0,
-      total: (parseFloat(String(item.quantity)) || 1) * (parseFloat(String(item.price)) || 0),
+        return {
+          selectionId: id,
+          
+          // ✅ SAFE: Only real Product IDs get passed. Everything else becomes null.
+          productId: dbSafeProductId,
+            
+          productName: item.productName || 'Custom Item',
+          quantity: parseFloat(String(item.quantity)) || 1,
+          price: parseFloat(String(item.price)) || 0,
+          total: (parseFloat(String(item.quantity)) || 1) * (parseFloat(String(item.price)) || 0),
+          
+          calculationType: calculationType,
+          
+          unit: item.unit || 'mm',
+          width: item.width ? parseFloat(String(item.width)) : null,
+          height: item.height ? parseFloat(String(item.height)) : null,
+          type: item.type || null,
+          motorizationMode: item.motorizationMode || null,
+          opsType: item.opsType || null,
+          pelmet: item.pelmet ? parseFloat(String(item.pelmet)) : null,
+          openingType: item.openingType || null,
+          
+          orderIndex: finalOrderIndex,
+          
+          details: {
+            areaName: item.details?.areaName || item.areaName || 'Unknown Area',
+            catalogName: item.details?.catalogName || item.catalogName || '',
+            catalogType: item.details?.catalogType || item.catalogType || '',
+            companyId: item.details?.companyId || item.companyId || '', // Persist Company ID
+            ...(item.details || {})
+          }
+        };
+      });
       
-      calculationType: calculationType,
-      
-      unit: item.unit || 'mm',
-      width: item.width ? parseFloat(String(item.width)) : null,
-      height: item.height ? parseFloat(String(item.height)) : null,
-      type: item.type || null,
-      motorizationMode: item.motorizationMode || null,
-      opsType: item.opsType || null,
-      pelmet: item.pelmet ? parseFloat(String(item.pelmet)) : null,
-      openingType: item.openingType || null,
-      
-      orderIndex: finalOrderIndex,
-      
-      details: {
-        areaName: item.details?.areaName || item.areaName || 'Unknown Area',
-        catalogName: item.details?.catalogName || item.catalogName || '',
-        catalogType: item.details?.catalogType || item.catalogType || '',
-        ...(item.details || {})
-      }
-    };
-  });
-
-  console.log('💾 Creating items with order:', itemsToCreate.map((i, idx) => ({
-    index: idx,
-    orderIndex: i.orderIndex,
-    productName: i.productName
-  })));
-  
-  await prisma.selectionItem.createMany({
-    data: itemsToCreate
-  });
-}
+      await prisma.selectionItem.createMany({
+        data: itemsToCreate
+      });
+    }
 
     // STEP 4: Update selection metadata
     await prisma.selection.update({
@@ -745,25 +781,15 @@ app.put('/api/selections/:id', authenticateToken, async (req: Request, res: Resp
       }
     });
 
-    // STEP 5: Fetch and return updated selection with items IN ORDER
+    // STEP 5: Return updated selection
     const updated = await prisma.selection.findUnique({
       where: { id },
       include: { 
         items: {
-          orderBy: { orderIndex: 'asc' } // ✅ CRITICAL: Sort by orderIndex
+          orderBy: { orderIndex: 'asc' } 
         }, 
         inquiry: true 
       }
-    });
-
-    console.log('✅ Selection Updated - Item Order:', {
-      selectionId: id,
-      itemsCount: updated?.items?.length,
-      itemsOrder: updated?.items?.map((i, idx) => ({
-        position: idx,
-        orderIndex: i.orderIndex,
-        productName: i.productName
-      }))
     });
     
     res.json(updated);
@@ -1659,6 +1685,7 @@ app.get('/api/quotations/preview/:selectionId', authenticateToken, async (req: R
   }
 });
 
+
 // 2. CREATE / FREEZE QUOTATION
 app.post('/api/quotations', authenticateToken, async (req: any, res: Response) => {
   const { selectionId } = req.body;
@@ -1681,16 +1708,21 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
 
     // 3. Save
     const quotation = await prisma.quotation.create({
-      data: {
-        quotation_number: quoteNumber,
-        selectionId,
-        subTotal: data.financials.subTotal,
-        taxAmount: data.financials.tax,
-        grandTotal: data.financials.grandTotal,
-        snapshotData: data as any, // Freeze the data
-        created_by_id: req.user.id
-      }
-    });
+  data: {
+    quotation_number: quoteNumber,
+    selectionId,
+    clientName: data.selection.inquiry?.client_name || 'Valued Client',
+    clientAddress: data.selection.inquiry?.address || '',
+    subTotal: data.financials.subTotal,
+    discountTotal: 0,  // Add this
+    taxableValue: data.financials.subTotal,  // Add this
+    gstTotal: data.financials.tax,  // ✅ Changed from taxAmount
+    transportationCharge: 0,  // Add this
+    installationCharge: 0,  // Add this
+    grandTotal: data.financials.grandTotal,
+    created_by_id: req.user.id
+  }
+});
 
     res.json(quotation);
   } catch (error) {
@@ -1698,15 +1730,16 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
     res.status(500).json({ error: 'Failed to create quotation' });
   }
 });
+// ==========================================
+// QUOTATION ROUTES - CLEANED UP
+// ==========================================
 
-// 3. LIST QUOTATIONS
+// 1. LIST ALL QUOTATIONS
 app.get('/api/quotations', authenticateToken, async (req: Request, res: Response) => {
   try {
     const quotes = await prisma.quotation.findMany({
       include: {
-        selection: {
-          include: { inquiry: true }
-        },
+        selection: { include: { inquiry: true } },
         created_by: { select: { name: true } }
       },
       orderBy: { created_at: 'desc' }
@@ -1716,27 +1749,245 @@ app.get('/api/quotations', authenticateToken, async (req: Request, res: Response
     res.status(500).json({ error: 'Failed to fetch quotations' });
   }
 });
+// 2. GENERATE NEW QUOTATION (UPDATED LOGIC)
+app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Response) => {
+  const { selectionId, quotationType } = req.body; 
+  
+  try {
+    const rawData = await getConsolidatedQuoteData(selectionId); 
+    const selection = rawData.selection;
 
-// 4. GET SINGLE QUOTATION (From Snapshot)
+    // Generate Quote Number
+    const date = new Date();
+    const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+    const counterRecord = await prisma.quotationCounter.upsert({
+      where: { year_month: yearMonth },
+      update: { counter: { increment: 1 } },
+      create: { year_month: yearMonth, counter: 1 },
+    });
+    const quoteNumber = `SB${yearMonth}${counterRecord.counter.toString().padStart(3, '0')}`;
+
+    let quoteItems;
+
+    if (quotationType === 'simple') {
+      // ✅ SIMPLE LOGIC: Group items by AREA
+      // We use a Map or Object to aggregate totals per area
+      const groupedItems: Record<string, any> = {};
+
+      rawData.items.forEach((item: any) => {
+        // Use Area name as key, or 'General' if missing
+        const areaKey = item.area || 'General';
+
+        if (!groupedItems[areaKey]) {
+          groupedItems[areaKey] = {
+            areaName: areaKey,
+            totalCost: 0,
+            itemCount: 0,
+            unit: 'Lot' // Simple quotes usually use "Lot" or "Set"
+          };
+        }
+
+        // Add to the group total
+        groupedItems[areaKey].totalCost += item.total;
+        groupedItems[areaKey].itemCount += 1;
+      });
+
+      // Convert the grouped object back to an array for the DB
+      quoteItems = Object.values(groupedItems).map((group: any, index: number) => ({
+        srNo: index + 1,
+        // Description says "Furnishing work for [Area]"
+        description: `Window Furnishing & Decor for ${group.areaName}`,
+        quantity: 1, // We treat the whole area as 1 unit
+        unit: 'Lot',
+        unitPrice: Math.ceil(group.totalCost), // The total price becomes the unit price
+        discountPercent: 0,
+        gstPercent: 12, // Default GST for aggregated items
+      }));
+
+    } else {
+      // ✅ DETAILED LOGIC: Keep 1-to-1 mapping (As you had before)
+      quoteItems = rawData.items.map((item: any, index: number) => {
+        const unitPrice = item.qty > 0 ? (item.total / item.qty) : 0;
+
+        return {
+          srNo: index + 1,
+          description: `${item.desc} (${item.area})`, // Description + Area
+          quantity: item.qty,
+          unit: item.unit,
+          unitPrice: Math.ceil(unitPrice),
+          discountPercent: 0,
+          gstPercent: 12,
+        };
+      });
+    }
+
+    // Create the Quotation in DB
+    const newQuote = await prisma.quotation.create({
+      data: {
+        quotation_number: quoteNumber,
+        quotationType: quotationType || 'detailed',
+        selectionId,
+        clientName: selection.inquiry?.client_name || 'Valued Client',
+        clientAddress: selection.inquiry?.address || '',
+        subTotal: 0,
+        discountTotal: 0,
+        taxableValue: 0,
+        gstTotal: 0,
+        transportationCharge: 0,
+        installationCharge: 0,
+        grandTotal: 0,
+        created_by_id: req.user.id,
+        items: {
+          create: quoteItems.map(item => {
+            const calcs = calculateRow(item);
+            return {
+              ...item,
+              subtotal: item.quantity * item.unitPrice,
+              taxableValue: (item.quantity * item.unitPrice) - calcs.discountAmount,
+              discountAmount: calcs.discountAmount,
+              gstAmount: calcs.gstAmount,
+              total: calcs.total
+            };
+          })
+        }
+      },
+      include: { items: true }
+    });
+
+    // Recalculate Totals (Same as before)
+    const subTotal = newQuote.items.reduce((acc, i) => acc + (i.quantity * i.unitPrice), 0);
+    const discountTotal = newQuote.items.reduce((acc, i) => acc + i.discountAmount, 0);
+    const taxableValue = subTotal - discountTotal;
+    const gstTotal = newQuote.items.reduce((acc, i) => acc + i.gstAmount, 0);
+    const grandTotal = taxableValue + gstTotal;
+
+    const updatedQuote = await prisma.quotation.update({
+      where: { id: newQuote.id },
+      data: { subTotal, discountTotal, taxableValue, gstTotal, grandTotal },
+      include: { 
+        items: { orderBy: { srNo: 'asc' } },
+        selection: { include: { inquiry: { include: { sales_person: true } } } }
+      }
+    });
+
+    res.json(updatedQuote);
+
+  } catch (error) {
+    console.error('❌ Generate quotation error:', error);
+    res.status(500).json({ error: 'Failed to generate quotation' });
+  }
+});
+// 3. GET SINGLE QUOTATION BY ID (Must be AFTER /generate)
 app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const quote = await prisma.quotation.findUnique({
       where: { id: req.params.id },
-      include: { selection: { include: { inquiry: true } } }
+      include: { 
+        items: { orderBy: { srNo: 'asc' } },
+        selection: { 
+          include: { 
+            inquiry: { 
+              include: { 
+                sales_person: { select: { name: true } } 
+              } 
+            } 
+          } 
+        }
+      }
     });
-    
-    if (!quote) return res.status(404).json({ error: "Not found" });
-    
-    // Return the snapshot data so it looks exactly like it did when created
-    res.json({
-      meta: quote,
-      data: quote.snapshotData
-    });
+
+    if (!quote) {
+      return res.status(404).json({ error: 'Quotation not found' });
+    }
+
+    res.json(quote);
   } catch (error) {
+    console.error('❌ Error fetching quotation:', error);
     res.status(500).json({ error: 'Failed to fetch quotation' });
   }
 });
 
+// 4. UPDATE QUOTATION
+app.put('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { clientName, clientAddress, transportationCharge, installationCharge, items } = req.body;
 
+  try {
+    const processedItems = items.map((item: any) => {
+      const calcs = calculateRow(item);
+      return { ...item, ...calcs };
+    });
+
+    const subTotal = processedItems.reduce((sum: number, i: any) => sum + (i.quantity * i.unitPrice), 0);
+    const discountTotal = processedItems.reduce((sum: number, i: any) => sum + i.discountAmount, 0);
+    const gstTotal = processedItems.reduce((sum: number, i: any) => sum + i.gstAmount, 0);
+    const itemsTotal = processedItems.reduce((sum: number, i: any) => sum + i.total, 0);
+    
+    const trans = parseFloat(transportationCharge) || 0;
+    const install = parseFloat(installationCharge) || 0;
+    const grandTotal = itemsTotal + trans + install;
+
+    await prisma.$transaction([
+      prisma.quotationItem.deleteMany({ where: { quotationId: id } }),
+      prisma.quotation.update({
+        where: { id },
+        data: {
+          clientName,
+          clientAddress,
+          transportationCharge: trans,
+          installationCharge: install,
+          subTotal,
+          discountTotal,
+          gstTotal,
+          grandTotal,
+          items: {
+            create: processedItems.map((i: any) => ({
+              srNo: i.srNo,
+              description: i.description,
+              quantity: parseFloat(i.quantity),
+              unit: i.unit,
+              unitPrice: parseFloat(i.unitPrice),
+              discountPercent: parseFloat(i.discountPercent),
+              discountAmount: i.discountAmount,
+              gstPercent: parseFloat(i.gstPercent),
+              gstAmount: i.gstAmount,
+              total: i.total
+            }))
+          }
+        }
+      })
+    ]);
+
+    const updated = await prisma.quotation.findUnique({
+      where: { id },
+      include: { items: { orderBy: { srNo: 'asc' } } }
+    });
+    
+    res.json(updated);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update quotation' });
+  }
+});
+
+// 5. DELETE QUOTATION
+app.delete('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    // Prisma cascade delete will automatically remove QuotationItems if configured in schema.
+    // If not, we explicitly delete items first:
+    await prisma.quotationItem.deleteMany({ where: { quotationId: id } });
+    
+    await prisma.quotation.delete({ 
+      where: { id } 
+    });
+
+    res.json({ message: 'Quotation deleted successfully' });
+  } catch (error) {
+    console.error('❌ Delete Quotation Error:', error);
+    res.status(500).json({ error: 'Failed to delete quotation' });
+  }
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

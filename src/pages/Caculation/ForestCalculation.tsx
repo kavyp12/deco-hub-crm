@@ -79,15 +79,19 @@ const REMOTE_OPTIONS = [
   { id: 'ac_control', label: 'AC Control Set', price: 6990 },
 ];
 
-// --- TYPES ---
-
 interface ForestItem {
   selectionItemId: string;
   areaName: string;
   productName: string;
+  unit: string;
   width: number;
   height: number;
   rft: number;
+  
+  // KG Calculation
+  gsm: number;
+  fabricQty: number;
+  motorKg: number;
   
   trackType: string;
   trackPrice: number;
@@ -132,6 +136,71 @@ export default function ForestCalculation() {
     return decimal > 0.09 ? Math.ceil(val) : Math.floor(val);
   };
 
+  const toInches = (value: number, unit: string) => {
+    if (!value || isNaN(value)) return 0;
+    const u = unit?.toLowerCase().trim() || 'mm';
+    if (u === 'inch' || u === 'inches' || u === '"') return value;
+    if (u === 'mm') return value / 25.4;
+    if (u === 'cm') return value / 2.54;
+    if (u === 'ft' || u === 'feet') return value * 12;
+    if (u === 'm' || u === 'meter') return value * 39.3701;
+    return value;
+  };
+
+  // --- ROBUST GSM FINDER ---
+  const findGsmInAttributes = (attributes: any) => {
+    if (!attributes || typeof attributes !== 'object') return 0;
+    
+    // 1. Check exact key from screenshot
+    let valStr = attributes['Weight/Mt'] || attributes['Weight/mt'] || attributes['GSM'] || attributes['gsm'];
+    
+    // 2. Fuzzy search if exact key missing
+    if (!valStr) {
+      const keys = Object.keys(attributes);
+      for (const key of keys) {
+        if (key.toLowerCase().includes('weight') || key.toLowerCase().includes('gsm')) {
+          valStr = attributes[key];
+          break;
+        }
+      }
+    }
+
+    if (!valStr) return 0;
+
+    // 3. Parse "499 GSM" -> 499
+    // parseFloat stops reading at the first non-number character (like space or G)
+    const val = parseFloat(String(valStr));
+    return isNaN(val) ? 0 : val;
+  };
+
+  // --- KG SPECIFIC CALCULATION ---
+  const calculateFabricForKg = (widthVal: number, heightVal: number, unit: string) => {
+    const wInch = toInches(widthVal, unit);
+    const hInch = toInches(heightVal, unit);
+
+    if (wInch <= 0 || hInch <= 0) return 0;
+
+    const rawPanna = wInch / 21;
+    const pannaFloor = Math.floor(rawPanna);
+    const pannaDecimal = rawPanna - pannaFloor;
+    const panna = pannaDecimal > 0.09 ? pannaFloor + 1 : pannaFloor;
+
+    const fabric = ((hInch + 15) / 39) * panna;
+    return parseFloat(fabric.toFixed(2));
+  };
+
+  const calculateMotorKg = (fabricQty: number, gsm: number, areaName: string) => {
+    const isMainCurtain = areaName && areaName.toUpperCase().includes('(M)');
+    const blackoutGsm = isMainCurtain ? 280 : 0;
+    
+    const totalGsm = (gsm || 0) + blackoutGsm;
+
+    // Formula: (TotalGSM * 1.39 * FabricQty) / 1000
+    const kg = (totalGsm * 1.39 * fabricQty) / 1000;
+    
+    return parseFloat(kg.toFixed(2));
+  };
+
   const calculateTrackPrice = (rft: number, trackType: string): number => {
     const typeKey = (trackType && trackType in EXCESS_RATES) ? (trackType as keyof typeof TRACK_PRICING[0]) : 'white';
     let basePrice = 0;
@@ -167,9 +236,9 @@ export default function ForestCalculation() {
     return rft * rate;
   };
 
-  const calculateRFT = (width: number): number => {
-    const widthInch = width / 25.4;
-    return roundCustom(widthInch / 12);
+  const calculateRFT = (width: number, unit: string): number => {
+    const wInch = toInches(width, unit);
+    return roundCustom(wInch / 12);
   };
 
   // --- DATA FETCHING ---
@@ -185,13 +254,11 @@ export default function ForestCalculation() {
       
       if (dataItems.length > 0) {
         const mapped = dataItems.map((i: any) => {
-          const rawWidth = i.selectionItem?.width || 0;
-          let widthInch = rawWidth;
-          if (i.selectionItem?.unit === 'mm') widthInch = rawWidth / 25.4;
-          else if (i.selectionItem?.unit === 'cm') widthInch = rawWidth / 2.54;
-          else if (i.selectionItem?.unit === 'ft') widthInch = rawWidth * 12;
-
-          const rft = roundCustom(widthInch / 12);
+          const unit = i.selectionItem?.unit || 'mm';
+          const rawWidth = parseFloat(i.selectionItem?.width || 0);
+          const rawHeight = parseFloat(i.selectionItem?.height || 0);
+          
+          const rft = calculateRFT(rawWidth, unit);
           
           let trackType = i.trackType || 'white';
           if (trackType === 'fmsPlusConceal') trackType = 'fmsPlusRecessWhite';
@@ -203,31 +270,42 @@ export default function ForestCalculation() {
 
           const trackPrice = calculateTrackPrice(rft, trackType);
           const runnerPrice = calculateRunnerPrice(rft, runnerType);
-          const tapePrice = calculateTapePrice(rawWidth, tapeType);
+          
+          const widthMm = toInches(rawWidth, unit) * 25.4; 
+          const tapePrice = calculateTapePrice(widthMm, tapeType);
           
           const motorPrice = i.motorPrice ?? (MOTOR_VARIANTS.find(m => m.id === motorType)?.price || 0);
           const remotePrice = i.remotePrice ?? (REMOTE_OPTIONS.find(r => r.id === remoteType)?.price || 0);
           
-          // 1. Track Calculation
+          // --- KG Calculation ---
+          const attributes = i.selectionItem?.product?.attributes || {};
+          const gsm = findGsmInAttributes(attributes);
+
+          const areaName = i.selectionItem?.details?.areaName || i.selectionItem?.areaName || 'Area';
+          const fabricQty = calculateFabricForKg(rawWidth, rawHeight, unit);
+          const motorKg = calculateMotorKg(fabricQty, gsm, areaName);
+
           const trackBasic = trackPrice + runnerPrice + tapePrice;
           const trackGst = trackBasic * 0.18;
           const trackFinal = Math.round(trackBasic + trackGst);
 
-          // 2. Motor Calculation
           const motorGst = motorPrice * 0.18;
           const motorFinal = Math.round(motorPrice + motorGst);
 
-          // 3. Remote Calculation
           const remoteGst = remotePrice * 0.18;
           const remoteFinal = Math.round(remotePrice + remoteGst);
 
           return {
             selectionItemId: i.selectionItemId,
-            areaName: i.selectionItem?.details?.areaName || i.selectionItem?.areaName || 'Area',
+            areaName,
             productName: i.selectionItem?.productName || 'Curtain',
+            unit,
             width: rawWidth,
-            height: i.selectionItem?.height || 0,
+            height: rawHeight,
             rft,
+            gsm,
+            fabricQty,
+            motorKg,
             trackType, trackPrice,
             runnerType, runnerPrice,
             tapeType, tapePrice,
@@ -240,30 +318,36 @@ export default function ForestCalculation() {
         });
         setItems(mapped);
       } else {
-  const selRes = await api.get(`/selections/${selectionId}`);
-const selectionItems = selRes.data?.items || [];
+        const selRes = await api.get(`/selections/${selectionId}`);
+        const selectionItems = selRes.data?.items || [];
 
-// 🔥 FIX: Only show "Forest (Auto)" items here
-const forestItems = selectionItems.filter((item: any) => 
-  item.calculationType && item.calculationType.includes('Forest (Auto)')
-);
+        // Filter for Forest (Auto) items
+        const forestItems = selectionItems.filter((item: any) => 
+          item.calculationType && item.calculationType.includes('Forest (Auto)')
+        );
   
-  // Use forestItems instead of selectionItems below
-  const mapped = forestItems.map((item: any) => {
-    const rawWidth = item.width || 0;
-          let widthInch = rawWidth;
-          if (item.unit === 'mm') widthInch = rawWidth / 25.4;
-          else if (item.unit === 'cm') widthInch = rawWidth / 2.54;
-          else if (item.unit === 'ft') widthInch = rawWidth * 12;
-
-          const rft = roundCustom(widthInch / 12);
+        const mapped = forestItems.map((item: any) => {
+          const unit = item.unit || 'mm';
+          const rawWidth = parseFloat(item.width || 0);
+          const rawHeight = parseFloat(item.height || 0);
+          
+          const rft = calculateRFT(rawWidth, unit);
           const trackType = 'white';
           const runnerType = 'FES BASE AND FLEX HOOK';
           const tapeType = 'FLEX TAPE TRANSPARENT';
           
+          const widthMm = toInches(rawWidth, unit) * 25.4;
           const trackPrice = rft > 0 ? calculateTrackPrice(rft, trackType) : 0;
           const runnerPrice = rft > 0 ? calculateRunnerPrice(rft, runnerType) : 0;
-          const tapePrice = rawWidth > 0 ? calculateTapePrice(rawWidth, tapeType) : 0;
+          const tapePrice = rawWidth > 0 ? calculateTapePrice(widthMm, tapeType) : 0;
+
+          // --- KG Calculation ---
+          const attributes = item.product?.attributes || {};
+          const gsm = findGsmInAttributes(attributes);
+          
+          const areaName = item.details?.areaName || item.areaName || 'Area';
+          const fabricQty = calculateFabricForKg(rawWidth, rawHeight, unit);
+          const motorKg = calculateMotorKg(fabricQty, gsm, areaName);
 
           const trackBasic = trackPrice + runnerPrice + tapePrice;
           const trackGst = trackBasic * 0.18;
@@ -271,11 +355,15 @@ const forestItems = selectionItems.filter((item: any) =>
 
           return {
             selectionItemId: item.id,
-            areaName: item.details?.areaName || item.areaName || 'Area',
+            areaName,
             productName: item.productName || 'Curtain',
+            unit,
             width: rawWidth,
-            height: item.height || 0,
+            height: rawHeight,
             rft,
+            gsm,
+            fabricQty,
+            motorKg,
             trackType, trackPrice,
             runnerType, runnerPrice,
             tapeType, tapePrice,
@@ -303,13 +391,24 @@ const forestItems = selectionItems.filter((item: any) =>
       
       const updatedItem = { ...item, [field]: value };
       
-      // 1. Recalculate RFT/Dimensions
-      if (field === 'width') {
-        const newWidth = parseFloat(value) || 0;
-        updatedItem.rft = calculateRFT(newWidth);
+      // 1. Recalculate RFT/Dimensions/KG
+      if (field === 'width' || field === 'height') {
+        const newWidth = field === 'width' ? (parseFloat(value) || 0) : item.width;
+        const newHeight = field === 'height' ? (parseFloat(value) || 0) : item.height;
+        
+        updatedItem.width = newWidth;
+        updatedItem.height = newHeight;
+        
+        updatedItem.rft = calculateRFT(newWidth, item.unit);
         updatedItem.trackPrice = calculateTrackPrice(updatedItem.rft, item.trackType);
         updatedItem.runnerPrice = calculateRunnerPrice(updatedItem.rft, item.runnerType);
-        updatedItem.tapePrice = calculateTapePrice(newWidth, item.tapeType);
+        
+        const widthMm = toInches(newWidth, item.unit) * 25.4;
+        updatedItem.tapePrice = calculateTapePrice(widthMm, item.tapeType);
+
+        // Update KG
+        updatedItem.fabricQty = calculateFabricForKg(newWidth, newHeight, item.unit);
+        updatedItem.motorKg = calculateMotorKg(updatedItem.fabricQty, item.gsm, item.areaName);
       }
 
       if (field === 'rft') {
@@ -320,7 +419,10 @@ const forestItems = selectionItems.filter((item: any) =>
       // 2. Recalculate Prices on Type Change
       if (field === 'trackType') updatedItem.trackPrice = calculateTrackPrice(item.rft, value);
       if (field === 'runnerType') updatedItem.runnerPrice = calculateRunnerPrice(item.rft, value);
-      if (field === 'tapeType') updatedItem.tapePrice = calculateTapePrice(item.width, value);
+      if (field === 'tapeType') {
+        const widthMm = toInches(item.width, item.unit) * 25.4;
+        updatedItem.tapePrice = calculateTapePrice(widthMm, value);
+      }
 
       // 3. Motor & Remote Prices
       if (field === 'motorType') {
@@ -363,6 +465,9 @@ const forestItems = selectionItems.filter((item: any) =>
       await api.post(`/calculations/forest/${selectionId}`, {
         items: items.map(item => ({
           selectionItemId: item.selectionItemId,
+          // Save Dimensions in case they were edited
+          width: item.width,
+          
           trackType: item.trackType,
           trackPrice: item.trackPrice,
           runnerType: item.runnerType,
@@ -376,7 +481,10 @@ const forestItems = selectionItems.filter((item: any) =>
           // Saving calculated values for record
           trackFinal: item.trackFinal,
           motorFinal: item.motorFinal,
-          remoteFinal: item.remoteFinal
+          remoteFinal: item.remoteFinal,
+          motorGst: item.motorGst,
+          remoteGst: item.remoteGst,
+          gst: item.trackGst // Mapping track gst to generic GST field if needed
         }))
       });
       toast({ title: "Saved", description: "Forest calculations updated!" });
@@ -429,6 +537,7 @@ const forestItems = selectionItems.filter((item: any) =>
                   <tr>
                     <th className="px-4 py-3 sticky left-0 bg-gray-100 z-10 w-[180px]">Area</th>
                     <th className="px-2 py-3 text-center bg-blue-50/50">W</th>
+                    <th className="px-2 py-3 text-center bg-blue-50/50">H</th>
                     <th className="px-2 py-3 text-center bg-blue-50/50 border-r border-blue-100">RFT</th>
                     
                     {/* TRACK SECTION */}
@@ -440,7 +549,8 @@ const forestItems = selectionItems.filter((item: any) =>
                     <th className="px-2 py-3 text-right font-bold text-white bg-blue-600">Track Final</th>
                     
                     {/* MOTOR SECTION */}
-                    <th className="px-2 py-3 min-w-[160px] bg-yellow-50/50 text-yellow-900 border-l border-gray-300">Motor (KG)</th>
+                    <th className="px-2 py-3 min-w-[160px] bg-yellow-50/50 text-yellow-900 border-l border-gray-300">Motor (Type)</th>
+                    <th className="px-2 py-3 text-center bg-yellow-100/50 text-yellow-900 font-bold" title="Calculated Weight">KG</th>
                     <th className="px-2 py-3 text-right bg-yellow-100/50 text-yellow-900">Price</th>
                     <th className="px-2 py-3 text-right bg-yellow-100/50 text-yellow-900">GST</th>
                     <th className="px-2 py-3 text-right font-bold text-white bg-yellow-600">Motor Final</th>
@@ -458,12 +568,17 @@ const forestItems = selectionItems.filter((item: any) =>
                       <td className="px-4 py-3 sticky left-0 bg-white z-10 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                         <div className="font-bold text-gray-900 truncate w-[160px]" title={item.areaName}>{item.areaName}</div>
                         <div className="text-xs text-gray-500 truncate w-[160px]" title={item.productName}>{item.productName}</div>
+                        <div className="text-[10px] text-gray-400 mt-1">GSM: {item.gsm}</div>
                       </td>
 
                       {/* Dimensions */}
                       <td className="px-1 py-3 bg-blue-50/10">
-                        <Input type="number" className="h-8 text-xs text-center w-16 mx-auto"
+                        <Input type="number" className="h-8 text-xs text-center w-14 mx-auto"
                           value={item.width || ''} onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} />
+                      </td>
+                      <td className="px-1 py-3 bg-blue-50/10">
+                        <Input type="number" className="h-8 text-xs text-center w-14 mx-auto"
+                          value={item.height || ''} onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} />
                       </td>
                       <td className="px-1 py-3 bg-blue-50/10 border-r border-blue-100 text-center font-bold text-blue-700">
                         {item.rft}
@@ -520,6 +635,9 @@ const forestItems = selectionItems.filter((item: any) =>
                           </SelectContent>
                         </Select>
                       </td>
+                      <td className="px-2 py-3 text-center bg-yellow-50/30 text-yellow-800 font-bold border-l border-white">
+                        {item.motorKg}
+                      </td>
                       <td className="px-2 py-3 text-right bg-yellow-50/20">₹{item.motorPrice.toLocaleString()}</td>
                       <td className="px-2 py-3 text-right bg-yellow-50/20 text-xs text-gray-500">₹{item.motorGst.toFixed(0)}</td>
                       <td className="px-2 py-3 text-right font-bold bg-yellow-100 text-yellow-700 border-r border-gray-300">₹{item.motorFinal.toLocaleString()}</td>
@@ -542,11 +660,12 @@ const forestItems = selectionItems.filter((item: any) =>
                 {/* Footer */}
                 <tfoot className="bg-gray-800 text-white font-bold text-xs">
                   <tr>
-                    <td colSpan={6} className="px-4 py-3 text-right uppercase">Category Totals</td>
+                    <td colSpan={7} className="px-4 py-3 text-right uppercase">Category Totals</td>
                     <td className="px-2 py-3 text-right bg-blue-900">₹{items.reduce((s, i) => s + i.trackBasic, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-blue-900 text-blue-200">₹{items.reduce((s, i) => s + i.trackGst, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-blue-950 text-[#4ade80]">₹{items.reduce((s, i) => s + i.trackFinal, 0).toLocaleString()}</td>
                     
+                    <td className="px-2 py-3"></td>
                     <td className="px-2 py-3"></td>
                     <td className="px-2 py-3 text-right bg-yellow-900">₹{items.reduce((s, i) => s + i.motorPrice, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-yellow-900 text-yellow-200">₹{items.reduce((s, i) => s + i.motorGst, 0).toLocaleString()}</td>

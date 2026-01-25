@@ -37,7 +37,7 @@ import ForestCalculation from "./pages/Caculation/ForestCalculation";
 import SomfyCalculation from "./pages/Caculation/SomfyCalculation";
 import RomanCalculation from "./pages/Caculation/RomanCalculation";
 import BlindsCalculation from "./pages/Caculation/BlindsCalculation";
-
+import QuotationEdit from "./pages/Quotation/QuotationEdit";
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -229,15 +229,17 @@ const App = () => (
                 </ProtectedRoute>
               } 
             />
+            <Route path="/quotations/preview/:id" element={<ProtectedRoute><QuotationPreview /></ProtectedRoute>} />
+
             <Route 
-              path="/quotations/preview/:selectionId" 
+              path="/quotations/edit/:id" 
               element={
                 <ProtectedRoute>
-                  <QuotationPreview />
+                  <QuotationEdit />
                 </ProtectedRoute>
               } 
             />
-
+            
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

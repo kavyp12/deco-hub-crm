@@ -1,6 +1,7 @@
+// [FILE: src/pages/Quotation/QuotationPreview.tsx]
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Printer, Download, Mail, Loader2 } from 'lucide-react';
+import { ArrowLeft, Printer, Download, Mail, Loader2, AlertCircle } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -14,7 +15,7 @@ const toWords = new ToWords({
 });
 
 const QuotationPreview: React.FC = () => {
-  const { selectionId } = useParams();
+  const { id } = useParams(); // Using 'id' from the route /quotations/preview/:id
   const navigate = useNavigate();
   const printRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -22,59 +23,29 @@ const QuotationPreview: React.FC = () => {
   const [downloading, setDownloading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // --- FETCH REAL DATA ---
+  // --- FETCH DATA ---
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await api.get(`/quotations/preview/${selectionId}`);
-        const apiData = res.data;
-        
-        const { selection, items, financials } = apiData;
-        const inquiry = selection.inquiry;
-
-        // Map API data to your Exact Structure
-        const mappedData = {
-          quotationNo: selection.selection_number || 'DRAFT',
-          date: new Date().toLocaleDateString('en-IN'),
-          salesAdvisor: inquiry.sales_person?.name || 'Sulit Decor',
-          policyRef: 'Check Below',
-          client: {
-            name: inquiry.client_name,
-            address: inquiry.address || 'Ahmedabad', 
-          },
-          delivery: {
-            location: inquiry.address || 'Ahmedabad'
-          },
-          items: items.map((item: any) => ({
-            sr: item.sr,
-            // Combine Area + Description like your mock
-            desc: item.area ? `${item.area} ${item.desc}` : item.desc,
-            qty: item.qty,
-            unit: item.unit,
-            // Calculate Unit Price based on Total / Qty
-            price: item.qty ? Math.round(item.total / item.qty) : 0, 
-            total: item.total
-          })),
-          grossTotal: financials.subTotal,
-          taxAmount: financials.tax || 0,
-          finalTotal: financials.grandTotal,
-          amountInWords: toWords.convert(financials.grandTotal)
-        };
-
-        setData(mappedData);
-      } catch (error) {
+        setLoading(true);
+        // Fetching the Saved Quotation by ID
+        const res = await api.get(`/quotations/${id}`);
+        setData(res.data);
+      } catch (error: any) {
         console.error(error);
-        toast({ title: "Error", description: "Failed to load quotation data", variant: "destructive" });
+        setError("Failed to load quotation data");
+        toast({ title: "Error", description: "Failed to load quotation", variant: "destructive" });
       } finally {
         setLoading(false);
       }
     };
 
-    if (selectionId) {
+    if (id) {
       fetchData();
     }
-  }, [selectionId]);
+  }, [id]);
 
   const handlePrint = () => {
     window.print();
@@ -86,7 +57,7 @@ const QuotationPreview: React.FC = () => {
       const element = printRef.current;
       const opt = {
         margin: [5, 5, 5, 5],
-        filename: `Quotation_${data?.quotationNo}.pdf`,
+        filename: `Quotation_${data?.quotation_number}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
@@ -117,40 +88,32 @@ const QuotationPreview: React.FC = () => {
     </DashboardLayout>
   );
 
-  if (!data) return null;
+  if (error || !data) return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+       <div className="text-center">
+          <AlertCircle className="h-10 w-10 text-red-500 mx-auto mb-2"/>
+          <p className="text-gray-600">{error || 'Quotation not found'}</p>
+          <Button variant="outline" className="mt-4" onClick={() => navigate('/quotations')}>Back to List</Button>
+       </div>
+    </div>
+  );
+
+  // ✅ CHECK TYPE
+  const isSimple = data.quotationType === 'simple';
 
   return (
     <DashboardLayout>
-      {/* --- CORRECTED PRINT CSS --- */}
+      {/* --- PRINT CSS --- */}
       <style>{`
         @media print {
-          /* 1. Hide everything by default */
-          body * {
-            visibility: hidden;
-          }
-          
-          /* 2. Make the printable section visible */
-          #printable-section, #printable-section * {
-            visibility: visible;
-          }
-
-          /* 3. Position absolute lets content flow to multiple pages */
+          body * { visibility: hidden; }
+          #printable-section, #printable-section * { visibility: visible; }
           #printable-section {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            margin: 0;
-            padding: 0;
-            background: white;
-            z-index: 9999;
+            position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0;
+            background: white; z-index: 9999;
           }
-
-          /* 4. Remove margins from the page itself so our design controls it */
-          @page {
-            size: auto;
-            margin: 5mm;
-          }
+          @page { size: auto; margin: 5mm; }
+          .print\\:hidden { display: none !important; }
         }
       `}</style>
 
@@ -159,21 +122,20 @@ const QuotationPreview: React.FC = () => {
         {/* --- Toolbar --- */}
         <div className="flex items-center justify-between mb-6 print:hidden">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
               <h1 className="text-2xl font-bold text-foreground">Quotation Preview</h1>
+              <p className="text-sm text-gray-500">{isSimple ? 'Simple Format' : 'Detailed Format'}</p>
             </div>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2"><Mail className="h-4 w-4" /> Email</Button>
-            
             <Button variant="outline" className="gap-2" onClick={handleDownloadPDF} disabled={downloading}>
               {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} 
               PDF
             </Button>
-            
             <Button variant="default" onClick={handlePrint} className="gap-2 shadow-sm bg-blue-600 hover:bg-blue-700">
               <Printer className="h-4 w-4" /> Print
             </Button>
@@ -190,20 +152,16 @@ const QuotationPreview: React.FC = () => {
             
             {/* 1. Header Section */}
             <div className="flex justify-between items-start mb-8">
-              
               {/* Left: Branding & Address */}
               <div className="w-[55%]">
-                <img 
-                  src="/sulitblack-logo.svg" 
-                  alt="Sulit Decor" 
-                  className="h-12 mb-3 object-contain block" 
-                />
+                 {/* Ensure this logo exists in your public folder */}
+                <img src="/sulitblack-logo.svg" alt="Sulit Decor" className="h-12 mb-3 object-contain block" />
                 <div className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-1">
                   Sulit Decor Private Limited
                 </div>
                 <div className="text-[11px] text-gray-600 leading-relaxed">
                   <p>Showroom No.107, Aaron Spectra, Behind Rajpath Club,</p>
-                  <p>Rajpat Rangoli Rd, Bodakdev, Ahmedabad, Gujarat, IN 380054</p>
+                  <p>Rajpath Rangoli Rd, Bodakdev, Ahmedabad, Gujarat, IN 380054</p>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 mt-1 font-medium text-black">
                     <span>E-mail: contact@sulitdecor.com</span>
                     <span className="hidden sm:inline">|</span>
@@ -218,19 +176,19 @@ const QuotationPreview: React.FC = () => {
                   <tbody>
                     <tr>
                       <td className="font-bold text-gray-600 text-right pr-3 py-1 whitespace-nowrap w-28">QUOT NO. :</td>
-                      <td className="font-bold text-black py-1">{data.quotationNo}</td>
+                      <td className="font-bold text-black py-1">{data.quotation_number}</td>
                     </tr>
                     <tr>
                       <td className="font-bold text-gray-600 text-right pr-3 py-1 whitespace-nowrap">DATE :</td>
-                      <td className="font-bold text-black py-1">{data.date}</td>
+                      <td className="font-bold text-black py-1">{new Date(data.created_at).toLocaleDateString('en-GB')}</td>
                     </tr>
                     <tr>
                       <td className="font-bold text-gray-600 text-right pr-3 py-1 whitespace-nowrap">SALES ADVISOR :</td>
-                      <td className="font-bold text-black py-1">{data.salesAdvisor}</td>
+                      <td className="font-bold text-black py-1">{data.selection?.inquiry?.sales_person?.name || 'Bharat Singh'}</td>
                     </tr>
                     <tr>
                       <td className="font-bold text-gray-600 text-right pr-3 py-1 whitespace-nowrap">POLICY :</td>
-                      <td className="font-bold text-black py-1">{data.policyRef}</td>
+                      <td className="font-bold text-black py-1">Check Below</td>
                     </tr>
                   </tbody>
                 </table>
@@ -241,39 +199,76 @@ const QuotationPreview: React.FC = () => {
             <div className="flex border-t border-b border-gray-300 py-4 mb-6 gap-8">
               <div className="flex-1">
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">Buyer (Bill To) :</div>
-                <div className="text-base font-bold text-gray-900">{data.client.name}</div>
-                <div className="text-sm text-gray-600">{data.client.address}</div>
+                <div className="text-base font-bold text-gray-900">{data.clientName}</div>
+                <div className="text-sm text-gray-600">{data.clientAddress || 'Ahmedabad'}</div>
               </div>
               <div className="flex-1 border-l pl-8 border-gray-200">
                 <div className="text-[10px] font-bold text-gray-500 uppercase mb-1">Delivery Details :</div>
-                <div className="text-base font-bold text-gray-900">{data.delivery.location}</div>
+                <div className="text-base font-bold text-gray-900">{data.clientAddress || 'Ahmedabad'}</div>
               </div>
             </div>
 
-            {/* 3. Items Table */}
+            {/* 3. Items Table - DYNAMIC COLUMNS */}
             <div className="mb-6">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="border-b-2 border-black">
-                    <th className="py-2 px-1 text-center font-bold text-black w-12">Sr.No.</th>
-                    <th className="py-2 px-2 text-left font-bold text-black">DESCRIPTION</th>
-                    <th className="py-2 px-2 text-center font-bold text-black w-16">QTY</th>
-                    <th className="py-2 px-2 text-center font-bold text-black w-16">UNIT</th>
-                    <th className="py-2 px-2 text-right font-bold text-black w-24">PRICE</th>
-                    <th className="py-2 px-2 text-right font-bold text-black w-32">TOTAL</th>
-                  </tr>
+                  {isSimple ? (
+                    // ✅ SIMPLE HEADER
+                    <tr className="border-b-2 border-black">
+                      <th className="py-2 px-1 text-center font-bold text-black w-12 border-r border-gray-200">Sr.No.</th>
+                      <th className="py-2 px-2 text-left font-bold text-black border-r border-gray-200">DESCRIPTION</th>
+                      <th className="py-2 px-2 text-center font-bold text-black w-16 border-r border-gray-200">QTY</th>
+                      <th className="py-2 px-2 text-center font-bold text-black w-16 border-r border-gray-200">UNIT</th>
+                      <th className="py-2 px-2 text-right font-bold text-black w-24 border-r border-gray-200">PRICE</th>
+                      <th className="py-2 px-2 text-right font-bold text-black w-32">TOTAL</th>
+                    </tr>
+                  ) : (
+                    // ✅ DETAILED HEADER
+                    <tr className="border-b-2 border-black">
+                      <th className="py-2 px-1 text-left font-bold text-black pl-1">DESCRIPTION</th>
+                      <th className="py-2 px-1 text-center font-bold text-black w-10">QTY</th>
+                      <th className="py-2 px-1 text-center font-bold text-black w-12">UNIT</th>
+                      <th className="py-2 px-1 text-right font-bold text-black w-16">PRICE</th>
+                      <th className="py-2 px-1 text-right font-bold text-black w-10">DISC.</th>
+                      <th className="py-2 px-1 text-right font-bold text-black w-20">TAXABLE</th>
+                      <th className="py-2 px-1 text-center font-bold text-black w-10">GST</th>
+                      <th className="py-2 px-1 text-right font-bold text-black w-16">GST AMT</th>
+                      <th className="py-2 px-1 text-right font-bold text-black w-24">TOTAL</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody className="text-gray-800">
-                  {data.items.map((item: any, index: number) => (
-                    <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 break-inside-avoid">
-                      <td className="py-2.5 px-1 text-center text-gray-500">{item.sr}</td>
-                      <td className="py-2.5 px-2 font-medium">{item.desc}</td>
-                      <td className="py-2.5 px-2 text-center">{item.qty}</td>
-                      <td className="py-2.5 px-2 text-center text-[10px] uppercase text-gray-500">{item.unit}</td>
-                      <td className="py-2.5 px-2 text-right">₹{item.price.toLocaleString()}</td>
-                      <td className="py-2.5 px-2 text-right font-semibold text-black">₹{item.total.toLocaleString()}</td>
-                    </tr>
-                  ))}
+                  {data.items && data.items.map((item: any, index: number) => {
+                    const subtotal = item.quantity * item.unitPrice;
+                    const taxable = subtotal - item.discountAmount;
+
+                    return isSimple ? (
+                      // ✅ SIMPLE ROW
+                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 break-inside-avoid">
+                        <td className="py-2.5 px-1 text-center text-gray-500 border-r border-gray-200">{index + 1}</td>
+                        <td className="py-2.5 px-2 font-medium border-r border-gray-200">{item.description}</td>
+                        <td className="py-2.5 px-2 text-center border-r border-gray-200">{item.quantity}</td>
+                        <td className="py-2.5 px-2 text-center text-[10px] uppercase text-gray-500 border-r border-gray-200">{item.unit}</td>
+                        <td className="py-2.5 px-2 text-right border-r border-gray-200">₹{item.unitPrice.toLocaleString()}</td>
+                        <td className="py-2.5 px-2 text-right font-semibold text-black">₹{item.total.toLocaleString()}</td>
+                      </tr>
+                    ) : (
+                      // ✅ DETAILED ROW
+                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50 break-inside-avoid">
+                        <td className="py-2 px-1 pl-1 font-medium">{item.description}</td>
+                        <td className="py-2 px-1 text-center">{item.quantity}</td>
+                        <td className="py-2 px-1 text-center uppercase text-[9px] text-gray-500">{item.unit}</td>
+                        <td className="py-2 px-1 text-right">₹{item.unitPrice.toLocaleString()}</td>
+                        <td className="py-2 px-1 text-right text-red-500 text-[10px]">
+                           {item.discountPercent > 0 ? `${item.discountPercent}%` : '-'}
+                        </td>
+                        <td className="py-2 px-1 text-right font-medium text-gray-600">₹{taxable.toLocaleString()}</td>
+                        <td className="py-2 px-1 text-center text-[10px] text-gray-500">{item.gstPercent}%</td>
+                        <td className="py-2 px-1 text-right text-gray-500 text-[10px]">₹{item.gstAmount.toLocaleString()}</td>
+                        <td className="py-2 px-1 text-right font-bold text-black">₹{item.total.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -299,26 +294,75 @@ const QuotationPreview: React.FC = () => {
                 <div className="pt-2">
                    <div className="text-[10px] font-bold text-gray-500 uppercase">Amount Chargeable (in words) :</div>
                    <div className="text-sm font-serif italic text-gray-800 capitalize mt-1 border-b border-dotted border-gray-300 pb-1 inline-block pr-10">
-                     {data.amountInWords}
+                     {toWords.convert(data.grandTotal || 0)}
                    </div>
                 </div>
               </div>
 
               <div className="w-[40%] pt-2">
-                <div className="space-y-2">
-                   <div className="flex justify-between text-xs text-gray-600">
-                      <span>FABRIC & BLINDS GROSS TOTAL</span>
-                      <span className="font-medium">₹{data.grossTotal.toLocaleString()}</span>
-                   </div>
-                   <div className="flex justify-between text-xs text-gray-600">
-                      <span>GST / Tax</span>
-                      <span className="font-medium">₹{data.taxAmount.toLocaleString()}</span>
-                   </div>
-                   <div className="border-t-2 border-black border-double mt-3 pt-3 flex justify-between text-base font-bold text-black items-center">
-                      <span>Total</span>
-                      <span className="bg-gray-100 px-3 py-1 rounded">₹{data.finalTotal.toLocaleString()}</span>
-                   </div>
-                </div>
+                {isSimple ? (
+                  // ✅ SIMPLE TOTALS BLOCK
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-black font-bold">
+                       <span>MATERIAL GROSS TOTAL</span>
+                       <span>INR {data.subTotal.toLocaleString()}</span>
+                    </div>
+                    {data.discountTotal > 0 && (
+                      <div className="flex justify-between text-xs text-red-600">
+                         <span>DISCOUNT</span>
+                         <span>- INR {data.discountTotal.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {data.transportationCharge > 0 && (
+                      <div className="flex justify-between text-xs text-gray-600">
+                         <span>Transportation</span>
+                         <span>INR {data.transportationCharge.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {data.installationCharge > 0 && (
+                      <div className="flex justify-between text-xs text-gray-600">
+                         <span>Installation</span>
+                         <span>INR {data.installationCharge.toLocaleString()}</span>
+                      </div>
+                    )}
+                    <div className="border-t-2 border-black border-double mt-3 pt-3 flex justify-between text-base font-bold text-black items-center">
+                       <span>Total</span>
+                       <span className="bg-gray-100 px-3 py-1 rounded">INR {data.grandTotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ) : (
+                  // ✅ DETAILED TOTALS BLOCK
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-gray-600">
+                       <span>Subtotal</span>
+                       <span className="font-medium">₹{data.subTotal.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-600">
+                       <span>Taxable Value</span>
+                       <span className="font-medium">₹{data.taxableValue.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-600">
+                       <span>Total GST</span>
+                       <span className="font-medium">₹{data.gstTotal.toLocaleString()}</span>
+                    </div>
+                    {data.transportationCharge > 0 && (
+                      <div className="flex justify-between text-xs text-gray-600">
+                         <span>Transportation</span>
+                         <span>₹{data.transportationCharge.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {data.installationCharge > 0 && (
+                      <div className="flex justify-between text-xs text-gray-600">
+                         <span>Installation</span>
+                         <span>₹{data.installationCharge.toLocaleString()}</span>
+                      </div>
+                    )}
+                    <div className="border-t-2 border-black border-double mt-3 pt-3 flex justify-between text-base font-bold text-black items-center">
+                       <span>Grand Total</span>
+                       <span className="bg-gray-100 px-3 py-1 rounded">₹{data.grandTotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

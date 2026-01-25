@@ -8,6 +8,7 @@ import {
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import QuotationTypeModal from '@/pages/Quotation/QuotationTypeModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
@@ -85,6 +86,9 @@ const CalculationEditor: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [saving, setSaving] = useState(false);
+
+const [showQuoteModal, setShowQuoteModal] = useState(false);
+const [generatingQuote, setGeneratingQuote] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -295,15 +299,50 @@ const CalculationEditor: React.FC = () => {
     Deep Costing
   </Button>
   
-  {/* ✅ QUOTATION BUTTON */}
+ {/* ✅ QUOTATION BUTTON - FIXED */}
+<>
   <div className="h-6 w-px bg-gray-200"></div>
   <Button 
-     onClick={() => navigate(`/quotations/preview/${selectionId}`)}
-     className="bg-gray-900 hover:bg-gray-800 text-white gap-2"
+    onClick={() => setShowQuoteModal(true)}
+    className="bg-gray-900 hover:bg-gray-800 text-white gap-2"
   >
     <FileText className="h-4 w-4" />
     Generate Quote
   </Button>
+
+  {/* ✅ ADD THE MODAL */}
+  <QuotationTypeModal
+    isOpen={showQuoteModal}
+    onClose={() => setShowQuoteModal(false)}
+    loading={generatingQuote}
+    onSelect={async (type: 'simple' | 'detailed') => {
+      setGeneratingQuote(true);
+      try {
+        const response = await api.post('/quotations/generate', { 
+          selectionId,
+          quotationType: type 
+        });
+        const newQuote = response.data;
+        
+        navigate(`/quotations/preview/${newQuote.id}`);
+        
+        toast({ 
+          title: 'Success', 
+          description: `${type === 'simple' ? 'Simple' : 'Detailed'} quotation generated successfully!` 
+        });
+      } catch (error: any) {
+        toast({ 
+          title: 'Error', 
+          description: error.response?.data?.error || 'Failed to generate quotation',
+          variant: 'destructive' 
+        });
+      } finally {
+        setGeneratingQuote(false);
+        setShowQuoteModal(false);
+      }
+    }}
+  />
+</>
 </div>
             </div>
           </div>
