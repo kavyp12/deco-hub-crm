@@ -638,9 +638,20 @@ const Selections: React.FC = () => {
                         <div className="flex gap-4 items-end">
                             {editingItemIndex === null && (
                                 <div className="space-y-1 flex-1">
-                                    <Label className="text-xs">Area Name *</Label>
-                                    <Input placeholder="e.g. Master Bedroom" value={currentItem.areaName} onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} className="h-9" />
-                                </div>
+    <Label className="text-xs">Area Name *</Label>
+    <Input 
+      list="selection-area-options"
+      placeholder="e.g. Master Bedroom" 
+      value={currentItem.areaName} 
+      onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
+      className="h-9" 
+    />
+    <datalist id="selection-area-options">
+       {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
+          <option key={area} value={area} />
+       ))}
+    </datalist>
+</div>
                             )}
                             
                             <div className="space-y-1 w-28">
@@ -707,15 +718,21 @@ const Selections: React.FC = () => {
                           <tr key={idx} className={editingItemIndex === idx ? 'bg-blue-50' : ''}>
                             <td className="py-2 px-3">
                               <Input 
-                                value={item.areaName || ''}
-                                onChange={(e) => {
-                                  const newItems = [...editedItems];
-                                  newItems[idx].areaName = e.target.value;
-                                  setEditedItems(newItems);
-                                }}
-                                className="h-8 w-full text-xs font-medium"
-                                placeholder="Area"
-                              />
+  list={`edit-area-${idx}`} // Unique ID per row
+  value={item.areaName || ''}
+  onChange={(e) => {
+    const newItems = [...editedItems];
+    newItems[idx].areaName = e.target.value;
+    setEditedItems(newItems);
+  }}
+  className="h-8 w-full text-xs font-medium"
+  placeholder="Area"
+/>
+<datalist id={`edit-area-${idx}`}>
+    {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room"].map(area => (
+      <option key={area} value={area} />
+    ))}
+</datalist>
                             </td>
                             <td className="py-2 px-3 text-xs">
                                 <div className="flex flex-col gap-1">

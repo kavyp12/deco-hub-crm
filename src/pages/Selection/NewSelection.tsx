@@ -12,6 +12,15 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 
+
+const COMMON_AREAS = [
+  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", 
+  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen", 
+  "Study Room", "Home Office", "Balcony", "Verandah", 
+  "Puja Room", "Staircase", "Lobby", "Entrance", 
+  "Bathroom", "Store Room", "Servant Room", "Utility Area"
+];
+
 const NewSelection: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -235,52 +244,63 @@ const NewSelection: React.FC = () => {
             <div className="bg-muted/30 p-4 rounded-lg space-y-4">
                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                  
-                 {/* 1. Company Select */}
+                 {/* 1. Company Search */}
                  <div className="space-y-2">
                    <Label>Company</Label>
-                   <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
-                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                     <SelectContent>
-                       {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                     </SelectContent>
-                   </Select>
+                   <Input 
+                      list="company-list-selection" 
+                      placeholder="Type to search company..."
+                      onChange={(e) => {
+                        const match = companies.find(c => c.name.toLowerCase() === e.target.value.toLowerCase());
+                        if (match) setSelectedCompanyId(match.id);
+                      }}
+                   />
+                   <datalist id="company-list-selection">
+                      {companies.map(c => <option key={c.id} value={c.name} />)}
+                   </datalist>
                  </div>
 
-                 {/* 2. Collection/Catalog Select with Type Badge */}
+                 {/* 2. Collection/Catalog Search */}
                  <div className="space-y-2">
                    <div className="flex justify-between items-center">
                      <Label>Collection</Label>
                      {selectedCatalogType && (
                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
-                         Type: {selectedCatalogType}
+                         {selectedCatalogType}
                        </span>
                      )}
                    </div>
-                   <Select value={selectedCatalogId} onValueChange={setSelectedCatalogId} disabled={!selectedCompanyId}>
-                     <SelectTrigger>
-                        <SelectValue placeholder="Select" />
-                     </SelectTrigger>
-                     <SelectContent>
-                       {catalogs.map(c => (
-                         <SelectItem key={c.id} value={c.id}>
-                           {c.name} <span className="text-muted-foreground opacity-70">({c.type || 'Generic'})</span>
-                         </SelectItem>
-                       ))}
-                     </SelectContent>
-                   </Select>
+                   <Input 
+                      list="catalog-list-selection"
+                      placeholder={selectedCompanyId ? "Type to search..." : "Select Company First"}
+                      disabled={!selectedCompanyId}
+                      value={catalogs.find(c => c.id === selectedCatalogId)?.name || ''} 
+                      // Note: Controlled value here needs careful handling or use un-controlled with key like in MeasurementEditor
+                      onChange={(e) => {
+                         const match = catalogs.find(c => c.name.toLowerCase() === e.target.value.toLowerCase());
+                         if (match) setSelectedCatalogId(match.id);
+                      }}
+                   />
+                   <datalist id="catalog-list-selection">
+                      {catalogs.map(c => <option key={c.id} value={c.name} />)}
+                   </datalist>
                  </div>
 
-                 {/* 3. Product Select */}
+                 {/* 3. Product Search */}
                  <div className="space-y-2">
                    <Label>Product</Label>
-                   <Select value={currentItem.productId} onValueChange={handleProductSelect} disabled={!selectedCatalogId}>
-                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                     <SelectContent>
-                       {products.map(p => (
-                         <SelectItem key={p.id} value={p.id}>{p.name} - ₹{p.price}</SelectItem>
-                       ))}
-                     </SelectContent>
-                   </Select>
+                   <Input 
+                      list="product-list-selection"
+                      placeholder={selectedCatalogId ? "Type code/name..." : "Select Collection First"}
+                      disabled={!selectedCatalogId}
+                      onChange={(e) => {
+                         const match = products.find(p => p.name.toLowerCase() === e.target.value.toLowerCase());
+                         if (match) handleProductSelect(match.id);
+                      }}
+                   />
+                   <datalist id="product-list-selection">
+                      {products.map(p => <option key={p.id} value={p.name}>{`₹${p.price}`}</option>)}
+                   </datalist>
                  </div>
                </div>
 
@@ -288,13 +308,19 @@ const NewSelection: React.FC = () => {
                  <div className="mt-4 p-4 bg-background border border-border rounded-lg animate-in fade-in slide-in-from-top-2">
                     <div className="flex flex-col md:flex-row gap-4 items-end">
                       <div className="space-y-1 flex-1 w-full">
-                        <Label>Area Name *</Label>
-                        <Input 
-                          placeholder="e.g. Living Room" 
-                          value={currentItem.areaName} 
-                          onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
-                        />
-                      </div>
+  <Label>Area Name *</Label>
+  <Input 
+    list="common-areas-list" // Single ID is fine here as it's not in a loop
+    placeholder="e.g. Living Room" 
+    value={currentItem.areaName} 
+    onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
+  />
+  <datalist id="common-areas-list">
+     {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby", "Home Theater"].map(area => (
+        <option key={area} value={area} />
+     ))}
+  </datalist>
+</div>
                       <div className="space-y-1 w-full md:w-32">
                         <Label>Price</Label>
                         <Input 

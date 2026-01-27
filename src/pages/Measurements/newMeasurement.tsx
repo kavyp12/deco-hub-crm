@@ -26,6 +26,13 @@ interface MeasurementRow {
   quantity: number;
   price: number;
 }
+const COMMON_AREAS = [
+  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", 
+  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen", 
+  "Study Room", "Home Office", "Balcony", "Verandah", 
+  "Puja Room", "Staircase", "Lobby", "Entrance", 
+  "Bathroom", "Store Room", "Servant Room", "Utility Area"
+];
 
 const IndependentMeasurementForm: React.FC = () => {
   const { inquiryId } = useParams<{ inquiryId: string }>();
@@ -379,7 +386,18 @@ const IndependentMeasurementForm: React.FC = () => {
                       <td className="p-2 text-center text-muted-foreground border-r bg-muted/10 font-bold sticky left-0 z-10">{idx + 1}</td>
                       
                       <td className="p-1 border-r">
-                        <input value={row.areaName} onChange={(e) => updateRow(idx, 'areaName', e.target.value)} className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded" placeholder="Area Name" />
+                        <input 
+  list={`area-suggestions-${row.uid}`}
+  value={row.areaName} 
+  onChange={(e) => updateRow(idx, 'areaName', e.target.value)} 
+  className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded" 
+  placeholder="Area Name" 
+/>
+<datalist id={`area-suggestions-${row.uid}`}>
+  {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby"].map(area => (
+    <option key={area} value={area} />
+  ))}
+</datalist>
                       </td>
 
                       <td className="p-1 border-r">

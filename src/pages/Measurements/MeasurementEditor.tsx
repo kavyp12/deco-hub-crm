@@ -27,6 +27,15 @@ interface MeasurementRow {
   quantity: number;
   price: number;
 }
+
+const COMMON_AREAS = [
+  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", 
+  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen", 
+  "Study Room", "Home Office", "Balcony", "Verandah", 
+  "Puja Room", "Staircase", "Lobby", "Entrance", 
+  "Bathroom", "Store Room", "Servant Room", "Utility Area"
+];
+
 const MeasurementEditor: React.FC = () => {
   const { inquiryId } = useParams<{ inquiryId: string }>();
   const navigate = useNavigate();
@@ -314,6 +323,37 @@ const MeasurementEditor: React.FC = () => {
     }
   };
 
+  // Helper to safely find ID by Name for the datalists
+  const handleSearchableChange = (
+    index: number, 
+    field: 'company' | 'catalog' | 'product', 
+    value: string
+  ) => {
+    // 1. Update the UI value immediately (for typing)
+    // Note: We don't store "partial" text in the main ID state, 
+    // we strictly look for a match. If no match, we don't update the ID.
+    
+    if (field === 'company') {
+      const match = companies.find(c => c.name.toLowerCase() === value.toLowerCase());
+      if (match) handleCompanySelect(index, match.id);
+    } 
+    else if (field === 'catalog') {
+      // Find catalog belonging to the selected company
+      const row = rows[index];
+      const relevantCatalogs = allCatalogs.filter(c => c.companyId === row.companyId);
+      const match = relevantCatalogs.find(c => c.name.toLowerCase() === value.toLowerCase());
+      if (match) handleCatalogSelect(index, match.id);
+    } 
+    else if (field === 'product') {
+      // Find product belonging to the selected catalog
+      const row = rows[index];
+      const relevantProducts = products.filter(p => p.catalogId === row.catalogId);
+      const match = relevantProducts.find(p => p.name.toLowerCase() === value.toLowerCase());
+      if (match) handleProductSelect(index, match.id);
+    }
+  };
+  
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -377,45 +417,68 @@ const MeasurementEditor: React.FC = () => {
                   <th className="p-3 w-16 sticky right-0 bg-white z-20 shadow-sm"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+<tbody className="divide-y divide-border">
                 {rows.map((row, idx) => {
                   const isCurtainRow = row.catalogType === 'Curtains';
                   const disableCurtainFields = !isCurtainRow;
+
+                  // Get the current names for display (since state stores IDs)
+                  const currentCompanyName = companies.find(c => c.id === row.companyId)?.name || '';
+                  
+                  // Filter lists for this specific row
+                  const rowCatalogs = allCatalogs.filter(c => c.companyId === row.companyId);
+                  const rowProducts = products.filter(p => p.catalogId === row.catalogId);
 
                   return (
                     <tr key={row.uid} className="group hover:bg-primary/5 transition-colors">
                       <td className="p-2 text-center text-muted-foreground border-r bg-muted/10 font-bold sticky left-0 z-10">{idx + 1}</td>
                       
+                      {/* AREA SEARCH */}
                       <td className="p-1 border-r">
-                        <input value={row.areaName} onChange={(e) => updateRow(idx, 'areaName', e.target.value)} className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded" placeholder="Area Name" />
+                        <input 
+                          list={`area-suggestions-${row.uid}`}
+                          value={row.areaName} 
+                          onChange={(e) => updateRow(idx, 'areaName', e.target.value)} 
+                          className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded" 
+                          placeholder="Area Name" 
+                        />
+                        <datalist id={`area-suggestions-${row.uid}`}>
+                          {COMMON_AREAS.map(area => <option key={area} value={area} />)}
+                        </datalist>
                       </td>
 
-                      <td className="p-1 border-r">
-                         <select 
-                            value={row.companyId} 
-                            onChange={(e) => handleCompanySelect(idx, e.target.value)} 
-                            className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs cursor-pointer"
-                          >
-                            <option value="">-- Company --</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
+                      {/* COMPANY SEARCH */}
+                      <td className="p-1 border-r relative">
+                         <input 
+                            list={`company-list-${row.uid}`}
+                            placeholder="Select Company"
+                            defaultValue={currentCompanyName} // Use defaultValue to allow typing
+                            onBlur={(e) => handleSearchableChange(idx, 'company', e.target.value)}
+                            // OnChange can be used if you want instant reaction, but onBlur is safer for typing
+                            key={`comp-${row.companyId}`} // Force re-render if ID changes externally
+                            className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs"
+                          />
+                          <datalist id={`company-list-${row.uid}`}>
+                            {companies.map(c => <option key={c.id} value={c.name} />)}
+                          </datalist>
                       </td>
 
+                      {/* CATALOG SEARCH */}
                       <td className="p-1 border-r">
                         <div className="flex flex-col justify-center h-full gap-1">
-                            <select 
-                              value={row.catalogId} 
-                              onChange={(e) => handleCatalogSelect(idx, e.target.value)} 
+                            <input 
+                              list={`catalog-list-${row.uid}`}
+                              placeholder={row.companyId ? "Select Catalog" : "-"}
                               disabled={!row.companyId}
+                              defaultValue={row.catalogName}
+                              onBlur={(e) => handleSearchableChange(idx, 'catalog', e.target.value)}
+                              key={`cat-${row.catalogId}`}
                               className="w-full h-8 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs disabled:opacity-50"
-                            >
-                              <option value="">-- Catalog --</option>
-                              {allCatalogs
-                                .filter(cat => cat.companyId === row.companyId)
-                                .map(cat => (
-                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                              ))}
-                            </select>
+                            />
+                            <datalist id={`catalog-list-${row.uid}`}>
+                              {rowCatalogs.map(cat => <option key={cat.id} value={cat.name} />)}
+                            </datalist>
+
                             {row.catalogType && (
                               <span className={`text-[10px] px-2 py-0.5 rounded-full border self-start ml-2 ${getBadgeColor(row.catalogType)}`}>
                                 {row.catalogType}
@@ -424,21 +487,26 @@ const MeasurementEditor: React.FC = () => {
                         </div>
                       </td>
 
+                      {/* PRODUCT SEARCH */}
                       <td className="p-1 border-r">
-                        <select value={row.productId} onChange={(e) => handleProductSelect(idx, e.target.value)} disabled={!row.catalogId} className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded disabled:opacity-50 text-xs">
-                          <option value="">-- Product --</option>
-                          {products.filter(p => p.catalogId === row.catalogId).map(p => <option key={p.id} value={p.id}>{p.name} - ₹{p.price}</option>)}
-                        </select>
+                        <input 
+                           list={`product-list-${row.uid}`}
+                           placeholder={row.catalogId ? "Select Product" : "-"}
+                           disabled={!row.catalogId}
+                           defaultValue={row.productName}
+                           onBlur={(e) => handleSearchableChange(idx, 'product', e.target.value)}
+                           key={`prod-${row.productId}`}
+                           className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded disabled:opacity-50 text-xs"
+                        />
+                        <datalist id={`product-list-${row.uid}`}>
+                           {rowProducts.map(p => (
+                             <option key={p.id} value={p.name}>{`₹${p.price}`}</option>
+                           ))}
+                        </datalist>
                       </td>
 
                       <td className="p-1 border-r">
-                        <select value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white rounded">
-  <option value="mm">mm</option>
-  <option value="cm">cm</option>
-  <option value="m">m</option>
-  <option value="ft">ft</option>
-  <option value="inch">inch</option>
-</select>
+                        <select value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white rounded"><option value="mm">mm</option><option value="cm">cm</option><option value="inch">inch</option></select>
                       </td>
                       <td className="p-1 border-r"><input type="number" step="0.01" value={row.width} onChange={(e) => updateRow(idx, 'width', e.target.value)} className="w-full h-10 px-3 text-right border-transparent bg-transparent focus:bg-white rounded" /></td>
                       <td className="p-1 border-r"><input type="number" step="0.01" value={row.height} onChange={(e) => updateRow(idx, 'height', e.target.value)} className="w-full h-10 px-3 text-right border-transparent bg-transparent focus:bg-white rounded" /></td>

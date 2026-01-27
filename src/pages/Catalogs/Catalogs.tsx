@@ -43,6 +43,10 @@ const Catalogs: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   
+  // Search States
+  const [searchQuery, setSearchQuery] = useState(''); // Sidebar search
+  const [productSearchQuery, setProductSearchQuery] = useState(''); // Product table search
+  
   // Dialog States
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -60,6 +64,7 @@ const Catalogs: React.FC = () => {
 
   useEffect(() => { 
     if (selectedCatalog) {
+      setProductSearchQuery(''); // Reset product search when changing catalogs
       fetchProducts(selectedCatalog);
     } else {
       setProducts([]);
@@ -206,6 +211,26 @@ const Catalogs: React.FC = () => {
     }
   };
 
+  // 1. Sidebar Filter: Companies
+  const filteredCompanies = companies.filter(company => {
+    const searchLower = searchQuery.toLowerCase();
+    const companyMatches = company.name.toLowerCase().includes(searchLower);
+    const hasMatchingCatalog = company.catalogs.some(cat => 
+      cat.name.toLowerCase().includes(searchLower)
+    );
+    return companyMatches || hasMatchingCatalog;
+  });
+
+  // 2. Product Table Filter: Products
+  const filteredProducts = products.filter(product => {
+    if (!productSearchQuery) return true;
+    const searchLower = productSearchQuery.toLowerCase();
+    return (
+      product.name.toLowerCase().includes(searchLower) ||
+      product.price.toString().includes(searchLower)
+    );
+  });
+
   return (
     <DashboardLayout>
       <div className="animate-fade-in space-y-6">
@@ -319,20 +344,34 @@ const Catalogs: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 min-h-[calc(100vh-250px)]">
-          {/* ACCORDION SIDEBAR - On mobile: max-height limit + scroll */}
+          {/* ACCORDION SIDEBAR */}
           <div className="card-premium p-4 overflow-y-auto max-h-60 md:max-h-[calc(100vh-200px)]">
             <h3 className="font-semibold mb-4 text-xs uppercase text-muted-foreground tracking-wider">
               Companies & Catalogs
             </h3>
+
+            {/* Sidebar Search Bar */}
+            <div className="relative mb-4">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search catalog..."
+                className="pl-9 h-9 text-sm"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
             <div className="space-y-2">
-              {companies.length === 0 ? (
+              {filteredCompanies.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm">No companies yet.</p>
-                  <p className="text-xs">Add a company to get started.</p>
+                  <p className="text-sm">
+                    {searchQuery ? 'No results found.' : 'No companies yet.'}
+                  </p>
+                  {!searchQuery && <p className="text-xs">Add a company to get started.</p>}
                 </div>
               ) : (
-                companies.map(company => (
+                filteredCompanies.map(company => (
                   <div key={company.id} className="border border-border rounded-lg overflow-hidden">
                     <div 
                       className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -396,14 +435,26 @@ const Catalogs: React.FC = () => {
           <div className="md:col-span-3 card-premium overflow-hidden flex flex-col">
              {selectedCatalog ? (
                <>
-                 <div className="p-4 border-b border-border bg-muted/20 flex justify-between items-center">
-                   <h3 className="font-semibold text-foreground">
-                     Products ({products.length})
-                   </h3>
-                   <div className="text-sm text-muted-foreground">
-                     {loading ? 'Loading...' : products.length === 0 ? 'No products' : <span className="hidden md:inline">Scroll to view all</span>}
+                 <div className="p-4 border-b border-border bg-muted/20 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+                   <div className="flex items-center gap-2">
+                     <h3 className="font-semibold text-foreground whitespace-nowrap">
+                       Products ({filteredProducts.length})
+                     </h3>
+                     {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground"/>}
+                   </div>
+
+                   {/* Product Search Bar */}
+                   <div className="relative w-full md:w-64">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search products by code..."
+                        className="pl-9 h-9 text-sm"
+                        value={productSearchQuery}
+                        onChange={(e) => setProductSearchQuery(e.target.value)}
+                      />
                    </div>
                  </div>
+
                  {/* Table Container - Horizontal Scroll on Mobile */}
                  <div className="overflow-x-auto flex-1">
                    {loading ? (
@@ -413,12 +464,17 @@ const Catalogs: React.FC = () => {
                          <p className="text-muted-foreground">Loading products...</p>
                        </div>
                      </div>
-                   ) : products.length === 0 ? (
+                   ) : filteredProducts.length === 0 ? (
                      <div className="flex items-center justify-center h-full text-muted-foreground">
                        <div className="text-center py-12">
                          <Search className="h-16 w-16 mx-auto mb-4 opacity-20" />
                          <p className="text-lg font-medium">No products found</p>
-                         <p className="text-sm mt-1">Upload an Excel file to add products to this catalog.</p>
+                         <p className="text-sm mt-1">
+                           {productSearchQuery 
+                             ? 'Try adjusting your search query.'
+                             : 'Upload an Excel file to add products to this catalog.'
+                           }
+                         </p>
                        </div>
                      </div>
                    ) : (
@@ -432,7 +488,7 @@ const Catalogs: React.FC = () => {
                          </tr>
                        </thead>
                        <tbody>
-                         {products.map((product) => (
+                         {filteredProducts.map((product) => (
                            <tr key={product.id} className="border-b hover:bg-muted/30 transition-colors">
                              <td className="px-4 py-3">
                                <p className="font-medium text-foreground">{product.name}</p>
