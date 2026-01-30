@@ -58,19 +58,20 @@ export default function DeepCalculation() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
- const [activeTab, setActiveTab] = useState<'Local' | 'Roman' | 'Forest'>('Local');
+const [activeTab, setActiveTab] = useState<'Local' | 'Roman' | 'Forest' | 'Somfy'>('Local');
 
-const localItems = items.filter(i => i.category === 'Local');
-const romanItems = items.filter(i => i.category === 'Roman');
-const forestItems = items.filter(i => i.category === 'Forest');
+  const localItems = items.filter(i => i.category === 'Local');
+  const romanItems = items.filter(i => i.category === 'Roman');
+  const forestItems = items.filter(i => i.category === 'Forest');
+  const somfyItems = items.filter(i => i.category === 'Somfy');
 
 const displayedItems = activeTab === 'Local' 
-  ? localItems 
-  : activeTab === 'Roman' 
-    ? romanItems 
-    : forestItems;
-  // ---------------------------
-
+    ? localItems 
+    : activeTab === 'Roman' 
+      ? romanItems 
+      : activeTab === 'Forest'
+        ? forestItems
+        : somfyItems; // 'Somfy' is the fallback (else)
   
   
   // --- DEFAULT RATES ---
@@ -288,9 +289,11 @@ const fetchData = async () => {
         unit: i.unit || i.selectionItem?.unit || 'mm',
         
         // ✅ FIX: Use saved category if available, otherwise fallback (fixes multi-type issue on load)
-        category: i.category || 
+      category: i.category || 
                  (i.selectionItem?.calculationType?.includes('Roman') ? 'Roman' : 
-                  i.selectionItem?.calculationType?.includes('Forest (Manual)') ? 'Forest' : 'Local'),
+                  i.selectionItem?.calculationType?.includes('Forest (Manual)') ? 'Forest' : 
+                  i.selectionItem?.calculationType?.includes('Somfy (Manual)') ? 'Somfy' : // <--- ADD THIS CHECK
+                  'Local'),
 
         panna: parseFloat(i.panna || 0),
         part: parseFloat(i.part || 1),
@@ -438,7 +441,23 @@ const fetchData = async () => {
           fabricRate: 0
         }));
       }
+
+      if (typeStr.includes('Somfy (Manual)')) {
+        allProcessedItems.push(calculateItemRow({
+          ...baseItem,
+          category: 'Somfy', // Maps to Somfy tab
+          
+          // Defaults for Somfy Manual (Adjust default rates if needed)
+          channelRate: 0,    // Somfy usually uses tracks, not standard channels
+          labourRate: 450,
+          fittingRate: 355,
+          fabricRate: 0,
+          
+          hasChannel: false // Default off for Somfy if not using channel
+        }));
+      }
     }
+
 
     // 4. Sort and Set
     if (allProcessedItems.length === 0) {
@@ -651,6 +670,7 @@ const RateBlock = ({ label, qty, rate, active, onCheck, onQty, onRate, color = '
     </div>
   );
 };
+// ... (rest of your component logic above)
 
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-8 w-8 text-purple-600" /></div>;
 
@@ -658,9 +678,10 @@ const RateBlock = ({ label, qty, rate, active, onCheck, onQty, onRate, color = '
     <DashboardLayout>
       <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-50">
         
+        {/* Header */}
         <div className="bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm z-20">
            <div className="flex items-center gap-4">
-             <Button variant="ghost" size="icon" onClick={() => navigate('/calculations/local/' + selectionId)}>
+             <Button variant="ghost" size="icon" onClick={() => navigate('/calculations/edit/' + selectionId)}>
                <ArrowLeft className="h-5 w-5 text-gray-500" />
              </Button>
              <div>
@@ -685,107 +706,107 @@ const RateBlock = ({ label, qty, rate, active, onCheck, onQty, onRate, color = '
            </div>
         </div>
 
-       {/* --- SECONDARY TOOLBAR WITH TABS --- */}
-<div className="bg-white border-b px-6 py-3 flex gap-4 overflow-x-auto shadow-sm z-10 items-center min-h-[60px]">
-  
-  <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
-  <button
-    onClick={() => setActiveTab('Local')}
-    className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-      activeTab === 'Local' 
-        ? 'bg-white text-purple-700 shadow-sm' 
-        : 'text-gray-500 hover:text-gray-700'
-    }`}
-  >
-    Local ({localItems.length})
-  </button>
-  <button
-    onClick={() => setActiveTab('Roman')}
-    className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-      activeTab === 'Roman' 
-        ? 'bg-white text-purple-700 shadow-sm' 
-        : 'text-gray-500 hover:text-gray-700'
-    }`}
-  >
-    Roman ({romanItems.length})
-  </button>
-  <button
-    onClick={() => setActiveTab('Forest')}
-    className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
-      activeTab === 'Forest' 
-        ? 'bg-white text-purple-700 shadow-sm' 
-        : 'text-gray-500 hover:text-gray-700'
-    }`}
-  >
-    Forest ({forestItems.length})
-  </button>
-</div>
+       {/* SECONDARY TOOLBAR WITH TABS */}
+        <div className="bg-white border-b px-6 py-3 flex gap-4 overflow-x-auto shadow-sm z-10 items-center min-h-[60px]">
+          <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
+            <button
+              onClick={() => setActiveTab('Local')}
+              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
+                activeTab === 'Local' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Local ({localItems.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('Roman')}
+              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
+                activeTab === 'Roman' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Roman ({romanItems.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('Forest')}
+              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
+                activeTab === 'Forest' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Forest ({forestItems.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('Somfy')}
+              className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${
+                activeTab === 'Somfy' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Somfy ({somfyItems.length})
+            </button>
+          </div>
 
-  <div className="h-6 w-px bg-gray-300 mx-2" /> {/* Divider */}
+          <div className="h-6 w-px bg-gray-300 mx-2" /> 
 
-  {/* BULK RATES (Existing Code) */}
-  <div className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500 whitespace-nowrap">
-    <Settings className="h-4 w-4" /> Rates:
-  </div>
-  
-  {Object.entries(bulkRates).map(([key, val]) => (
-    <div key={key} className="flex-none flex items-center border border-gray-200 rounded bg-white overflow-hidden shadow-sm h-9">
-       <span className="flex-shrink-0 text-[10px] uppercase px-3 bg-gray-50 text-gray-600 font-medium border-r h-full flex items-center justify-center min-w-[60px]">
-         {key}
-       </span>
-       <Input 
-         className="h-full w-20 text-xs text-center border-0 focus-visible:ring-0 rounded-none px-1" 
-         value={val} 
-         onChange={(e) => setBulkRates({...bulkRates, [key]: parseFloat(e.target.value)})} 
-       />
-       <button 
-         onClick={() => applyBulkRate(`${key}Rate`, Number(val))} 
-         className="flex-shrink-0 h-full px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 border-l transition-colors flex items-center justify-center"
-         title={`Apply ${val} to all ${key}`}
-       >
-         <Check className="h-4 w-4" />
-       </button>
-    </div>
-  ))}
-  
-  {/* ACTIONS (Existing Code) */}
-  <div className="ml-auto border-l pl-4 flex gap-2">
-     <Button variant="outline" size="sm" onClick={handleRecalculateAll} className="h-9 text-xs gap-2 text-gray-600 border-gray-300">
-        <RefreshCcw className="h-3 w-3" /> Recalculate
-     </Button>
-     <Button variant="outline" size="sm" onClick={handleResetToDefaults} className="h-9 text-xs gap-2 text-orange-600 border-orange-300 hover:bg-orange-50">
-        <RotateCcw className="h-3 w-3" /> Reset
-     </Button>
-  </div>
-</div>
-
-        <div className="flex-1 overflow-auto p-4 bg-gray-50/50">
-   <div className="max-w-[1600px] mx-auto space-y-3">
-     
-     {/* EMPTY STATE HANDLING */}
-     {displayedItems.length === 0 && (
-        <div className="text-center py-20 text-gray-400">
-          <p>No {activeTab} items found for this selection.</p>
+          {/* BULK RATES */}
+          <div className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500 whitespace-nowrap">
+            <Settings className="h-4 w-4" /> Rates:
+          </div>
+          
+          {Object.entries(bulkRates).map(([key, val]) => (
+            <div key={key} className="flex-none flex items-center border border-gray-200 rounded bg-white overflow-hidden shadow-sm h-9">
+               <span className="flex-shrink-0 text-[10px] uppercase px-3 bg-gray-50 text-gray-600 font-medium border-r h-full flex items-center justify-center min-w-[60px]">
+                 {key}
+               </span>
+               <Input 
+                 className="h-full w-20 text-xs text-center border-0 focus-visible:ring-0 rounded-none px-1" 
+                 value={val} 
+                 onChange={(e) => setBulkRates({...bulkRates, [key]: parseFloat(e.target.value)})} 
+               />
+               <button 
+                 onClick={() => applyBulkRate(`${key}Rate`, Number(val))} 
+                 className="flex-shrink-0 h-full px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 border-l transition-colors flex items-center justify-center"
+                 title={`Apply ${val} to all ${key}`}
+               >
+                 <Check className="h-4 w-4" />
+               </button>
+            </div>
+          ))}
+          
+          {/* ACTIONS */}
+          <div className="ml-auto border-l pl-4 flex gap-2">
+             <Button variant="outline" size="sm" onClick={handleRecalculateAll} className="h-9 text-xs gap-2 text-gray-600 border-gray-300">
+                <RefreshCcw className="h-3 w-3" /> Recalculate
+             </Button>
+             <Button variant="outline" size="sm" onClick={handleResetToDefaults} className="h-9 text-xs gap-2 text-orange-600 border-orange-300 hover:bg-orange-50">
+                <RotateCcw className="h-3 w-3" /> Reset
+             </Button>
+          </div>
         </div>
-     )}
 
-     {/* RENDER FILTERED ITEMS */}
-     {displayedItems.map((item) => (
-       <div key={item.selectionItemId} className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow p-3">
-         {/* ... (Existing Item Card Content) ... */}
-         {/* Ensure you use the existing code inside here unchanged */}
-         <div className="flex justify-between items-start border-b border-gray-100 pb-2 mb-2">
-            <div className="flex items-start gap-3">
-              <div className={`h-8 w-8 rounded flex items-center justify-center font-bold text-xs mt-1 ${
-  item.category === 'Roman' 
-    ? 'bg-orange-50 text-orange-700' 
-    : item.category === 'Forest'
-      ? 'bg-teal-50 text-teal-700'
-      : 'bg-purple-50 text-purple-700'
-}`}>
-  {item.areaName.substring(0,2).toUpperCase()}
-</div>
-              <div>
+        {/* MAIN CONTENT */}
+        <div className="flex-1 overflow-auto p-4 bg-gray-50/50">
+           <div className="max-w-[1600px] mx-auto space-y-3">
+             
+             {/* EMPTY STATE */}
+             {displayedItems.length === 0 && (
+                <div className="text-center py-20 text-gray-400">
+                  <p>No {activeTab} items found for this selection.</p>
+                </div>
+             )}
+
+             {/* RENDER ITEMS */}
+             {displayedItems.map((item) => (
+               <div key={item.selectionItemId} className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow p-3">
+                 <div className="flex justify-between items-start border-b border-gray-100 pb-2 mb-2">
+                    <div className="flex items-start gap-3">
+                      {/* COLOR CODED ICON - Cleaned Logic */}
+                      <div className={`h-8 w-8 rounded flex items-center justify-center font-bold text-xs mt-1 ${
+                        item.category === 'Roman' ? 'bg-orange-50 text-orange-700' :
+                        item.category === 'Forest' ? 'bg-teal-50 text-teal-700' :
+                        item.category === 'Somfy' ? 'bg-amber-50 text-amber-700' :
+                        'bg-purple-50 text-purple-700'
+                      }`}>
+                        {item.areaName.substring(0,2).toUpperCase()}
+                      </div>
+                      <div>
                         <div className="font-bold text-sm text-gray-900">{item.areaName}</div>
                         <div className="text-xs text-gray-500 flex gap-2">
                             <span className="font-medium text-purple-600">{item.productName}</span>

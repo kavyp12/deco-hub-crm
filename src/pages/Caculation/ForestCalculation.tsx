@@ -222,11 +222,18 @@ export default function ForestCalculation() {
     return basePrice || 0;
   };
 
-  const calculateTapePrice = (widthInMM: number, tapeType: string): number => {
-    const step1 = widthInMM / 21;
-    const roundedStep1 = roundCustom(step1);
-    const step2 = roundedStep1 * 1.38;
-    const finalQty = roundCustom(step2);
+  // --- [UPDATED] TAPE CALCULATION ---
+  const calculateTapePrice = (widthInInches: number, tapeType: string): number => {
+    // 1. Calculate panels (Width / 21)
+    const rawPanels = widthInInches / 21;
+    // 2. Round panels using custom logic
+    const panels = roundCustom(rawPanels);
+    
+    // 3. Multiply by 1.38
+    const rawMeters = panels * 1.38;
+    // 4. Round final meters
+    const finalQty = roundCustom(rawMeters);
+    
     const rate = TAPE_RATES.find(t => t.name === tapeType)?.rate || 0;
     return finalQty * rate;
   };
@@ -271,8 +278,9 @@ export default function ForestCalculation() {
           const trackPrice = calculateTrackPrice(rft, trackType);
           const runnerPrice = calculateRunnerPrice(rft, runnerType);
           
-          const widthMm = toInches(rawWidth, unit) * 25.4; 
-          const tapePrice = calculateTapePrice(widthMm, tapeType);
+          // [UPDATED] Use Inches for Tape Calculation
+          const widthInch = toInches(rawWidth, unit);
+          const tapePrice = calculateTapePrice(widthInch, tapeType);
           
           const motorPrice = i.motorPrice ?? (MOTOR_VARIANTS.find(m => m.id === motorType)?.price || 0);
           const remotePrice = i.remotePrice ?? (REMOTE_OPTIONS.find(r => r.id === remoteType)?.price || 0);
@@ -336,10 +344,12 @@ export default function ForestCalculation() {
           const runnerType = 'FES BASE AND FLEX HOOK';
           const tapeType = 'FLEX TAPE TRANSPARENT';
           
-          const widthMm = toInches(rawWidth, unit) * 25.4;
+          // [UPDATED] Use Inches for Tape Calculation
+          const widthInch = toInches(rawWidth, unit);
+
           const trackPrice = rft > 0 ? calculateTrackPrice(rft, trackType) : 0;
           const runnerPrice = rft > 0 ? calculateRunnerPrice(rft, runnerType) : 0;
-          const tapePrice = rawWidth > 0 ? calculateTapePrice(widthMm, tapeType) : 0;
+          const tapePrice = rawWidth > 0 ? calculateTapePrice(widthInch, tapeType) : 0;
 
           // --- KG Calculation ---
           const attributes = item.product?.attributes || {};
@@ -403,8 +413,9 @@ export default function ForestCalculation() {
         updatedItem.trackPrice = calculateTrackPrice(updatedItem.rft, item.trackType);
         updatedItem.runnerPrice = calculateRunnerPrice(updatedItem.rft, item.runnerType);
         
-        const widthMm = toInches(newWidth, item.unit) * 25.4;
-        updatedItem.tapePrice = calculateTapePrice(widthMm, item.tapeType);
+        // [UPDATED] Use Inches for Tape Calculation
+        const widthInch = toInches(newWidth, item.unit);
+        updatedItem.tapePrice = calculateTapePrice(widthInch, item.tapeType);
 
         // Update KG
         updatedItem.fabricQty = calculateFabricForKg(newWidth, newHeight, item.unit);
@@ -420,8 +431,9 @@ export default function ForestCalculation() {
       if (field === 'trackType') updatedItem.trackPrice = calculateTrackPrice(item.rft, value);
       if (field === 'runnerType') updatedItem.runnerPrice = calculateRunnerPrice(item.rft, value);
       if (field === 'tapeType') {
-        const widthMm = toInches(item.width, item.unit) * 25.4;
-        updatedItem.tapePrice = calculateTapePrice(widthMm, value);
+        // [UPDATED] Use Inches for Tape Calculation
+        const widthInch = toInches(item.width, item.unit);
+        updatedItem.tapePrice = calculateTapePrice(widthInch, value);
       }
 
       // 3. Motor & Remote Prices

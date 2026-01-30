@@ -1,6 +1,7 @@
+// [FILE: src/pages/Calculation/LocalCalculation.tsx]
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2, Ruler, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, Ruler } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -18,6 +19,7 @@ interface CalcRow {
   
   // Quantities
   panna: number;
+  labourPanna: number; 
   channel: number;
   fabric: number;
   blackout: number;
@@ -46,7 +48,7 @@ export default function LocalCalculation() {
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<CalcRow[]>([]);
 
-  // --- LOGIC: Exact match from your snippet ---
+  // --- LOGIC: Helper Functions ---
   const toInches = (value: number, unit: string) => {
     if (!value || isNaN(value)) return 0;
     const u = unit?.toLowerCase().trim() || 'mm';
@@ -58,35 +60,57 @@ export default function LocalCalculation() {
     return value;
   };
 
+  const customRound = (val: number) => {
+    const floor = Math.floor(val);
+    const decimal = val - floor;
+    return decimal > 0.09 ? floor + 1 : floor;
+  };
+
   const calculateQuantities = (row: CalcRow, field?: string, value?: any) => {
     const newRow = { ...row };
+    
     if (field) {
       // @ts-ignore
       newRow[field] = value;
+      if (['panna', 'labourPanna', 'channel', 'fabric', 'blackout', 'sheer', 'weightChain'].includes(field)) {
+         // @ts-ignore
+         newRow[field] = parseFloat(value) || 0;
+         return newRow; 
+      }
     }
 
     const wInch = toInches(newRow.width, newRow.unit);
     const hInch = toInches(newRow.height, newRow.unit);
 
-    // --- UPDATED PANNA LOGIC ---
-    // If decimal part is > 0.09 → go to the next full number
-    // Examples: 14.09 -> 14 | 14.091 -> 15 | 5.08 -> 5 | 17.50 -> 18
+    // 1. PANNA Logic
     const rawPanna = wInch > 0 ? wInch / 21 : 0;
-    const pannaFloor = Math.floor(rawPanna);
-    const pannaDecimal = rawPanna - pannaFloor;
+    const basePanna = customRound(rawPanna);
+    newRow.panna = basePanna;
 
-    newRow.panna = pannaDecimal > 0.09 ? pannaFloor + 1 : pannaFloor;
-    // ---------------------------
+    // 2. LABOUR PANNA Logic
+    let heightMultiplier = 1;
+    if (hInch >= 115 && hInch <= 145) {
+      heightMultiplier = 1.5;
+    } else if (hInch > 145 && hInch <= 280) {
+      heightMultiplier = 2;
+    } else if (hInch > 280) {
+      heightMultiplier = 3;
+    }
+
+    const rawLabourPanna = basePanna * heightMultiplier;
+    newRow.labourPanna = customRound(rawLabourPanna); 
+
+    // 3. CHANNEL Logic
+    const rawChannel = wInch > 0 ? wInch / 12 : 0;
+    newRow.channel = customRound(rawChannel);
     
-    newRow.channel = wInch > 0 ? wInch / 12 : 0;
-    
-    // Fabric Formula: hInch > 0 ? ((hInch + 15) / 39) * panna : 0
-    newRow.fabric = hInch > 0 ? ((hInch + 15) / 39) * newRow.panna : 0;
+    // 4. FABRIC Logic
+    newRow.fabric = hInch > 0 ? ((hInch + 15) / 39) * basePanna : 0;
 
-    // Weight Chain: hasSheer ? ((panna * 54) / 39) : 0
-    newRow.weightChain = newRow.hasSheer ? ((newRow.panna * 54) / 39) : 0;
+    // 5. WEIGHT CHAIN Logic
+    const rawWeightChain = newRow.hasSheer ? ((basePanna * 54) / 39) : 0;
+    newRow.weightChain = customRound(rawWeightChain);
 
-    // Blackout / Sheer = fabric value if checked
     newRow.blackout = newRow.hasBlackout ? newRow.fabric : 0;
     newRow.sheer = newRow.hasSheer ? newRow.fabric : 0;
 
@@ -102,8 +126,6 @@ export default function LocalCalculation() {
     try {
       const res = await api.get(`/calculations/local/${selectionId}`);
       
-      console.log('✅ Backend Response:', res.data); // DEBUG
-      
       if (res.data && res.data.items && res.data.items.length > 0) {
         const mapped = res.data.items.map((i: any) => {
           const baseItem = {
@@ -111,18 +133,19 @@ export default function LocalCalculation() {
             areaName: i.selectionItem?.details?.areaName || i.selectionItem?.areaName || 'Unknown Area',
             productName: i.selectionItem?.productName || 'Unknown Product',
             unit: i.selectionItem?.unit || 'mm',
-            width: parseFloat(i.selectionItem?.width || 0),   // Fresh Width
-            height: parseFloat(i.selectionItem?.height || 0), // Fresh Height
+            width: parseFloat(i.selectionItem?.width || 0),
+            height: parseFloat(i.selectionItem?.height || 0),
             
             panna: parseFloat(i.panna || 0),
+            labourPanna: parseFloat(i.labour || i.panna || 0),
             channel: parseFloat(i.channel || 0),
             fabric: parseFloat(i.fabric || 0),
             blackout: parseFloat(i.blackout || 0),
             sheer: parseFloat(i.sheer || 0),
             weightChain: parseFloat(i.weightChain || 0),
             
-            hasBlackout: Boolean(i.hasBlackout), // Preserve Toggles
-            hasSheer: Boolean(i.hasSheer),       // Preserve Toggles
+            hasBlackout: Boolean(i.hasBlackout),
+            hasSheer: Boolean(i.hasSheer),
             
             fabricRate: parseFloat(i.fabricRate || 0),
             blackoutRate: parseFloat(i.blackoutRate || 0),
@@ -133,15 +156,11 @@ export default function LocalCalculation() {
           };
           return calculateQuantities(baseItem);
         });
-        
-        console.log('✅ Mapped Rows:', mapped); // DEBUG
         setRows(mapped);
       } else {
-        console.error('❌ No items in response');
         toast({ title: "Warning", description: "No items found", variant: 'destructive' });
       }
     } catch (error) {
-      console.error('❌ Fetch Error:', error);
       toast({ title: "Error", description: "Failed to load data", variant: 'destructive' });
     } finally {
       setLoading(false);
@@ -151,7 +170,8 @@ export default function LocalCalculation() {
   const handleUpdate = (index: number, field: string, value: any) => {
     setRows(prev => {
       const newRows = [...prev];
-      newRows[index] = calculateQuantities(newRows[index], field, value);
+      const val = (field === 'width' || field === 'height') ? parseFloat(value) : value;
+      newRows[index] = calculateQuantities(newRows[index], field, val);
       return newRows;
     });
   };
@@ -159,7 +179,11 @@ export default function LocalCalculation() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.post(`/calculations/local/${selectionId}`, { items: rows });
+      const payload = rows.map(r => ({
+        ...r,
+        labour: r.labourPanna
+      }));
+      await api.post(`/calculations/local/${selectionId}`, { items: payload });
       toast({ title: "Success", description: "Quantities saved successfully" });
     } catch (error) {
       toast({ title: "Error", description: "Failed to save" });
@@ -167,8 +191,6 @@ export default function LocalCalculation() {
       setSaving(false);
     }
   };
-
-  
 
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-8 w-8 text-blue-600" /></div>;
 
@@ -190,11 +212,11 @@ export default function LocalCalculation() {
             </div>
           </div>
           <div className="flex gap-3">
-   <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
-     {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-     Save
-   </Button>
-</div>
+             <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+               Save
+             </Button>
+          </div>
         </div>
 
         {/* CRM Style Table */}
@@ -208,8 +230,12 @@ export default function LocalCalculation() {
                   <th className="p-4 w-24 text-center">Unit</th>
                   <th className="p-4 w-32 text-center">Dimensions (WxH)</th>
                   
-                  {/* Calculation Groups */}
-                  <th className="p-4 w-20 text-center bg-orange-50/50 text-orange-800 border-l border-orange-100">Panna</th>
+                  {/* Panna & Labour Combined Column */}
+                  <th className="p-4 w-24 text-center bg-orange-50/50 text-orange-800 border-l border-orange-100">
+                    Panna
+                    <div className="text-[9px] font-normal opacity-70">(Lab if &gt;115)</div>
+                  </th>
+                  
                   <th className="p-4 w-24 text-center bg-orange-50/50 text-orange-800 border-r border-orange-100">Channel</th>
                   
                   <th className="p-4 w-24 text-center bg-green-50/50 text-green-800 border-l border-green-100">Fabric</th>
@@ -260,23 +286,78 @@ export default function LocalCalculation() {
                        </div>
                     </td>
 
-                    {/* Calculated Columns */}
-                    <td className="p-4 text-center font-bold text-orange-700 bg-orange-50/20 border-l border-orange-50">{row.panna}</td>
-                    <td className="p-4 text-center font-bold text-orange-700 bg-orange-50/20 border-r border-orange-100">{row.channel.toFixed(2)}</td>
+                    {/* ✅ PANNA + CONDITIONAL LABOUR PANNA */}
+                    <td className="p-2 text-center bg-orange-50/20 border-l border-orange-50 align-top">
+                      {/* Main Panna */}
+                      <Input 
+                        type="number"
+                        className="h-9 w-16 text-center mx-auto bg-white border-orange-200 text-orange-700 font-bold"
+                        value={row.panna}
+                        onChange={(e) => handleUpdate(idx, 'panna', e.target.value)}
+                      />
+                      
+                      {/* Conditional Labour Panna (Only if different) */}
+                      {row.labourPanna !== row.panna && (
+                        <div className="mt-1 flex items-center justify-center gap-1 animate-in fade-in slide-in-from-top-1">
+                          <span className="text-[8px] font-bold text-red-500 uppercase tracking-tighter">Lab</span>
+                          {/* 🔥 UPDATED STYLE: Smaller box with no padding to ensure visibility */}
+                          <Input 
+                            type="number"
+                            className="h-6 w-12 text-center text-[10px] px-0 bg-red-50 border-red-200 text-red-700 font-bold min-h-0"
+                            value={row.labourPanna}
+                            onChange={(e) => handleUpdate(idx, 'labourPanna', e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </td>
+
+                    {/* CHANNEL */}
+                    <td className="p-2 text-center bg-orange-50/20 border-r border-orange-100">
+                       <Input 
+                        type="number"
+                        className="h-9 w-16 text-center mx-auto bg-white border-orange-200 text-orange-700 font-bold"
+                        value={row.channel}
+                        onChange={(e) => handleUpdate(idx, 'channel', e.target.value)}
+                      />
+                    </td>
                     
-                    <td className="p-4 text-center font-bold text-green-700 bg-green-50/20 border-l border-green-50">{row.fabric.toFixed(2)}</td>
+                    {/* FABRIC */}
+                    <td className="p-2 text-center bg-green-50/20 border-l border-green-50">
+                       <Input 
+                        type="number"
+                        className="h-9 w-20 text-center mx-auto bg-white border-green-200 text-green-700 font-bold"
+                        value={row.fabric ? row.fabric.toFixed(2) : ''}
+                        onChange={(e) => handleUpdate(idx, 'fabric', e.target.value)}
+                      />
+                    </td>
                     
-                    <td className="p-4 text-center bg-green-50/20">
+                    {/* BLACKOUT */}
+                    <td className="p-2 text-center bg-green-50/20">
                       <div className="flex flex-col items-center gap-1">
                         <Checkbox checked={row.hasBlackout} onCheckedChange={(c) => handleUpdate(idx, 'hasBlackout', c)} />
-                        {row.hasBlackout && <span className="text-xs font-bold text-green-700">{row.blackout.toFixed(2)}</span>}
+                        {row.hasBlackout && (
+                           <Input 
+                            type="number"
+                            className="h-8 w-16 text-center text-xs bg-white border-green-200 text-green-700"
+                            value={row.blackout ? row.blackout.toFixed(2) : ''}
+                            onChange={(e) => handleUpdate(idx, 'blackout', e.target.value)}
+                          />
+                        )}
                       </div>
                     </td>
                     
-                    <td className="p-4 text-center bg-green-50/20 border-r border-green-100">
+                    {/* SHEER */}
+                    <td className="p-2 text-center bg-green-50/20 border-r border-green-100">
                       <div className="flex flex-col items-center gap-1">
                         <Checkbox checked={row.hasSheer} onCheckedChange={(c) => handleUpdate(idx, 'hasSheer', c)} />
-                        {row.hasSheer && <span className="text-xs font-bold text-green-700">{row.sheer.toFixed(2)}</span>}
+                        {row.hasSheer && (
+                           <Input 
+                            type="number"
+                            className="h-8 w-16 text-center text-xs bg-white border-green-200 text-green-700"
+                            value={row.sheer ? row.sheer.toFixed(2) : ''}
+                            onChange={(e) => handleUpdate(idx, 'sheer', e.target.value)}
+                          />
+                        )}
                       </div>
                     </td>
 

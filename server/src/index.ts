@@ -1119,7 +1119,7 @@ app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: R
 
     // 3. Filter Selection Items: Only get items assigned to "Somfy"
     const relevantSelectionItems = selection.items.filter(item => 
-      item.calculationType && item.calculationType.includes('Somfy')
+      item.calculationType && item.calculationType.split(',').includes('Somfy')
     );
 
     // 4. Merge: Combine fresh Selection items with saved Somfy data
@@ -1749,83 +1749,356 @@ app.get('/api/quotations', authenticateToken, async (req: Request, res: Response
     res.status(500).json({ error: 'Failed to fetch quotations' });
   }
 });
-// 2. GENERATE NEW QUOTATION (UPDATED LOGIC)
-app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Response) => {
-  const { selectionId, quotationType } = req.body; 
-  
-  try {
-    const rawData = await getConsolidatedQuoteData(selectionId); 
-    const selection = rawData.selection;
+// [FILE: index.ts] - Search for the "GENERATE NEW QUOTATION" route and replace it
 
-    // Generate Quote Number
+// [FILE: src/index.ts]
+// CORRECTED QUOTATION GENERATION ENDPOINT
+// This replaces the /api/quotations/generate endpoint in your index.ts file
+
+// ==========================================
+// COMPLETE FIXED QUOTATION GENERATION ENDPOINT
+// Replace the existing /api/quotations/generate endpoint in index.ts
+// ==========================================
+
+app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Response) => {
+  const { selectionId, quotationType } = req.body;
+
+  if (!selectionId) {
+    return res.status(400).json({ error: 'Selection ID is required' });
+  }
+
+  try {
+    console.log('🔵 Generating quotation for selection:', selectionId, 'Type:', quotationType);
+
+    // ---------------------------------------------------------
+    // 1. FETCH SELECTION WITH ALL RELATED DATA
+    // ---------------------------------------------------------
+    const selection = await prisma.selection.findUnique({
+      where: { id: selectionId },
+      include: {
+        inquiry: { include: { sales_person: true } },
+        items: {
+          include: {
+            product: { 
+              include: { 
+                catalog: { 
+                  include: { company: true } 
+                } 
+              } 
+            }
+          }
+        },
+        deepCalculation: {
+          include: {
+            items: {
+              include: {
+                selectionItem: {
+                  include: {
+                    product: {
+                      include: {
+                        catalog: {
+                          include: { company: true }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        forestCalculation: {
+          include: {
+            items: {
+              include: {
+                selectionItem: {
+                  include: {
+                    product: true
+                  }
+                }
+              }
+            }
+          }
+        },
+        somfyCalculation: {
+          include: {
+            items: {
+              include: {
+                selectionItem: {
+                  include: {
+                    product: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!selection) {
+      return res.status(404).json({ error: 'Selection not found' });
+    }
+
+    console.log('✅ Selection found:', selection.selection_number);
+    console.log('📊 Deep calc items:', selection.deepCalculation?.items.length || 0);
+
+    // ---------------------------------------------------------
+    // 2. GENERATE QUOTE NUMBER
+    // ---------------------------------------------------------
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+    
     const counterRecord = await prisma.quotationCounter.upsert({
       where: { year_month: yearMonth },
       update: { counter: { increment: 1 } },
       create: { year_month: yearMonth, counter: 1 },
     });
-    const quoteNumber = `SB${yearMonth}${counterRecord.counter.toString().padStart(3, '0')}`;
+    
+    const quoteNumber = `SM${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
+    console.log('📝 Generated quote number:', quoteNumber);
 
-    let quoteItems;
+    // ---------------------------------------------------------
+    // 3. BUILD QUOTATION ITEMS FROM DEEP CALCULATION
+    // ---------------------------------------------------------
+    const deepCalcItems = selection.deepCalculation?.items || [];
 
-    if (quotationType === 'simple') {
-      // ✅ SIMPLE LOGIC: Group items by AREA
-      // We use a Map or Object to aggregate totals per area
-      const groupedItems: Record<string, any> = {};
+    if (deepCalcItems.length === 0) {
+      return res.status(400).json({ error: 'No deep calculation found. Please calculate first.' });
+    }
 
-      rawData.items.forEach((item: any) => {
-        // Use Area name as key, or 'General' if missing
-        const areaKey = item.area || 'General';
+    // COLLECT ITEMS BY TYPE
+    const fabricsByProduct = new Map<string, any>();
+    let totalBlackoutQty = 0;
+    let blackoutRate = 0;
+    
+    let totalChannelCost = 0;
+    let totalLabourCost = 0;
+    let totalFittingCost = 0;
+    
+    const forestItems: any[] = [];
+    const somfyItems: any[] = [];
 
-        if (!groupedItems[areaKey]) {
-          groupedItems[areaKey] = {
-            areaName: areaKey,
-            totalCost: 0,
-            itemCount: 0,
-            unit: 'Lot' // Simple quotes usually use "Lot" or "Set"
-          };
+    // Process deep calculation items
+    for (const deepItem of deepCalcItems) {
+      const selItem = deepItem.selectionItem;
+      const details = selItem?.details as any;
+      const areaName = details?.areaName || 'Unknown Area';
+      const product = selItem?.product;
+
+      // FABRIC - Group by product
+      if (deepItem.fabric > 0 && product) {
+        const fabricKey = `${product.id}`;
+        
+        if (fabricsByProduct.has(fabricKey)) {
+          const existing = fabricsByProduct.get(fabricKey);
+          existing.quantity += Number(deepItem.fabric);
+          // Add area to description if multiple
+          if (!existing.description.includes(areaName)) {
+            existing.areas.push(areaName);
+          }
+        } else {
+          fabricsByProduct.set(fabricKey, {
+            description: `${areaName} Main Fabric`,
+            areas: [areaName],
+            quantity: Number(deepItem.fabric),
+            unit: 'Mtr',
+            unitPrice: Number(deepItem.fabricRate),
+            gstPercent: 12,
+            productName: product.name,
+            catalogName: product.catalog?.name || '',
+            companyName: product.catalog?.company?.name || ''
+          });
         }
+      }
 
-        // Add to the group total
-        groupedItems[areaKey].totalCost += item.total;
-        groupedItems[areaKey].itemCount += 1;
-      });
+      // BLACKOUT - Aggregate
+      if (deepItem.blackout > 0) {
+        totalBlackoutQty += Number(deepItem.blackout);
+        blackoutRate = Number(deepItem.blackoutRate);
+      }
 
-      // Convert the grouped object back to an array for the DB
-      quoteItems = Object.values(groupedItems).map((group: any, index: number) => ({
-        srNo: index + 1,
-        // Description says "Furnishing work for [Area]"
-        description: `Window Furnishing & Decor for ${group.areaName}`,
-        quantity: 1, // We treat the whole area as 1 unit
-        unit: 'Lot',
-        unitPrice: Math.ceil(group.totalCost), // The total price becomes the unit price
-        discountPercent: 0,
-        gstPercent: 12, // Default GST for aggregated items
-      }));
+      // CHANNEL - Sum cost
+      if (deepItem.channel > 0) {
+        totalChannelCost += Number(deepItem.channel) * Number(deepItem.channelRate);
+      }
 
-    } else {
-      // ✅ DETAILED LOGIC: Keep 1-to-1 mapping (As you had before)
-      quoteItems = rawData.items.map((item: any, index: number) => {
-        const unitPrice = item.qty > 0 ? (item.total / item.qty) : 0;
+      // LABOUR - Sum cost
+      const labourCost = Number(deepItem.labour) * Number(deepItem.labourRate);
+      if (labourCost > 0) {
+        totalLabourCost += labourCost;
+      }
 
-        return {
-          srNo: index + 1,
-          description: `${item.desc} (${item.area})`, // Description + Area
-          quantity: item.qty,
-          unit: item.unit,
-          unitPrice: Math.ceil(unitPrice),
-          discountPercent: 0,
-          gstPercent: 12,
-        };
+      // FITTING - Sum cost
+      const fittingCost = Number(deepItem.fitting) * Number(deepItem.fittingRate);
+      if (fittingCost > 0) {
+        totalFittingCost += fittingCost;
+      }
+    }
+
+    // Process Forest hardware
+    const forestCalc = selection.forestCalculation;
+    if (forestCalc?.items) {
+      forestCalc.items.forEach((item: any) => {
+        const details = item.selectionItem?.details as any;
+        const area = details?.areaName || 'Unknown Area';
+
+        if (item.trackFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Track`,
+            quantity: 1,
+            unit: 'Set',
+            unitPrice: Number(item.trackFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.motorFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Motor`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.motorFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.remoteFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Remote`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.remoteFinal),
+            gstPercent: 18
+          });
+        }
       });
     }
 
-    // Create the Quotation in DB
+    // Process Somfy hardware
+    const somfyCalc = selection.somfyCalculation;
+    if (somfyCalc?.items) {
+      somfyCalc.items.forEach((item: any) => {
+        const details = item.selectionItem?.details as any;
+        const area = details?.areaName || 'Unknown Area';
+
+        if (item.trackFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Track`,
+            quantity: 1,
+            unit: 'Set',
+            unitPrice: Number(item.trackFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.motorFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Motor`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.motorFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.remoteFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Remote`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.remoteFinal),
+            gstPercent: 18
+          });
+        }
+      });
+    }
+
+    // =====================================================
+    // ASSEMBLE FINAL ITEMS IN EXCEL ORDER
+    // =====================================================
+    const finalItems: any[] = [];
+
+    // 1. ALL FABRIC LINES (with proper descriptions showing area + fabric name)
+    fabricsByProduct.forEach((item) => {
+      const areaList = item.areas.length > 1 ? item.areas.join(', ') : item.areas[0];
+      const fabricDesc = item.companyName 
+        ? `${areaList} Main Fabric` 
+        : `${areaList} Main Fabric`;
+      
+      finalItems.push({
+        description: fabricDesc,
+        quantity: item.quantity,
+        unit: item.unit,
+        unitPrice: item.unitPrice,
+        discountPercent: 0,
+        gstPercent: item.gstPercent
+      });
+    });
+
+    // 2. BLACKOUT (single aggregated line)
+    if (totalBlackoutQty > 0) {
+      finalItems.push({
+        description: 'Blackout',
+        quantity: totalBlackoutQty,
+        unit: 'Mtr',
+        unitPrice: blackoutRate,
+        discountPercent: 0,
+        gstPercent: 12
+      });
+    }
+
+    // 3. ALL CURTAIN CHANNEL, LABOUR AND FITTING (single line)
+    const totalChannelLabourFitting = totalChannelCost + totalLabourCost + totalFittingCost;
+    const areaCount = selection.items.length || 1;
+    
+    if (totalChannelLabourFitting > 0) {
+      finalItems.push({
+        description: 'All Curtain Channel, Labour and Fitting',
+        quantity: areaCount,
+        unit: 'Nos',
+        unitPrice: totalChannelLabourFitting, // Show total, not divided
+        discountPercent: 0,
+        gstPercent: 18
+      });
+    }
+
+    // 4. Forest/Somfy Hardware
+    forestItems.forEach(item => {
+      finalItems.push({
+        ...item,
+        discountPercent: 0
+      });
+    });
+
+    somfyItems.forEach(item => {
+      finalItems.push({
+        ...item,
+        discountPercent: 0
+      });
+    });
+
+    // 5. Transportation (Optional - uncomment if needed)
+    // finalItems.push({
+    //   description: 'Transportation (Approx)',
+    //   quantity: 1,
+    //   unit: 'Nos',
+    //   unitPrice: 1000,
+    //   discountPercent: 0,
+    //   gstPercent: 18
+    // });
+
+    // Add serial numbers
+    const quoteItems = finalItems.map((item, index) => ({
+      srNo: index + 1,
+      ...item
+    }));
+
+    console.log('📦 Generated items:', quoteItems.length);
+
+    // ---------------------------------------------------------
+    // 4. CREATE QUOTATION IN DATABASE
+    // ---------------------------------------------------------
     const newQuote = await prisma.quotation.create({
       data: {
         quotation_number: quoteNumber,
-        quotationType: quotationType || 'detailed',
+        quotationType: quotationType || 'simple',
         selectionId,
         clientName: selection.inquiry?.client_name || 'Valued Client',
         clientAddress: selection.inquiry?.address || '',
@@ -1836,17 +2109,37 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
         transportationCharge: 0,
         installationCharge: 0,
         grandTotal: 0,
+        status: 'draft',
         created_by_id: req.user.id,
         items: {
           create: quoteItems.map(item => {
-            const calcs = calculateRow(item);
+            const qty = Number(item.quantity);
+            const rate = Number(item.unitPrice);
+            const subtotal = qty * rate;
+            
+            const discPct = Number(item.discountPercent) || 0;
+            const discAmt = subtotal * (discPct / 100);
+            
+            const taxable = subtotal - discAmt;
+            
+            const gstPct = Number(item.gstPercent) || 0;
+            const gstAmt = taxable * (gstPct / 100);
+            
+            const total = taxable + gstAmt;
+
             return {
-              ...item,
-              subtotal: item.quantity * item.unitPrice,
-              taxableValue: (item.quantity * item.unitPrice) - calcs.discountAmount,
-              discountAmount: calcs.discountAmount,
-              gstAmount: calcs.gstAmount,
-              total: calcs.total
+              srNo: item.srNo,
+              description: item.description,
+              quantity: qty,
+              unit: item.unit,
+              unitPrice: rate,
+              discountPercent: discPct,
+              discountAmount: discAmt,
+              gstPercent: gstPct,
+              gstAmount: gstAmt,
+              subtotal: subtotal,
+              taxableValue: taxable,
+              total: total
             };
           })
         }
@@ -1854,29 +2147,51 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       include: { items: true }
     });
 
-    // Recalculate Totals (Same as before)
-    const subTotal = newQuote.items.reduce((acc, i) => acc + (i.quantity * i.unitPrice), 0);
-    const discountTotal = newQuote.items.reduce((acc, i) => acc + i.discountAmount, 0);
+    // ---------------------------------------------------------
+    // 5. CALCULATE AND UPDATE TOTALS
+    // ---------------------------------------------------------
+    const subTotal = newQuote.items.reduce((acc, i) => acc + Number(i.subtotal), 0);
+    const discountTotal = newQuote.items.reduce((acc, i) => acc + Number(i.discountAmount), 0);
     const taxableValue = subTotal - discountTotal;
-    const gstTotal = newQuote.items.reduce((acc, i) => acc + i.gstAmount, 0);
+    const gstTotal = newQuote.items.reduce((acc, i) => acc + Number(i.gstAmount), 0);
     const grandTotal = taxableValue + gstTotal;
 
-    const updatedQuote = await prisma.quotation.update({
+    await prisma.quotation.update({
       where: { id: newQuote.id },
-      data: { subTotal, discountTotal, taxableValue, gstTotal, grandTotal },
-      include: { 
-        items: { orderBy: { srNo: 'asc' } },
-        selection: { include: { inquiry: { include: { sales_person: true } } } }
-      }
+      data: { subTotal, discountTotal, taxableValue, gstTotal, grandTotal }
     });
 
-    res.json(updatedQuote);
+    console.log('✅ Quotation created successfully:', newQuote.id);
+
+    // ---------------------------------------------------------
+    // 6. RETURN THE CREATED QUOTATION WITH ID
+    // ---------------------------------------------------------
+    res.json({
+      id: newQuote.id,  // ✅ IMPORTANT: Return the ID
+      quotation_number: quoteNumber,
+      quotationType: quotationType || 'simple',
+      selectionId,
+      clientName: selection.inquiry?.client_name || 'Valued Client',
+      clientAddress: selection.inquiry?.address || '',
+      items: quoteItems,
+      subTotal,
+      discountTotal,
+      taxableValue,
+      gstTotal,
+      transportationCharge: 0,
+      installationCharge: 0,
+      grandTotal
+    });
 
   } catch (error) {
-    console.error('❌ Generate quotation error:', error);
-    res.status(500).json({ error: 'Failed to generate quotation' });
+    console.error('❌ Quotation generation error:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate quotation',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
+
 // 3. GET SINGLE QUOTATION BY ID (Must be AFTER /generate)
 app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
   try {

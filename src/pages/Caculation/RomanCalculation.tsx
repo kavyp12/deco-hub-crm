@@ -62,8 +62,8 @@ export default function RomanCalculation() {
     const wInch = toInches(width, unit);
     const hInch = toInches(height, unit);
     
-    // PART: If Width > 100 inch -> w/50 (exact decimal), else 1
-    const part = wInch > 100 ? (wInch / 50) : 1;
+    // UPDATED: Check if > 50 instead of > 100
+    const part = wInch > 50 ? (wInch / 50) : 1;
     
     // PANNA: (w * h) / 144. If result < 16 -> 16. Else -> Round Up
     const rawPanna = (wInch * hInch) / 144;
@@ -75,7 +75,7 @@ export default function RomanCalculation() {
     
     return { part: formatNumber(part), panna, fabric: formatNumber(fabric) };
   };
-
+  
   useEffect(() => {
     fetchData();
   }, [selectionId]);

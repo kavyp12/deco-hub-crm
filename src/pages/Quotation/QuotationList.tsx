@@ -7,12 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast'; // Import Toast
+import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 
 export default function QuotationList() {
   const navigate = useNavigate();
-  const { toast } = useToast(); // Hook for notifications
+  const { toast } = useToast();
   const [quotes, setQuotes] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -55,6 +55,12 @@ export default function QuotationList() {
         variant: "destructive" 
       });
     }
+  };
+
+  // ✅ FIX: Handle edit based on quotation type
+  const handleEdit = (quote: any) => {
+    // Navigate to edit page - the QuotationEdit component will handle the type internally
+    navigate(`/quotations/edit/${quote.id}`);
   };
 
   const filtered = quotes.filter((q: any) => 
@@ -139,12 +145,12 @@ export default function QuotationList() {
                         <td className="px-4 py-3 text-right font-bold">₹{q.grandTotal.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right flex justify-end gap-1">
                           
-                          {/* Edit Button */}
+                          {/* ✅ FIXED Edit Button */}
                           <Button 
                             variant="ghost" 
                             size="sm" 
                             className="text-gray-500 hover:text-blue-600 hover:bg-blue-50"
-                            onClick={() => navigate(`/quotations/edit/${q.id}`)}
+                            onClick={() => handleEdit(q)}
                             title="Edit"
                           >
                             <Pencil className="h-4 w-4" />
@@ -161,7 +167,7 @@ export default function QuotationList() {
                             <Printer className="h-4 w-4" />
                           </Button>
 
-                          {/* ✅ DELETE BUTTON */}
+                          {/* Delete Button */}
                           <Button 
                             variant="ghost" 
                             size="sm" 

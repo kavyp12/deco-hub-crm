@@ -87,8 +87,14 @@ interface SomfyItem {
   areaName: string;
   productName: string;
   width: number;
+  height: number; // Added Height for KG calc
   unit: string;
   
+  // KG Logic
+  gsm: number;
+  fabricQty: number;
+  motorKg: number;
+
   // Track
   trackType: string;
   trackDuty: string;
@@ -120,6 +126,18 @@ interface SomfyItem {
 // UTILS
 // ==========================================
 
+// Helper to safely parse numbers
+const toInches = (value: number, unit: string) => {
+    if (!value || isNaN(value)) return 0;
+    const u = unit?.toLowerCase().trim() || 'mm';
+    if (u === 'inch' || u === 'inches' || u === '"') return value;
+    if (u === 'mm') return value / 25.4;
+    if (u === 'cm') return value / 2.54;
+    if (u === 'ft' || u === 'feet') return value * 12;
+    if (u === 'm' || u === 'meter') return value * 39.3701;
+    return value;
+};
+
 const toMeters = (val: number, unit: string) => {
   if (!val) return 0;
   const u = unit.toLowerCase().trim();
@@ -141,6 +159,55 @@ const getSomfyRounding = (meters: number) => {
   return Math.max(2, integerPart); // Minimum is usually 2m
 };
 
+// --- ROBUST GSM FINDER (From Forest) ---
+const findGsmInAttributes = (attributes: any) => {
+  if (!attributes || typeof attributes !== 'object') return 0;
+  
+  let valStr = attributes['Weight/Mt'] || attributes['Weight/mt'] || attributes['GSM'] || attributes['gsm'];
+  
+  if (!valStr) {
+    const keys = Object.keys(attributes);
+    for (const key of keys) {
+      if (key.toLowerCase().includes('weight') || key.toLowerCase().includes('gsm')) {
+        valStr = attributes[key];
+        break;
+      }
+    }
+  }
+
+  if (!valStr) return 0;
+  const val = parseFloat(String(valStr));
+  return isNaN(val) ? 0 : val;
+};
+
+// --- KG SPECIFIC CALCULATION (From Forest) ---
+const calculateFabricForKg = (widthVal: number, heightVal: number, unit: string) => {
+  const wInch = toInches(widthVal, unit);
+  const hInch = toInches(heightVal, unit);
+
+  if (wInch <= 0 || hInch <= 0) return 0;
+
+  const rawPanna = wInch / 21;
+  const pannaFloor = Math.floor(rawPanna);
+  const pannaDecimal = rawPanna - pannaFloor;
+  const panna = pannaDecimal > 0.09 ? pannaFloor + 1 : pannaFloor;
+
+  const fabric = ((hInch + 15) / 39) * panna;
+  return parseFloat(fabric.toFixed(2));
+};
+
+const calculateMotorKg = (fabricQty: number, gsm: number, areaName: string) => {
+  const isMainCurtain = areaName && areaName.toUpperCase().includes('(M)');
+  const blackoutGsm = isMainCurtain ? 280 : 0;
+  
+  const totalGsm = (gsm || 0) + blackoutGsm;
+
+  // Formula: (TotalGSM * 1.39 * FabricQty) / 1000
+  const kg = (totalGsm * 1.39 * fabricQty) / 1000;
+  
+  return parseFloat(kg.toFixed(2));
+};
+
 // ==========================================
 // COMPONENT
 // ==========================================
@@ -158,15 +225,32 @@ const SomfyCalculation = () => {
       try {
         const res = await api.get(`/calculations/somfy/${selectionId}`);
         const dataItems = res.data.items.map((item: any) => {
-          // Initialize width from selection if not saved
-          const width = item.selectionItem.width || 0;
+          
+          // Data Extraction for KG Logic
+          const attributes = item.selectionItem?.product?.attributes || {};
+          const gsm = findGsmInAttributes(attributes);
+          const areaName = item.selectionItem?.details?.areaName || item.selectionItem?.areaName || 'Area';
+          const rawWidth = parseFloat(item.selectionItem?.width || 0);
+          const rawHeight = parseFloat(item.selectionItem?.height || 0);
+          const unit = item.selectionItem?.unit || 'mm';
+
+          // Initial Calculation
+          const fabricQty = calculateFabricForKg(rawWidth, rawHeight, unit);
+          const motorKg = calculateMotorKg(fabricQty, gsm, areaName);
+
           return {
             selectionItemId: item.selectionItemId,
-            areaName: item.selectionItem.details?.areaName || item.selectionItem.areaName || 'Area',
-            productName: item.selectionItem.productName || 'Item',
-            width: width,
-            unit: item.selectionItem.unit || 'mm',
+            areaName,
+            productName: item.selectionItem?.productName || 'Item',
+            width: rawWidth,
+            height: rawHeight,
+            unit,
             
+            // KG Props
+            gsm,
+            fabricQty,
+            motorKg,
+
             trackType: item.trackType || 'Ripple',
             trackDuty: item.trackDuty || 'Medium',
             trackPrice: item.trackPrice || 0,
@@ -186,7 +270,7 @@ const SomfyCalculation = () => {
           };
         });
         setItems(dataItems);
-        // Run initial calculation
+        // Run initial calculation to fill derived fields
         setItems(prev => prev.map(calcRow));
       } catch (err) {
         toast({ title: "Error loading data", variant: "destructive" });
@@ -219,12 +303,16 @@ const SomfyCalculation = () => {
       else trackPrice = row.medium; // default medium
     }
 
-    // 2. Lookup Prices
+    // 2. KG Calculation Update (in case dimensions changed)
+    const fabricQty = calculateFabricForKg(item.width, item.height, item.unit);
+    const motorKg = calculateMotorKg(fabricQty, item.gsm, item.areaName);
+
+    // 3. Lookup Prices
     const motor = MOTORS.find(m => m.name === item.motorName) || { price: 0 };
     const remote = REMOTES.find(r => r.name === item.remoteName) || { price: 0 };
 
-    // 3. GST Calculations
-    const trackBasic = trackPrice; // + Any extras if needed later
+    // 4. GST Calculations
+    const trackBasic = trackPrice; 
     const trackGst = trackBasic * 0.18;
     const trackFinal = Math.round(trackBasic + trackGst);
 
@@ -238,6 +326,8 @@ const SomfyCalculation = () => {
 
     return {
       ...item,
+      fabricQty,
+      motorKg,
       trackPrice,
       roundedMeters,
       bracketLabel: row?.label || '',
@@ -257,12 +347,13 @@ const SomfyCalculation = () => {
       // Update the specific field
       const updated = { ...item, [field]: value };
       
-      // If we changed width, ensure it's a number
-      if (field === 'width') {
-         updated.width = parseFloat(value) || 0;
+      // If we changed width/height, ensure it's a number
+      if (field === 'width' || field === 'height') {
+         // @ts-ignore
+         updated[field] = parseFloat(value) || 0;
       }
 
-      // Recalculate costs
+      // Recalculate costs & KG
       return calcRow(updated);
     }));
   };
@@ -273,6 +364,10 @@ const SomfyCalculation = () => {
       await api.post(`/calculations/somfy/${selectionId}`, { 
         items: items.map(i => ({
           selectionItemId: i.selectionItemId,
+          // Save updated dims
+          width: i.width,
+          height: i.height,
+          
           trackType: i.trackType,
           trackDuty: i.trackDuty,
           trackPrice: i.trackPrice,
@@ -284,7 +379,9 @@ const SomfyCalculation = () => {
           // Saving calculated values for record/invoicing
           trackFinal: i.trackFinal,
           motorFinal: i.motorFinal,
-          remoteFinal: i.remoteFinal
+          remoteFinal: i.remoteFinal,
+          
+          motorKg: i.motorKg // Optional: Save KG if backend supports it
         }))
       });
       toast({ title: "Somfy Calculation Saved" });
@@ -337,6 +434,7 @@ const SomfyCalculation = () => {
                   <tr>
                     <th className="px-4 py-3 sticky left-0 bg-gray-100 z-10 w-[180px]">Area</th>
                     <th className="px-2 py-3 text-center bg-blue-50/50 w-20">Width</th>
+                    <th className="px-2 py-3 text-center bg-blue-50/50 w-20">Height</th> {/* Added Height Header */}
                     <th className="px-2 py-3 text-center bg-blue-50/50 border-r border-blue-100 w-24">Meters</th>
                     
                     {/* TRACK SECTION */}
@@ -348,6 +446,7 @@ const SomfyCalculation = () => {
                     
                     {/* MOTOR SECTION */}
                     <th className="px-2 py-3 min-w-[200px] bg-yellow-50/50 text-yellow-900 border-l border-gray-300">Motor</th>
+                    <th className="px-2 py-3 text-center bg-yellow-100/50 text-yellow-900 font-bold" title="Calculated Weight">KG</th> {/* Added KG Header */}
                     <th className="px-2 py-3 text-right bg-yellow-100/50 text-yellow-900">Price</th>
                     <th className="px-2 py-3 text-right bg-yellow-100/50 text-yellow-900">GST</th>
                     <th className="px-2 py-3 text-right font-bold text-white bg-yellow-600">Motor Final</th>
@@ -365,6 +464,7 @@ const SomfyCalculation = () => {
                       <td className="px-4 py-3 sticky left-0 bg-white z-10 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                         <div className="font-bold text-gray-900 truncate w-[160px]" title={item.areaName}>{item.areaName}</div>
                         <div className="text-xs text-gray-500 truncate w-[160px]" title={item.productName}>{item.productName}</div>
+                        <div className="text-[10px] text-gray-400 mt-1">GSM: {item.gsm}</div> {/* Added GSM Display */}
                       </td>
 
                       {/* Dimensions */}
@@ -376,6 +476,14 @@ const SomfyCalculation = () => {
                           onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} 
                         />
                         <div className="text-[9px] text-center text-gray-400 mt-1">{item.unit}</div>
+                      </td>
+                      <td className="px-1 py-3 bg-blue-50/10"> {/* Added Height Input */}
+                        <Input 
+                          type="number" 
+                          className="h-8 text-xs text-center w-16 mx-auto"
+                          value={item.height || ''} 
+                          onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} 
+                        />
                       </td>
                       <td className="px-1 py-3 bg-blue-50/10 border-r border-blue-100 text-center">
                          <div className="font-bold text-blue-700">{(toMeters(item.width, item.unit)).toFixed(2)}m</div>
@@ -420,6 +528,9 @@ const SomfyCalculation = () => {
                           </SelectContent>
                         </Select>
                       </td>
+                      <td className="px-2 py-3 text-center bg-yellow-50/30 text-yellow-800 font-bold border-l border-white">
+                        {item.motorKg} {/* Added KG Display */}
+                      </td>
                       <td className="px-2 py-3 text-right bg-yellow-50/20">₹{item.motorPrice.toLocaleString()}</td>
                       <td className="px-2 py-3 text-right bg-yellow-50/20 text-xs text-gray-500">₹{item.motorGst.toFixed(0)}</td>
                       <td className="px-2 py-3 text-right font-bold bg-yellow-100 text-yellow-700 border-r border-gray-300">₹{item.motorFinal.toLocaleString()}</td>
@@ -442,11 +553,12 @@ const SomfyCalculation = () => {
                 {/* Footer */}
                 <tfoot className="bg-gray-800 text-white font-bold text-xs">
                   <tr>
-                    <td colSpan={5} className="px-4 py-3 text-right uppercase">Category Totals</td>
+                    <td colSpan={6} className="px-4 py-3 text-right uppercase">Category Totals</td> {/* Adjusted colspan for new Height col */}
                     <td className="px-2 py-3 text-right bg-blue-900">₹{items.reduce((s, i) => s + i.trackBasic, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-blue-900 text-blue-200">₹{items.reduce((s, i) => s + i.trackGst, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-blue-950 text-[#4ade80]">₹{items.reduce((s, i) => s + i.trackFinal, 0).toLocaleString()}</td>
                     
+                    <td className="px-2 py-3"></td>
                     <td className="px-2 py-3"></td>
                     <td className="px-2 py-3 text-right bg-yellow-900">₹{items.reduce((s, i) => s + i.motorPrice, 0).toLocaleString()}</td>
                     <td className="px-2 py-3 text-right bg-yellow-900 text-yellow-200">₹{items.reduce((s, i) => s + i.motorGst, 0).toLocaleString()}</td>

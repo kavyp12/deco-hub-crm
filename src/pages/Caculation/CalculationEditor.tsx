@@ -17,6 +17,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,           // <--- ADD THIS
+  DropdownMenuSubContent,    // <--- ADD THIS
+  DropdownMenuSubTrigger,    // <--- ADD THIS
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from '@/hooks/use-toast';
@@ -56,6 +59,12 @@ const BUTTON_STYLES = {
     active: 'bg-yellow-100 text-yellow-700 border-yellow-300 ring-1 ring-yellow-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
+
+  'Somfy (Manual)': { // <--- ADD THIS BLOCK
+    active: 'bg-amber-100 text-amber-700 border-amber-300 ring-1 ring-amber-300 font-bold',
+    inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+  },
+
   Roman: {
     active: 'bg-orange-100 text-orange-700 border-orange-300 ring-1 ring-orange-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
@@ -252,13 +261,16 @@ const CalculationEditor: React.FC = () => {
   };
 
   // Count items by type (using 'includes' for multi-select support)
-  const countType = (type: string) => editItems.filter(i => i.calculationType && i.calculationType.includes(type)).length;
+const countType = (type: string) => editItems.filter(i => 
+    i.calculationType && i.calculationType.split(',').includes(type)
+  ).length;
 
   const typeCounts = {
     Local: countType('Local'),
     ForestManual: countType('Forest (Manual)'),
     ForestAuto: countType('Forest (Auto)'),
     Somfy: countType('Somfy'),
+    SomfyManual: countType('Somfy (Manual)'), // <--- ADD THIS
     Roman: countType('Roman'),
     Blinds: countType('Blinds'),
   };
@@ -381,101 +393,132 @@ const CalculationEditor: React.FC = () => {
                 </p>
               </div>
 
-              <DropdownMenu>
+             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button className="w-full justify-between bg-blue-600 hover:bg-blue-700">
                     Select Calculator
                     <ChevronDown className="h-4 w-4 ml-2" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-[300px]" align="start">
+                
+                <DropdownMenuContent className="w-[280px]" align="start">
                   <DropdownMenuLabel>Choose Method</DropdownMenuLabel>
                   <DropdownMenuSeparator />
 
-                  <DropdownMenuItem onClick={() => navigate(`/calculations/local/${selectionId}`)} className="cursor-pointer py-3">
+                  {/* 1. LOCAL / STANDARD (Top Level) */}
+                  <DropdownMenuItem onClick={() => navigate(`/calculations/local/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
-                      <div className="h-8 w-8 rounded bg-blue-50 flex items-center justify-center text-blue-600">
+                      <div className="h-7 w-7 rounded bg-blue-50 flex items-center justify-center text-blue-600">
                         <Ruler className="h-4 w-4" />
                       </div>
                       <div className="flex-1">
-                        <div className="font-bold">Local / Standard</div>
-                        <div className="text-xs text-gray-500">Fabric, Stitching, Panna</div>
+                        <div className="font-bold text-sm">Local / Standard</div>
                       </div>
                       {typeCounts.Local > 0 && (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5">
                           {typeCounts.Local}
                         </Badge>
                       )}
                     </div>
                   </DropdownMenuItem>
 
-                  <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-3">
-                    <div className="flex items-center gap-3 w-full">
-                      <div className="h-8 w-8 rounded bg-teal-50 flex items-center justify-center text-teal-600">
-                        <Ruler className="h-4 w-4" />
+                  {/* 2. FOREST GROUP (Sub Menu) */}
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <div className="h-7 w-7 rounded bg-teal-50 flex items-center justify-center text-teal-600">
+                          <Settings className="h-4 w-4" />
+                        </div>
+                        <span className="font-bold text-sm">Forest Series</span>
                       </div>
-                      <div className="flex-1">
-                        <div className="font-bold">Forest (Manual)</div>
-                        <div className="text-xs text-gray-500">Fabric-based costing</div>
-                      </div>
-                      {typeCounts.ForestManual > 0 && (
-                        <Badge variant="outline" className="bg-teal-50 text-teal-700 border-teal-200">
-                          {typeCounts.ForestManual}
-                        </Badge>
-                      )}
-                    </div>
-                  </DropdownMenuItem>
+                    </DropdownMenuSubTrigger>
+                    
+                    <DropdownMenuSubContent className="w-56">
+                      {/* Forest (Auto) */}
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/forest/${selectionId}`)} className="cursor-pointer py-2">
+                         <div className="flex flex-col">
+                           <span className="font-bold">Forest (Auto)</span>
+                           <span className="text-xs text-gray-500">Track Calculator</span>
+                         </div>
+                         {typeCounts.ForestAuto > 0 && (
+                            <Badge variant="outline" className="ml-auto bg-green-50 text-green-700 border-green-200 text-[10px]">
+                              {typeCounts.ForestAuto}
+                            </Badge>
+                         )}
+                      </DropdownMenuItem>
+                      
+                      {/* Forest (Manual) */}
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
+                         <div className="flex flex-col">
+                           <span className="font-bold">Forest (Manual)</span>
+                           <span className="text-xs text-gray-500">Deep Costing</span>
+                         </div>
+                         {typeCounts.ForestManual > 0 && (
+                            <Badge variant="outline" className="ml-auto bg-teal-50 text-teal-700 border-teal-200 text-[10px]">
+                              {typeCounts.ForestManual}
+                            </Badge>
+                         )}
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
 
-                  <DropdownMenuItem onClick={() => navigate(`/calculations/forest/${selectionId}`)} className="cursor-pointer py-3">
-                    <div className="flex items-center gap-3 w-full">
-                      <div className="h-8 w-8 rounded bg-green-50 flex items-center justify-center text-green-600">
-                        <Settings className="h-4 w-4" />
+                  {/* 3. SOMFY GROUP (Sub Menu) */}
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <div className="h-7 w-7 rounded bg-yellow-50 flex items-center justify-center text-yellow-600">
+                          <Layers className="h-4 w-4" />
+                        </div>
+                        <span className="font-bold text-sm">Somfy Automation</span>
                       </div>
-                      <div className="flex-1">
-                        <div className="font-bold">Forest (Auto)</div>
-                        <div className="text-xs text-gray-500">Track calculator</div>
-                      </div>
-                      {typeCounts.ForestAuto > 0 && (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                          {typeCounts.ForestAuto}
-                        </Badge>
-                      )}
-                    </div>
-                  </DropdownMenuItem>
+                    </DropdownMenuSubTrigger>
+                    
+                    <DropdownMenuSubContent className="w-56">
+                      {/* Somfy Automation */}
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/somfy/${selectionId}`)} className="cursor-pointer py-2">
+                         <div className="flex flex-col">
+                           <span className="font-bold">Somfy (Auto)</span>
+                           <span className="text-xs text-gray-500">Motors & Remotes</span>
+                         </div>
+                         {typeCounts.Somfy > 0 && (
+                            <Badge variant="outline" className="ml-auto bg-yellow-50 text-yellow-700 border-yellow-200 text-[10px]">
+                              {typeCounts.Somfy}
+                            </Badge>
+                         )}
+                      </DropdownMenuItem>
+                      
+                      {/* Somfy Manual */}
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
+                         <div className="flex flex-col">
+                           <span className="font-bold">Somfy (Manual)</span>
+                           <span className="text-xs text-gray-500">Deep Costing</span>
+                         </div>
+                         {typeCounts.SomfyManual > 0 && (
+                            <Badge variant="outline" className="ml-auto bg-amber-50 text-amber-700 border-amber-200 text-[10px]">
+                              {typeCounts.SomfyManual}
+                            </Badge>
+                         )}
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
 
-                  <DropdownMenuItem onClick={() => navigate(`/calculations/somfy/${selectionId}`)} className="cursor-pointer py-3">
+                  {/* 4. ROMAN (Top Level) */}
+                  <DropdownMenuItem onClick={() => navigate(`/calculations/roman/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
-                      <div className="h-8 w-8 rounded bg-yellow-50 flex items-center justify-center text-yellow-600">
-                        <Layers className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-bold">Somfy Automation</div>
-                        <div className="text-xs text-gray-500">Premium Motors & Remotes</div>
-                      </div>
-                      {typeCounts.Somfy > 0 && (
-                        <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
-                          {typeCounts.Somfy}
-                        </Badge>
-                      )}
-                    </div>
-                  </DropdownMenuItem>
-
-                  <DropdownMenuItem onClick={() => navigate(`/calculations/roman/${selectionId}`)} className="cursor-pointer py-3">
-                    <div className="flex items-center gap-3 w-full">
-                      <div className="h-8 w-8 rounded bg-orange-50 flex items-center justify-center text-orange-600">
+                      <div className="h-7 w-7 rounded bg-orange-50 flex items-center justify-center text-orange-600">
                         <Grid className="h-4 w-4" />
                       </div>
                       <div className="flex-1">
-                        <div className="font-bold">Roman Curtains</div>
-                        <div className="text-xs text-gray-500">Part, Channel, Mechanisms</div>
+                        <div className="font-bold text-sm">Roman Curtains</div>
                       </div>
                       {typeCounts.Roman > 0 && (
-                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
+                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] px-1.5">
                           {typeCounts.Roman}
                         </Badge>
                       )}
                     </div>
                   </DropdownMenuItem>
+
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -624,12 +667,21 @@ const CalculationEditor: React.FC = () => {
                         </td>
 
                         {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
-                        {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
+                       {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
                         <td className="px-6 py-4">
                           {isEditing ? (
                             <div className="flex gap-2 flex-wrap">
-                              {['Local', 'Forest (Manual)', 'Forest (Auto)', 'Somfy', 'Roman', 'Blinds'].map((type) => {
-                                const isActive = item.calculationType && item.calculationType.includes(type);
+                              {[
+                                'Local', 
+                                'Forest (Manual)', 
+                                'Forest (Auto)', 
+                                'Somfy', 
+                                'Somfy (Manual)', 
+                                'Roman', 
+                                'Blinds'
+                              ].map((type) => {
+                                // 🔥 FIX: Use .split(',') to ensure "Somfy" doesn't match "Somfy (Manual)"
+                                const isActive = item.calculationType && item.calculationType.split(',').includes(type);
                                 const style = BUTTON_STYLES[type as keyof typeof BUTTON_STYLES];
 
                                 return (
@@ -637,9 +689,9 @@ const CalculationEditor: React.FC = () => {
                                     key={type}
                                     onClick={() => handleItemChange(idx, 'calculationType', toggleType(item.calculationType, type))}
                                     className={`
-              px-3 py-1.5 text-xs rounded-md border transition-all duration-200
-              ${isActive ? style.active : style.inactive}
-            `}
+                                      px-3 py-1.5 text-xs rounded-md border transition-all duration-200
+                                      ${isActive ? style.active : style.inactive}
+                                    `}
                                   >
                                     {type}
                                   </button>
