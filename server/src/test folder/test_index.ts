@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import * as xlsx from 'xlsx';
-import { authenticateToken, requireRole } from './middleware/authMiddleware';
+import { authenticateToken, requireRole } from '../middleware/authMiddleware';
 
 dotenv.config();
 const app = express();
