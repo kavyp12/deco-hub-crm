@@ -38,7 +38,7 @@ import SomfyCalculation from "./pages/Caculation/SomfyCalculation";
 import RomanCalculation from "./pages/Caculation/RomanCalculation";
 import BlindsCalculation from "./pages/Caculation/BlindsCalculation";
 import QuotationEdit from "./pages/Quotation/QuotationEdit";
-import ActivityLogs from './pages/logs/ActivityLogs.tsx'; // Add import
+import ActivityLogs from './pages/activityLogs/ActivityLogs.tsx'; // Add import
 
 // Architecture 
 import Architecture from "./pages/Architects/Architects";
