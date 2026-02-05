@@ -43,10 +43,13 @@ model User {
   updated_at    DateTime @updatedAt
 
   inquiries_sold     Inquiry[]   @relation("SalesPerson")
+  inquiries_involved Inquiry[]   @relation("InquiryMembers")
   inquiries_created  Inquiry[]   @relation("CreatedBy")
   selections_created Selection[] @relation("SelectionCreatedBy")
-
   quotations_created Quotation[]
+  
+  // === ADD THIS NEW LINE ===
+  comments_made      InquiryComment[] 
 }
 
 model Inquiry {
@@ -54,21 +57,109 @@ model Inquiry {
   inquiry_number      String    @unique
   client_name         String
   architect_id_name   String?
+
+  client_birth_date       DateTime?
+  client_anniversary_date DateTime?
+
   mobile_number       String
   inquiry_date        DateTime  @default(now())
   address             String
   expected_final_date DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
+  
+  description         String?   @db.Text
 
   sales_person_id String
   sales_person    User   @relation("SalesPerson", fields: [sales_person_id], references: [id])
-
+  
+  sales_persons   User[] @relation("InquiryMembers")
+  
   created_by_id String
   created_by    User   @relation("CreatedBy", fields: [created_by_id], references: [id])
 
+  architectId   String?
+  architect     Architect? @relation(fields: [architectId], references: [id])
+
   selections Selection[]
+
+  // === ADD THESE NEW LINES ===
+  stage       String    @default("Inquiry") // "Inquiry", "Quotation Submitted", "Ongoing", "Completed"
+  priority    String    @default("Medium")  // "High", "Medium", "Low"
+  
+  comments    InquiryComment[]
+  checklists  InquiryChecklist[]
+  labels      InquiryLabel[]
 }
+
+
+// ==========================================
+// PIPELINE / KANBAN MODELS (NEW)
+// ==========================================
+
+model InquiryComment {
+  id        String   @id @default(uuid())
+  content   String
+  attachmentUrl String?
+
+  createdAt DateTime @default(now())
+  
+  
+  // Link to Inquiry
+  inquiryId String
+  inquiry   Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  
+  // Link to User (Who wrote it)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model InquiryChecklist {
+  id        String   @id @default(uuid())
+  title     String
+  
+  inquiryId String
+  inquiry   Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  
+  items     InquiryChecklistItem[]
+}
+
+model InquiryChecklistItem {
+  id          String           @id @default(uuid())
+  text        String
+  isCompleted Boolean          @default(false)
+  
+  checklistId String
+  checklist   InquiryChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+}
+
+model InquiryLabel {
+  id        String   @id @default(uuid())
+  text      String
+  color     String   // Stores hex code or tailwind class like "bg-red-500"
+  
+  inquiryId String
+  inquiry   Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+}
+
+
+// === NEW MODEL ===
+model Architect {
+  id                  String    @id @default(uuid())
+  name                String
+  address             String?
+  contact             String?
+  email               String?
+  birth_date          DateTime?
+  anniversary_date    DateTime?
+  associate_arch_name String?
+  
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  inquiries           Inquiry[]
+}
+
 
 model InquiryCounter {
   id         String   @id @default(uuid())
@@ -87,7 +178,6 @@ model DeepCalculation {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 }
-
 model DeepCalculationItem {
   id                String          @id @default(uuid())
   deepCalculationId String
@@ -97,15 +187,18 @@ model DeepCalculationItem {
   selectionItem   SelectionItem @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
 
   category String @default("Local")
+  
+  variant          String   @default("Normal") // "Main", "Sheer", or "Normal"
 
-  // Dimensions (stored in DeepCalculation)
+
+  // Dimensions
   width  Float  @default(0)
   height Float  @default(0)
   unit   String @default("mm")
 
   // Quantities
   panna       Float @default(0)
-  part        Float @default(1)  // ✅ ADD THIS LINE IF IT'S MISSING
+  part        Float @default(1)
   channel     Float @default(0)
   fabric      Float @default(0)
   blackout    Float @default(0)
@@ -122,9 +215,13 @@ model DeepCalculationItem {
   labourRate   Float @default(450)
   fittingRate  Float @default(355)
 
-  // Toggles
+  // Toggles (✅ ADD THE MISSING ONES HERE)
+  hasFabric   Boolean @default(true)   // <--- ADD THIS
   hasBlackout Boolean @default(false)
   hasSheer    Boolean @default(false)
+  hasChannel  Boolean @default(true)   // <--- ADD THIS
+  hasLabour   Boolean @default(true)   // <--- ADD THIS
+  hasFitting  Boolean @default(true)   // <--- ADD THIS
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
@@ -509,4 +606,15 @@ model QuotationCounter {
   counter    Int      @default(0)
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
+}
+
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String   // CREATE, UPDATE, DELETE, LOGIN
+  entity    String   // SELECTION, PRODUCT, COMPANY, etc.
+  entityId  String?  // ID of the specific item
+  details   String?  // Description of what changed
+  createdAt DateTime @default(now())
 }

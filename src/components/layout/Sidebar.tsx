@@ -8,7 +8,10 @@ import {
   ShoppingCart,
   BookOpen,
   Ruler,
-  Calculator
+  Calculator,
+  ShieldAlert,
+  Briefcase, // <--- Added Icon for Architects
+  Kanban
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
@@ -24,12 +27,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { name: 'Pipeline', href: '/pipeline', icon: Kanban }, // <--- ADD THIS (Import Kanban from lucide-react)
     { name: 'Inquiries', href: '/inquiries', icon: FileText },
     { name: 'Selections', href: '/selections', icon: ShoppingCart },
     { name: 'Measurements', href: '/measurements', icon: Ruler },
     { name: 'Calculations', href: '/calculations', icon: Calculator },
-    // UPDATED: Point to the list view, not preview directly
-    { name: 'Quotations', href: '/quotations', icon: FileText }, 
+    { name: 'Quotations', href: '/quotations', icon: FileText },
+    { name: 'Architects', href: '/architects', icon: Briefcase }, // <--- NEW ADDITION
   ];
 
   if (role === 'super_admin' || role === 'admin_hr') {
@@ -37,6 +41,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       name: 'Employees',
       href: '/employees',
       icon: Users,
+    });
+  }
+
+  // Activity Logs (Super Admin Only)
+  if (role === 'super_admin') {
+    navigation.push({
+      name: 'Activity Logs',
+      href: '/logs',
+      icon: ShieldAlert,
     });
   }
 

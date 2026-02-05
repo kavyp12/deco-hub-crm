@@ -1,11 +1,14 @@
+// [FILE: src/pages/Inquiries/Inquiries.tsx]
+
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, ChevronLeft, ChevronRight, Pencil, Trash2, Phone, Calendar, User } from 'lucide-react';
+import { Plus, Search, ChevronLeft, ChevronRight, Pencil, Trash2, Phone, Calendar, User, Briefcase } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -29,7 +32,12 @@ interface Inquiry {
   id: string;
   inquiry_number: string;
   client_name: string;
-  architect_id_name: string | null;
+  
+  // Architect Fields
+  architect_id_name: string | null; // Manual Name
+  architectId: string | null;       // DB ID
+  architect: { id: string; name: string } | null; // Relation
+  
   mobile_number: string;
   inquiry_date: string;
   address: string;
@@ -45,20 +53,31 @@ const ITEMS_PER_PAGE = 10;
 const Inquiries: React.FC = () => {
   const { toast } = useToast();
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  
+  // Lists
   const [salesPeople, setSalesPeople] = useState<{id: string, name: string}[]>([]);
+  const [architects, setArchitects] = useState<{id: string, name: string}[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
+  // Edit State
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   
+  // Toggle State for Edit Form
+  const [useArchDb, setUseArchDb] = useState(true);
+
   const [editForm, setEditForm] = useState({
       client_name: '',
-      architect_id_name: '',
+      
+      architect_id_name: '', // Manual
+      architectId: '',       // Dropdown
+      
       mobile_number: '',
       inquiry_date: '',
       address: '',
@@ -74,8 +93,14 @@ const Inquiries: React.FC = () => {
     setLoading(true);
     try {
         const { data: allInquiries } = await api.get('/inquiries');
-        const { data: people } = await api.get('/users/sales-people');
-        setSalesPeople(people);
+        
+        const [peopleRes, archRes] = await Promise.all([
+            api.get('/users/sales-people'),
+            api.get('/architects')
+        ]);
+        
+        setSalesPeople(peopleRes.data);
+        setArchitects(archRes.data);
 
         const filtered = allInquiries; 
         setTotalCount(filtered.length);
@@ -94,9 +119,17 @@ const Inquiries: React.FC = () => {
 
   const handleEditOpen = (inquiry: Inquiry) => {
       setSelectedInquiry(inquiry);
+      
+      // Check if this inquiry uses a DB architect or Manual string
+      const hasDbArch = !!inquiry.architectId;
+      setUseArchDb(hasDbArch);
+
       setEditForm({
           client_name: inquiry.client_name,
+          
+          architectId: inquiry.architectId || '', 
           architect_id_name: inquiry.architect_id_name || '',
+          
           mobile_number: inquiry.mobile_number,
           inquiry_date: new Date(inquiry.inquiry_date).toISOString().split('T')[0],
           address: inquiry.address,
@@ -110,8 +143,18 @@ const Inquiries: React.FC = () => {
       e.preventDefault();
       if (!selectedInquiry) return;
       setFormLoading(true);
+
+      const payload = { ...editForm };
+      
+      // Clean payload based on Toggle selection
+      if (useArchDb) {
+         payload.architect_id_name = ''; // Clear manual if using DB
+      } else {
+         payload.architectId = '';       // Clear ID if using manual
+      }
+
       try {
-          await api.put(`/inquiries/${selectedInquiry.id}`, editForm);
+          await api.put(`/inquiries/${selectedInquiry.id}`, payload);
           toast({ title: 'Success', description: 'Inquiry updated.' });
           setIsEditOpen(false);
           fetchData();
@@ -216,6 +259,12 @@ const Inquiries: React.FC = () => {
                     <div className="flex items-center gap-2">
                        <User className="h-3 w-3" /> {inquiry.profiles?.name || '—'}
                     </div>
+                    {(inquiry.architect || inquiry.architect_id_name) && (
+                        <div className="flex items-center gap-2 col-span-2">
+                            <Briefcase className="h-3 w-3" /> 
+                            {inquiry.architect?.name || inquiry.architect_id_name}
+                        </div>
+                    )}
                     <div className="flex items-center gap-2 col-span-2">
                        <Calendar className="h-3 w-3" /> {format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}
                     </div>
@@ -239,9 +288,9 @@ const Inquiries: React.FC = () => {
                 <tr className="border-b border-border">
                   <th className="table-header text-left px-6 py-4">Inquiry #</th>
                   <th className="table-header text-left px-6 py-4">Client</th>
+                  <th className="table-header text-left px-6 py-4">Architect</th>
                   <th className="table-header text-left px-6 py-4">Sales Person</th>
                   <th className="table-header text-left px-6 py-4">Date</th>
-                  <th className="table-header text-left px-6 py-4">Selections</th>
                   <th className="table-header text-left px-6 py-4">Actions</th>
                 </tr>
               </thead>
@@ -256,11 +305,11 @@ const Inquiries: React.FC = () => {
                       <td className="px-6 py-4">
                         <div><p className="font-medium">{inquiry.client_name}</p><p className="text-sm text-muted-foreground">{inquiry.mobile_number}</p></div>
                       </td>
+                      <td className="px-6 py-4 text-muted-foreground">
+                        {inquiry.architect?.name || inquiry.architect_id_name || '—'}
+                      </td>
                       <td className="px-6 py-4 text-muted-foreground">{inquiry.profiles?.name || '—'}</td>
                       <td className="px-6 py-4 text-muted-foreground">{format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}</td>
-                      <td className="px-6 py-4">
-                        <span className="text-sm font-semibold text-primary">{inquiry.selections?.length || 0}</span>
-                      </td>
                       <td className="px-6 py-4">
                           <div className="flex gap-2">
                              <Button variant="ghost" size="icon" onClick={() => handleEditOpen(inquiry)}><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
@@ -274,7 +323,7 @@ const Inquiries: React.FC = () => {
           </div>
         </div>
         
-        {/* Pagination (Common) */}
+        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-2 md:px-6 py-4 mt-4 bg-card rounded-lg border border-border">
             <p className="text-xs md:text-sm text-muted-foreground">Page {currentPage} of {totalPages}</p>
@@ -285,23 +334,75 @@ const Inquiries: React.FC = () => {
           </div>
         )}
 
-        {/* Edit Dialog - Responsive */}
+        {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
            <DialogContent className="max-w-[95vw] md:max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader><DialogTitle>Edit Inquiry</DialogTitle></DialogHeader>
-              <form onSubmit={handleUpdate} className="space-y-4 grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                 <div className="col-span-1 space-y-2"><Label>Client Name</Label><Input value={editForm.client_name} onChange={e => setEditForm({...editForm, client_name: e.target.value})} /></div>
-                 <div className="col-span-1 space-y-2"><Label>Mobile</Label><Input value={editForm.mobile_number} onChange={e => setEditForm({...editForm, mobile_number: e.target.value})} /></div>
-                 <div className="col-span-1 space-y-2"><Label>Architect/ID</Label><Input value={editForm.architect_id_name} onChange={e => setEditForm({...editForm, architect_id_name: e.target.value})} /></div>
-                 <div className="col-span-1 space-y-2"><Label>Inquiry Date</Label><Input type="date" value={editForm.inquiry_date} onChange={e => setEditForm({...editForm, inquiry_date: e.target.value})} /></div>
-                 <div className="col-span-1 space-y-2"><Label>Expected Date</Label><Input type="date" value={editForm.expected_final_date} onChange={e => setEditForm({...editForm, expected_final_date: e.target.value})} /></div>
-                 <div className="col-span-1 space-y-2"><Label>Sales Person</Label>
+              
+              {/* FIXED: Removed space-y-4 to fix alignment issue */}
+              <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                 
+                 <div className="col-span-1 space-y-2">
+                    <Label>Client Name</Label>
+                    <Input value={editForm.client_name} onChange={e => setEditForm({...editForm, client_name: e.target.value})} />
+                 </div>
+                 
+                 <div className="col-span-1 space-y-2">
+                    <Label>Mobile</Label>
+                    <Input value={editForm.mobile_number} onChange={e => setEditForm({...editForm, mobile_number: e.target.value})} />
+                 </div>
+                 
+                 {/* Architect Section */}
+                 <div className="col-span-1 md:col-span-2 card-premium p-4 border border-border">
+                    <div className="flex justify-between items-center mb-2">
+                        <Label>Architect / Designer</Label>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">{useArchDb ? 'Select Existing' : 'Enter Manually'}</span>
+                            <Switch checked={useArchDb} onCheckedChange={setUseArchDb} />
+                        </div>
+                    </div>
+                    
+                    {useArchDb ? (
+                        <Select value={editForm.architectId} onValueChange={(val) => setEditForm({...editForm, architectId: val})}>
+                            <SelectTrigger><SelectValue placeholder="Select Architect..." /></SelectTrigger>
+                            <SelectContent>
+                                {architects.map(arch => (
+                                    <SelectItem key={arch.id} value={arch.id}>{arch.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    ) : (
+                        <Input 
+                            placeholder="Type Architect Name..." 
+                            value={editForm.architect_id_name} 
+                            onChange={e => setEditForm({...editForm, architect_id_name: e.target.value})} 
+                        />
+                    )}
+                 </div>
+
+                 <div className="col-span-1 space-y-2">
+                    <Label>Inquiry Date</Label>
+                    <Input type="date" value={editForm.inquiry_date} onChange={e => setEditForm({...editForm, inquiry_date: e.target.value})} />
+                 </div>
+                 
+                 <div className="col-span-1 space-y-2">
+                    <Label>Expected Date</Label>
+                    <Input type="date" value={editForm.expected_final_date} onChange={e => setEditForm({...editForm, expected_final_date: e.target.value})} />
+                 </div>
+                 
+                 <div className="col-span-1 md:col-span-2 space-y-2">
+                    <Label>Sales Person</Label>
                     <Select value={editForm.sales_person_id} onValueChange={v => setEditForm({...editForm, sales_person_id: v})}>
                         <SelectTrigger><SelectValue/></SelectTrigger>
                         <SelectContent>{salesPeople.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
                     </Select>
                  </div>
-                 <div className="col-span-1 md:col-span-2 space-y-2"><Label>Address</Label><Textarea value={editForm.address} onChange={e => setEditForm({...editForm, address: e.target.value})} /></div>
+                 
+                 <div className="col-span-1 md:col-span-2 space-y-2">
+                    <Label>Address</Label>
+                    <Textarea value={editForm.address} onChange={e => setEditForm({...editForm, address: e.target.value})} />
+                 </div>
+                 
                  <div className="col-span-1 md:col-span-2 flex justify-end gap-2 pt-4">
                     <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
                     <Button type="submit" variant="accent" disabled={formLoading}>Save Changes</Button>

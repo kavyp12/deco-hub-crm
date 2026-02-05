@@ -1,4 +1,3 @@
-
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv'; 
@@ -8,8 +7,6 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import * as xlsx from 'xlsx';
 import { authenticateToken, requireRole } from './middleware/authMiddleware';
-import path from 'path';
-import fs from 'fs';
 
 dotenv.config();
 const app = express();
@@ -18,24 +15,6 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 
 const upload = multer({ storage: multer.memoryStorage() });
-
-
-const documentsDir = path.join(__dirname, '../documents');
-if (!fs.existsSync(documentsDir)) {
-  fs.mkdirSync(documentsDir, { recursive: true });
-}
-app.use('/documents', express.static(documentsDir));
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, documentsDir); // Save to D:\deco-hub-crm\server\documents
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
-const uploadDocs = multer({ storage: storage });
 
 app.use(cors({
   origin: true, // Allow connections
@@ -144,26 +123,6 @@ const logActivity = async (userId: string, action: string, entity: string, entit
   }
 };
 
-// GET LOGS (Missing Route)
-app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
-  try {
-    // Check for super_admin role
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Access Denied: Super Admin Only' });
-    }
-
-    const logs = await prisma.activityLog.findMany({
-      orderBy: { createdAt: 'desc' }, // Newest first
-      take: 200 // Limit to last 200
-    });
-
-    res.json(logs);
-  } catch (error) {
-    console.error('Error fetching logs:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-});
-
 // ==========================================
 // 1. AUTH ROUTES
 // ==========================================
@@ -207,8 +166,7 @@ app.get('/api/auth/me', authenticateToken, async (req: any, res: Response) => {
 // 2. EMPLOYEE ROUTES
 // ==========================================
 
-// CREATE EMPLOYEE
-app.post('/api/employees', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+app.post('/api/employees', authenticateToken, requireRole(['super_admin']), async (req: Request, res: Response) => {
   const { name, email, password, mobile_number, role } = req.body;
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -216,15 +174,13 @@ app.post('/api/employees', authenticateToken, requireRole(['super_admin']), asyn
       data: { name, email, password: hashedPassword, mobile_number, role },
     });
     
-    // [LOG]
-    await logActivity(req.user.id, 'CREATE', 'EMPLOYEE', newUser.id, `Created employee: ${name} (${role})`);
-    
     const { password: _, ...userInfo } = newUser;
     res.json(userInfo);
   } catch (error) {
     res.status(400).json({ error: 'Email likely already exists' });
   }
 });
+
 app.get('/api/employees', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: Request, res: Response) => {
   try {
     const employees = await prisma.user.findMany({
@@ -237,10 +193,7 @@ app.get('/api/employees', authenticateToken, requireRole(['super_admin', 'admin_
   }
 });
 
-
-
-// UPDATE EMPLOYEE
-app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: Request, res: Response) => {
   const { id } = req.params;
   const { name, mobile_number, role } = req.body;
   try {
@@ -248,27 +201,16 @@ app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), a
       where: { id },
       data: { name, mobile_number, role },
     });
-
-    // [LOG]
-    await logActivity(req.user.id, 'UPDATE', 'EMPLOYEE', id, `Updated employee: ${name}`);
-
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update employee' });
   }
 });
 
-// DELETE EMPLOYEE
-app.delete('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+app.delete('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    // Fetch first to get name for log
-    const userToDelete = await prisma.user.findUnique({ where: { id } });
     await prisma.user.delete({ where: { id } });
-
-    // [LOG]
-    await logActivity(req.user.id, 'DELETE', 'EMPLOYEE', id, `Deleted employee: ${userToDelete?.name}`);
-
     res.json({ message: 'Deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete employee' });
@@ -303,29 +245,22 @@ app.get('/api/companies', authenticateToken, async (req: Request, res: Response)
   }
 });
 
-app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
+app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: Request, res: Response) => {
   try {
     const company = await prisma.company.create({ data: { name: req.body.name } });
-    
-    // [LOG]
-    await logActivity(req.user.id, 'CREATE', 'COMPANY', company.id, `Created Company: ${company.name}`);
-    
     res.json(company);
   } catch (error) {
     res.status(400).json({ error: 'Company likely already exists' });
   }
 });
 
-app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin']), async (req: Request, res: Response) => {
   try {
     await prisma.company.delete({ where: { id: req.params.id } });
-    
-    // [LOG]
-    await logActivity(req.user.id, 'DELETE', 'COMPANY', req.params.id, `Deleted Company ID: ${req.params.id}`);
-
     res.json({ message: 'Company and all data deleted' });
   } catch { res.status(500).json({ error: 'Failed to delete company' }); }
 });
+
 app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', 'admin_hr']), upload.single('file'), async (req: any, res: Response): Promise<void> => {
   if (!req.file) { 
     res.status(400).json({ error: 'No file uploaded' }); 
@@ -452,7 +387,6 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
       response.errors = errors;
       response.message += ` (${errors.length} errors)`;
     }
-    await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company ID ${companyId}. Processed ${productsCreated} products.`);
 
     res.json(response);
     
@@ -538,46 +472,30 @@ app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'adm
 // 4. INQUIRY ROUTES
 // ==========================================
 
-// [EDITED] GET ALL INQUIRIES (With Role Filtering)
-app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => { // <--- Change Request to any
-
-try {
-    // 1. Role Check: Admin sees all, Sales sees only theirs
-    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
-    const whereClause = isAdmin ? {} : { sales_person_id: req.user.id };
-
+app.get('/api/inquiries', authenticateToken, async (req: Request, res: Response) => {
+  try {
     const inquiries = await prisma.inquiry.findMany({
-      where: whereClause, // <--- Added Filter
       include: { 
         sales_person: { select: { name: true } },
-        architect: { select: { id: true, name: true } },
-        selections: { select: { id: true, selection_number: true, status: true } },
-        // Includes badges for list view
-        _count: { select: { comments: true } } 
+        selections: { select: { id: true, selection_number: true, status: true } }
       },
       orderBy: { created_at: 'desc' }
     });
-    
     const formatted = inquiries.map((i: any) => ({ 
       ...i, 
-      profiles: i.sales_person,
-      // Ensure stage/priority are passed (they are by default, but good to be explicit mentally)
-      stage: i.stage, 
-      priority: i.priority 
+      profiles: i.sales_person 
     }));
-    
     res.json(formatted);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch inquiries' });
   }
 });
 
-// UPDATE POST /api/inquiries
 app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) => {
+  // REMOVED product_category from destructuring
   const { 
-    client_name, architect_id_name, architectId, mobile_number, inquiry_date, address, 
-    sales_person_id, expected_final_date,
-    client_birth_date, client_anniversary_date // <--- New Fields
+    client_name, architect_id_name, mobile_number, inquiry_date, address, 
+    sales_person_id, expected_final_date
   } = req.body;
   
   try {
@@ -596,20 +514,16 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
       data: {
         inquiry_number: inquiryNumber,
         client_name,
-        architect_id_name, // Manual name
-        architectId: architectId || null, // Linked ID
+        architect_id_name,
         mobile_number,
         inquiry_date: new Date(inquiry_date),
         address,
         sales_person_id,
         expected_final_date: expected_final_date ? new Date(expected_final_date) : null,
-        client_birth_date: client_birth_date ? new Date(client_birth_date) : null,
-        client_anniversary_date: client_anniversary_date ? new Date(client_anniversary_date) : null,
+        // product_category removed
         created_by_id: req.user.id,
       }
     });
-
-    await logActivity(req.user.id, 'CREATE', 'INQUIRY', newInquiry.id, `Created Inquiry #${newInquiry.inquiry_number}`);
     
     res.json(newInquiry);
   } catch (error) {
@@ -618,46 +532,37 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
   }
 });
 
-// UPDATE PUT /api/inquiries/:id
-app.put('/api/inquiries/:id', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/inquiries/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
   const data = req.body;
 
-  // Handle Dates
-  if (data.inquiry_date) data.inquiry_date = new Date(data.inquiry_date);
-  if (data.expected_final_date) data.expected_final_date = new Date(data.expected_final_date);
-  else if (data.expected_final_date === '') data.expected_final_date = null;
-
-  // New Dates
-  if (data.client_birth_date) data.client_birth_date = new Date(data.client_birth_date);
-  else if (data.client_birth_date === '') data.client_birth_date = null;
-
-  if (data.client_anniversary_date) data.client_anniversary_date = new Date(data.client_anniversary_date);
-  else if (data.client_anniversary_date === '') data.client_anniversary_date = null;
+  if (data.inquiry_date) {
+      data.inquiry_date = new Date(data.inquiry_date);
+  }
   
+  if (data.expected_final_date && data.expected_final_date !== '') {
+      data.expected_final_date = new Date(data.expected_final_date);
+  } else {
+      data.expected_final_date = null;
+  }
+  
+  // Clean up data object if it contains product_category by accident
   delete data.product_category;
 
   try {
     const updated = await prisma.inquiry.update({ where: { id }, data: data });
-    await logActivity(req.user.id, 'UPDATE', 'INQUIRY', id, `Updated Inquiry #${updated.inquiry_number}`);
     res.json(updated);
   } catch (error) {
+    console.error('Update Error:', error);
     res.status(500).json({ error: 'Failed to update inquiry' });
   }
 });
-// DELETE INQUIRY (Fixed: Fetch 'inquiry' before deleting)
-app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res: Response) => {
+
+app.delete('/api/inquiries/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    // 1. Fetch first so we have the number for the log
-    const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-
     await prisma.selection.deleteMany({ where: { inquiryId: id } });
     await prisma.inquiry.delete({ where: { id } });
-    
-    // [LOG]
-    await logActivity(req.user.id, 'DELETE', 'INQUIRY', id, `Deleted Inquiry #${inquiry?.inquiry_number || 'Unknown'} and all associated records`);
-
     res.json({ message: 'Deleted inquiry and associated records' });
   } catch (error) {
     console.error('Delete Error:', error);
@@ -816,8 +721,6 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
       calculationTypes: newSelection.items.map(i => i.calculationType)
     });
     
-    await logActivity(req.user.id, 'CREATE', 'SELECTION', newSelection.id, `Created Selection #${newSelection.selection_number}`);
-
     res.json(newSelection);
   } catch (error) {
     console.error('❌ Selection creation error:', error);
@@ -826,7 +729,7 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
 });
 // [In src/index.ts]
 
-app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/selections/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
   const { status, delivery_date, notes, items } = req.body;
   
@@ -966,8 +869,7 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
         inquiry: true 
       }
     });
-    await logActivity(req.user.id, 'UPDATE', 'SELECTION', id, `Updated Selection Items and Status`);
-
+    
     res.json(updated);
     
   } catch (error) {
@@ -1139,6 +1041,8 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: Response)
 // DEEP CALCULATION ROUTES
 // ==========================================
 
+// Replace the GET /api/calculations/deep/:selectionId route in index.ts
+
 app.get('/api/calculations/deep/:selectionId', authenticateToken, async (req: Request, res: Response) => {
   const { selectionId } = req.params;
   try {
@@ -1151,13 +1055,13 @@ app.get('/api/calculations/deep/:selectionId', authenticateToken, async (req: Re
               include: { product: true }
             }
           },
-          orderBy: { id: 'asc' } // Keep insertion order
+          orderBy: { selectionItem: { orderIndex: 'asc' } }
         }
       }
     });
 
     if (deepCalc && deepCalc.items.length > 0) {
-      // Filter for Local and Roman items
+      // 🔥 FIX: Show BOTH Local AND Roman items (both use fabric-based calculations)
       const filteredItems = deepCalc.items.filter((item: any) => {
         const calcType = item.selectionItem?.calculationType || '';
         return calcType.includes('Local') || calcType.includes('Roman');
@@ -1180,34 +1084,28 @@ app.get('/api/calculations/deep/:selectionId', authenticateToken, async (req: Re
     res.status(500).json({ error: 'Failed to fetch deep calculation' });
   }
 });
-
-// [Inside src/index.ts]
-
-
-app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: Request, res: Response) => {
   const { selectionId } = req.params;
   const { items } = req.body;
 
   try {
     const deepCalc = await prisma.deepCalculation.upsert({
       where: { selectionId },
-      // UPDATE BLOCK
       update: {
         items: {
           deleteMany: {}, 
           create: items.map((item: any) => ({
             selectionItemId: item.selectionItemId,
-            category: item.category || 'Local',
             
-            // 🔥 ADD VARIANT FIELD
-            variant: item.variant || 'Normal',
-            
+            // ✅ CRITICAL FIX: Save the category so we can distinguish Local vs Roman
+            category: item.category || 'Local', 
+
             width: parseFloat(item.width || 0),
             height: parseFloat(item.height || 0),
             unit: item.unit || 'mm',
             
             panna: parseFloat(item.panna || 0),
-            part: parseFloat(item.part || 1),
+            part: parseFloat(item.part || 1), // Ensure part is saved
             channel: parseFloat(item.channel || 0),
             fabric: parseFloat(item.fabric || 0),
             blackout: parseFloat(item.blackout || 0),
@@ -1223,25 +1121,17 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
             
-            hasFabric: Boolean(item.hasFabric),
             hasBlackout: Boolean(item.hasBlackout),
-            hasSheer: Boolean(item.hasSheer),
-            hasChannel: Boolean(item.hasChannel),
-            hasLabour: Boolean(item.hasLabour),
-            hasFitting: Boolean(item.hasFitting)
+            hasSheer: Boolean(item.hasSheer)
           }))
         }
       },
-      // CREATE BLOCK
       create: {
         selectionId,
         items: {
           create: items.map((item: any) => ({
             selectionItemId: item.selectionItemId,
-            category: item.category || 'Local',
-            
-            // 🔥 ADD VARIANT FIELD
-            variant: item.variant || 'Normal',
+            category: item.category || 'Local', // ✅ Save category here too
             
             width: parseFloat(item.width || 0),
             height: parseFloat(item.height || 0),
@@ -1264,26 +1154,19 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
             
-            hasFabric: Boolean(item.hasFabric),
             hasBlackout: Boolean(item.hasBlackout),
-            hasSheer: Boolean(item.hasSheer),
-            hasChannel: Boolean(item.hasChannel),
-            hasLabour: Boolean(item.hasLabour),
-            hasFitting: Boolean(item.hasFitting)
+            hasSheer: Boolean(item.hasSheer)
           }))
         }
       }
     });
-    
-    await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved DEEP calculation for Selection`);
+
     res.json(deepCalc);
   } catch (error) {
     console.error('❌ Deep Calc Save Error:', error);
     res.status(500).json({ error: 'Failed to save deep calculation' });
   }
 });
-
-
 
 app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: Request, res: Response) => {
   const { selectionId } = req.params;
@@ -1360,7 +1243,7 @@ app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: R
   }
 });
 // [UPDATE IN index.ts]
-app.post('/api/calculations/somfy/:selectionId', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/calculations/somfy/:selectionId', authenticateToken, async (req: Request, res: Response) => {
   const { selectionId } = req.params;
   const { items } = req.body;
 
@@ -1424,7 +1307,6 @@ app.post('/api/calculations/somfy/:selectionId', authenticateToken, async (req: 
         }
       }
     });
-    await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved SOMFY calculation for Selection`);
     res.json(somfyCalc);
   } catch (error) {
     console.error('❌ Error saving somfy calculation:', error);
@@ -1667,7 +1549,7 @@ const forestItems = selection.items.filter(item => item.calculationType.includes
   }
 });
 // [UPDATE IN index.ts]
-app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req: Request, res: Response) => {
   const { selectionId } = req.params;
   const { items } = req.body;
 
@@ -1737,7 +1619,6 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
         }
       }
     });
-    await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved FOREST calculation for Selection`);
     res.json(forestCalc);
   } catch (error) {
     console.error('Error saving forest calculation:', error);
@@ -1947,7 +1828,15 @@ app.get('/api/quotations', authenticateToken, async (req: Request, res: Response
   }
 });
 // [FILE: index.ts] - Search for the "GENERATE NEW QUOTATION" route and replace it
+
 // [FILE: src/index.ts]
+// CORRECTED QUOTATION GENERATION ENDPOINT
+// This replaces the /api/quotations/generate endpoint in your index.ts file
+
+// ==========================================
+// COMPLETE FIXED QUOTATION GENERATION ENDPOINT
+// Replace the existing /api/quotations/generate endpoint in index.ts
+// ==========================================
 
 app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Response) => {
   const { selectionId, quotationType } = req.body;
@@ -1957,16 +1846,24 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
   }
 
   try {
-    console.log('🔵 Generating quotation for selection:', selectionId);
+    console.log('🔵 Generating quotation for selection:', selectionId, 'Type:', quotationType);
 
-    // 1. FETCH SELECTION WITH ALL DATA
+    // ---------------------------------------------------------
+    // 1. FETCH SELECTION WITH ALL RELATED DATA
+    // ---------------------------------------------------------
     const selection = await prisma.selection.findUnique({
       where: { id: selectionId },
       include: {
         inquiry: { include: { sales_person: true } },
         items: {
           include: {
-            product: { include: { catalog: { include: { company: true } } } }
+            product: { 
+              include: { 
+                catalog: { 
+                  include: { company: true } 
+                } 
+              } 
+            }
           }
         },
         deepCalculation: {
@@ -1975,21 +1872,58 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
               include: {
                 selectionItem: {
                   include: {
-                    product: { include: { catalog: { include: { company: true } } } }
+                    product: {
+                      include: {
+                        catalog: {
+                          include: { company: true }
+                        }
+                      }
+                    }
                   }
                 }
               }
             }
           }
         },
-        forestCalculation: { include: { items: { include: { selectionItem: true } } } },
-        somfyCalculation: { include: { items: { include: { selectionItem: true } } } }
+        forestCalculation: {
+          include: {
+            items: {
+              include: {
+                selectionItem: {
+                  include: {
+                    product: true
+                  }
+                }
+              }
+            }
+          }
+        },
+        somfyCalculation: {
+          include: {
+            items: {
+              include: {
+                selectionItem: {
+                  include: {
+                    product: true
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     });
 
-    if (!selection) return res.status(404).json({ error: 'Selection not found' });
+    if (!selection) {
+      return res.status(404).json({ error: 'Selection not found' });
+    }
 
+    console.log('✅ Selection found:', selection.selection_number);
+    console.log('📊 Deep calc items:', selection.deepCalculation?.items.length || 0);
+
+    // ---------------------------------------------------------
     // 2. GENERATE QUOTE NUMBER
+    // ---------------------------------------------------------
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
     
@@ -1999,12 +1933,20 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       create: { year_month: yearMonth, counter: 1 },
     });
     
-    const quoteNumber = `QT-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
+    const quoteNumber = `SM${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
+    console.log('📝 Generated quote number:', quoteNumber);
 
-    // 3. AGGREGATE ITEMS
+    // ---------------------------------------------------------
+    // 3. BUILD QUOTATION ITEMS FROM DEEP CALCULATION
+    // ---------------------------------------------------------
     const deepCalcItems = selection.deepCalculation?.items || [];
-    const mainItemsMap = new Map<string, any>(); // Stores Fabric & Sheer items
-    
+
+    if (deepCalcItems.length === 0) {
+      return res.status(400).json({ error: 'No deep calculation found. Please calculate first.' });
+    }
+
+    // COLLECT ITEMS BY TYPE
+    const fabricsByProduct = new Map<string, any>();
     let totalBlackoutQty = 0;
     let blackoutRate = 0;
     
@@ -2012,111 +1954,154 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
     let totalLabourCost = 0;
     let totalFittingCost = 0;
     
-    const specializedHardwareItems: any[] = [];
+    const forestItems: any[] = [];
+    const somfyItems: any[] = [];
 
-    // --- LOOP THROUGH ALL DEEP CALC ITEMS ---
+    // Process deep calculation items
     for (const deepItem of deepCalcItems) {
       const selItem = deepItem.selectionItem;
+      const details = selItem?.details as any;
+      const areaName = details?.areaName || 'Unknown Area';
       const product = selItem?.product;
-      const rawDetails = selItem?.details as any;
-      
-      // ✅ 1. DYNAMIC AREA NAME (Handles M+S Split)
-      let areaName = rawDetails?.areaName || (selItem as any)?.areaName || 'Area';
-      if (deepItem.variant === 'Main') {
-        areaName = areaName.replace(/\(M\+S\)/gi, '').trim() + ' (Main)';
-      } else if (deepItem.variant === 'Sheer') {
-        areaName = areaName.replace(/\(M\+S\)/gi, '').trim() + ' (Sheer)';
-      }
 
-      const prodName = product?.name || selItem?.productName || 'Custom Item';
-      const catalogName = product?.catalog?.name || rawDetails?.catalogName || '';
-      const productIdOrName = product ? product.id : prodName;
-
-      // ✅ 2. HANDLE FABRIC (The "Main" material)
-      if (Number(deepItem.fabric) > 0) {
-        const key = `${productIdOrName}_${areaName}_Fabric`; // Unique key
+      // FABRIC - Group by product
+      if (deepItem.fabric > 0 && product) {
+        const fabricKey = `${product.id}`;
         
-        if (mainItemsMap.has(key)) {
-          mainItemsMap.get(key).quantity += Number(deepItem.fabric);
+        if (fabricsByProduct.has(fabricKey)) {
+          const existing = fabricsByProduct.get(fabricKey);
+          existing.quantity += Number(deepItem.fabric);
+          // Add area to description if multiple
+          if (!existing.description.includes(areaName)) {
+            existing.areas.push(areaName);
+          }
         } else {
-          mainItemsMap.set(key, {
-            areaName: areaName,
-            description: `${areaName} - ${prodName === 'Custom Item' ? 'Fabric' : prodName}`,
-            catalogName: catalogName,
+          fabricsByProduct.set(fabricKey, {
+            description: `${areaName} Main Fabric`,
+            areas: [areaName],
             quantity: Number(deepItem.fabric),
             unit: 'Mtr',
             unitPrice: Number(deepItem.fabricRate),
-            gstPercent: 12
+            gstPercent: 12,
+            productName: product.name,
+            catalogName: product.catalog?.name || '',
+            companyName: product.catalog?.company?.name || ''
           });
         }
       }
 
-      // ✅ 3. HANDLE SHEER (Crucial Fix: Treat Sheer Qty as a Line Item)
-      // This ensures "Living Room (Sheer)" gets added even if fabric is 0
-      if (Number(deepItem.sheer) > 0) {
-        const key = `${productIdOrName}_${areaName}_Sheer`; // Distinct key so it doesn't merge with fabric
-        
-        // Determine label: If the row is explicitly "Sheer" variant, call it Fabric/Product Name
-        // If it's a Normal row with sheer added, call it "Sheer"
-        let label = prodName === 'Custom Item' ? 'Sheer' : prodName;
-        if (deepItem.variant === 'Sheer') {
-           label = prodName === 'Custom Item' ? 'Fabric' : prodName;
-        }
-
-        if (mainItemsMap.has(key)) {
-          mainItemsMap.get(key).quantity += Number(deepItem.sheer);
-        } else {
-          mainItemsMap.set(key, {
-            areaName: areaName,
-            description: `${areaName} - ${label}`,
-            catalogName: catalogName,
-            quantity: Number(deepItem.sheer),
-            unit: 'Mtr',
-            unitPrice: Number(deepItem.sheerRate), // Use Sheer Rate
-            gstPercent: 12
-          });
-        }
-      }
-
-      // ✅ 4. AGGREGATE BLACKOUT (Global Lining)
-      if (Number(deepItem.blackout) > 0) {
+      // BLACKOUT - Aggregate
+      if (deepItem.blackout > 0) {
         totalBlackoutQty += Number(deepItem.blackout);
         blackoutRate = Number(deepItem.blackoutRate);
       }
 
-      // ✅ 5. AGGREGATE HARDWARE COSTS
-      if (deepItem.channel > 0) totalChannelCost += Number(deepItem.channel) * Number(deepItem.channelRate);
-      if (deepItem.labour > 0) totalLabourCost += Number(deepItem.labour) * Number(deepItem.labourRate);
-      if (deepItem.fitting > 0) totalFittingCost += Number(deepItem.fitting) * Number(deepItem.fittingRate);
+      // CHANNEL - Sum cost
+      if (deepItem.channel > 0) {
+        totalChannelCost += Number(deepItem.channel) * Number(deepItem.channelRate);
+      }
+
+      // LABOUR - Sum cost
+      const labourCost = Number(deepItem.labour) * Number(deepItem.labourRate);
+      if (labourCost > 0) {
+        totalLabourCost += labourCost;
+      }
+
+      // FITTING - Sum cost
+      const fittingCost = Number(deepItem.fitting) * Number(deepItem.fittingRate);
+      if (fittingCost > 0) {
+        totalFittingCost += fittingCost;
+      }
     }
 
-    // --- HARDWARE FROM FOREST / SOMFY ---
-    const addHardware = (items: any[], type: string) => {
-      if (!items) return;
-      items.forEach((item: any) => {
+    // Process Forest hardware
+    const forestCalc = selection.forestCalculation;
+    if (forestCalc?.items) {
+      forestCalc.items.forEach((item: any) => {
         const details = item.selectionItem?.details as any;
-        const area = details?.areaName || 'Area';
-        if (Number(item.trackFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Track`, quantity: 1, unit: 'Set', unitPrice: Number(item.trackFinal), gstPercent: 18 });
-        if (Number(item.motorFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Motor`, quantity: 1, unit: 'Nos', unitPrice: Number(item.motorFinal), gstPercent: 18 });
-        if (Number(item.remoteFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Remote`, quantity: 1, unit: 'Nos', unitPrice: Number(item.remoteFinal), gstPercent: 18 });
+        const area = details?.areaName || 'Unknown Area';
+
+        if (item.trackFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Track`,
+            quantity: 1,
+            unit: 'Set',
+            unitPrice: Number(item.trackFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.motorFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Motor`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.motorFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.remoteFinal > 0) {
+          forestItems.push({
+            description: `${area} - Forest Remote`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.remoteFinal),
+            gstPercent: 18
+          });
+        }
       });
-    };
+    }
 
-    addHardware(selection.forestCalculation?.items || [], 'Forest');
-    addHardware(selection.somfyCalculation?.items || [], 'Somfy');
+    // Process Somfy hardware
+    const somfyCalc = selection.somfyCalculation;
+    if (somfyCalc?.items) {
+      somfyCalc.items.forEach((item: any) => {
+        const details = item.selectionItem?.details as any;
+        const area = details?.areaName || 'Unknown Area';
 
-    // ---------------------------------------------------------
-    // 4. BUILD FINAL ITEMS ARRAY
-    // ---------------------------------------------------------
+        if (item.trackFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Track`,
+            quantity: 1,
+            unit: 'Set',
+            unitPrice: Number(item.trackFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.motorFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Motor`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.motorFinal),
+            gstPercent: 18
+          });
+        }
+        if (item.remoteFinal > 0) {
+          somfyItems.push({
+            description: `${area} - Somfy Remote`,
+            quantity: 1,
+            unit: 'Nos',
+            unitPrice: Number(item.remoteFinal),
+            gstPercent: 18
+          });
+        }
+      });
+    }
+
+    // =====================================================
+    // ASSEMBLE FINAL ITEMS IN EXCEL ORDER
+    // =====================================================
     const finalItems: any[] = [];
 
-    // A. Add Fabrics & Sheers
-    mainItemsMap.forEach((item) => {
-      let desc = item.description;
-      if (item.catalogName) desc += ` (${item.catalogName})`;
-
+    // 1. ALL FABRIC LINES (with proper descriptions showing area + fabric name)
+    fabricsByProduct.forEach((item) => {
+      const areaList = item.areas.length > 1 ? item.areas.join(', ') : item.areas[0];
+      const fabricDesc = item.companyName 
+        ? `${areaList} Main Fabric` 
+        : `${areaList} Main Fabric`;
+      
       finalItems.push({
-        description: desc,
+        description: fabricDesc,
         quantity: item.quantity,
         unit: item.unit,
         unitPrice: item.unitPrice,
@@ -2125,10 +2110,10 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       });
     });
 
-    // B. Add Aggregated Blackout
+    // 2. BLACKOUT (single aggregated line)
     if (totalBlackoutQty > 0) {
       finalItems.push({
-        description: 'Blackout Lining',
+        description: 'Blackout',
         quantity: totalBlackoutQty,
         unit: 'Mtr',
         unitPrice: blackoutRate,
@@ -2137,58 +2122,102 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       });
     }
 
-    // C. Add Aggregated Hardware (Channel, Labour, Fitting)
-    const totalCLF = totalChannelCost + totalLabourCost + totalFittingCost;
-    // Count distinct "Windows/Items" for quantity logic (optional visual improvement)
-    // We use the number of deep calculation items as a proxy for "number of windows"
-    const windowCount = deepCalcItems.length > 0 ? deepCalcItems.length : 1;
-
-    if (totalCLF > 0) {
+    // 3. ALL CURTAIN CHANNEL, LABOUR AND FITTING (single line)
+    const totalChannelLabourFitting = totalChannelCost + totalLabourCost + totalFittingCost;
+    const areaCount = selection.items.length || 1;
+    
+    if (totalChannelLabourFitting > 0) {
       finalItems.push({
-        description: 'All Curtain Channel, Labour and Fitting Charges',
-        quantity: windowCount, 
+        description: 'All Curtain Channel, Labour and Fitting',
+        quantity: areaCount,
         unit: 'Nos',
-        unitPrice: totalCLF / windowCount, 
+        unitPrice: totalChannelLabourFitting, // Show total, not divided
         discountPercent: 0,
         gstPercent: 18
       });
     }
 
-    // D. Add Specialized Hardware
-    finalItems.push(...specializedHardwareItems);
+    // 4. Forest/Somfy Hardware
+    forestItems.forEach(item => {
+      finalItems.push({
+        ...item,
+        discountPercent: 0
+      });
+    });
+
+    somfyItems.forEach(item => {
+      finalItems.push({
+        ...item,
+        discountPercent: 0
+      });
+    });
+
+    // 5. Transportation (Optional - uncomment if needed)
+    // finalItems.push({
+    //   description: 'Transportation (Approx)',
+    //   quantity: 1,
+    //   unit: 'Nos',
+    //   unitPrice: 1000,
+    //   discountPercent: 0,
+    //   gstPercent: 18
+    // });
+
+    // Add serial numbers
+    const quoteItems = finalItems.map((item, index) => ({
+      srNo: index + 1,
+      ...item
+    }));
+
+    console.log('📦 Generated items:', quoteItems.length);
 
     // ---------------------------------------------------------
-    // 5. SAVE TO DB
+    // 4. CREATE QUOTATION IN DATABASE
     // ---------------------------------------------------------
     const newQuote = await prisma.quotation.create({
       data: {
         quotation_number: quoteNumber,
         quotationType: quotationType || 'simple',
         selectionId,
-        clientName: selection.inquiry?.client_name || 'Client',
+        clientName: selection.inquiry?.client_name || 'Valued Client',
         clientAddress: selection.inquiry?.address || '',
-        subTotal: 0, discountTotal: 0, taxableValue: 0, gstTotal: 0, grandTotal: 0,
+        subTotal: 0,
+        discountTotal: 0,
+        taxableValue: 0,
+        gstTotal: 0,
+        transportationCharge: 0,
+        installationCharge: 0,
+        grandTotal: 0,
         status: 'draft',
         created_by_id: req.user.id,
         items: {
-          create: finalItems.map((item, idx) => {
+          create: quoteItems.map(item => {
             const qty = Number(item.quantity);
             const rate = Number(item.unitPrice);
             const subtotal = qty * rate;
-            const gstAmt = (subtotal * (item.gstPercent || 0)) / 100;
             
+            const discPct = Number(item.discountPercent) || 0;
+            const discAmt = subtotal * (discPct / 100);
+            
+            const taxable = subtotal - discAmt;
+            
+            const gstPct = Number(item.gstPercent) || 0;
+            const gstAmt = taxable * (gstPct / 100);
+            
+            const total = taxable + gstAmt;
+
             return {
-              srNo: idx + 1,
+              srNo: item.srNo,
               description: item.description,
               quantity: qty,
               unit: item.unit,
               unitPrice: rate,
-              gstPercent: item.gstPercent || 0,
+              discountPercent: discPct,
+              discountAmount: discAmt,
+              gstPercent: gstPct,
               gstAmount: gstAmt,
               subtotal: subtotal,
-              taxableValue: subtotal,
-              total: subtotal + gstAmt,
-              discountPercent: 0, discountAmount: 0
+              taxableValue: taxable,
+              total: total
             };
           })
         }
@@ -2196,26 +2225,50 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       include: { items: true }
     });
 
-    // Update Final Totals
-    const subTotal = newQuote.items.reduce((a, b) => a + Number(b.subtotal), 0);
-    const gstTotal = newQuote.items.reduce((a, b) => a + Number(b.gstAmount), 0);
-    const grandTotal = subTotal + gstTotal;
+    // ---------------------------------------------------------
+    // 5. CALCULATE AND UPDATE TOTALS
+    // ---------------------------------------------------------
+    const subTotal = newQuote.items.reduce((acc, i) => acc + Number(i.subtotal), 0);
+    const discountTotal = newQuote.items.reduce((acc, i) => acc + Number(i.discountAmount), 0);
+    const taxableValue = subTotal - discountTotal;
+    const gstTotal = newQuote.items.reduce((acc, i) => acc + Number(i.gstAmount), 0);
+    const grandTotal = taxableValue + gstTotal;
 
     await prisma.quotation.update({
       where: { id: newQuote.id },
-      data: { subTotal, taxableValue: subTotal, gstTotal, grandTotal }
+      data: { subTotal, discountTotal, taxableValue, gstTotal, grandTotal }
     });
 
-    console.log(`✅ Quotation ${quoteNumber} generated.`);
-    res.json({ ...newQuote, subTotal, gstTotal, grandTotal });
+    console.log('✅ Quotation created successfully:', newQuote.id);
 
-  } catch (error: any) {
-    console.error('❌ Quotation Generation Error:', error);
-    res.status(500).json({ error: 'Failed to generate quotation', details: error.message });
+    // ---------------------------------------------------------
+    // 6. RETURN THE CREATED QUOTATION WITH ID
+    // ---------------------------------------------------------
+    res.json({
+      id: newQuote.id,  // ✅ IMPORTANT: Return the ID
+      quotation_number: quoteNumber,
+      quotationType: quotationType || 'simple',
+      selectionId,
+      clientName: selection.inquiry?.client_name || 'Valued Client',
+      clientAddress: selection.inquiry?.address || '',
+      items: quoteItems,
+      subTotal,
+      discountTotal,
+      taxableValue,
+      gstTotal,
+      transportationCharge: 0,
+      installationCharge: 0,
+      grandTotal
+    });
+
+  } catch (error) {
+    console.error('❌ Quotation generation error:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate quotation',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
-
-
 
 // 3. GET SINGLE QUOTATION BY ID (Must be AFTER /generate)
 app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
@@ -2246,8 +2299,9 @@ app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Resp
     res.status(500).json({ error: 'Failed to fetch quotation' });
   }
 });
+
 // 4. UPDATE QUOTATION
-app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
   const { clientName, clientAddress, transportationCharge, installationCharge, items } = req.body;
 
@@ -2301,15 +2355,6 @@ app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response
       where: { id },
       include: { items: { orderBy: { srNo: 'asc' } } }
     });
-
-    // ✅ FIX: Added 'updated?.' and '||' fallback to satisfy TypeScript
-    await logActivity(
-      req.user.id, 
-      'UPDATE', 
-      'QUOTATION', 
-      id, 
-      `Updated Quotation #${updated?.quotation_number || 'Unknown'}`
-    );
     
     res.json(updated);
 
@@ -2320,7 +2365,7 @@ app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response
 });
 
 // 5. DELETE QUOTATION
-app.delete('/api/quotations/:id', authenticateToken, async (req: any, res: Response) => {
+app.delete('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
     // Prisma cascade delete will automatically remove QuotationItems if configured in schema.
@@ -2331,333 +2376,10 @@ app.delete('/api/quotations/:id', authenticateToken, async (req: any, res: Respo
       where: { id } 
     });
 
-    await logActivity(req.user.id, 'DELETE', 'QUOTATION', id, `Deleted Quotation #${id}`);
-
     res.json({ message: 'Quotation deleted successfully' });
   } catch (error) {
     console.error('❌ Delete Quotation Error:', error);
     res.status(500).json({ error: 'Failed to delete quotation' });
-  }
-});
-
-// ==========================================
-// ARCHITECT ROUTES (NEW)
-// ==========================================
-
-app.get('/api/architects', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const architects = await prisma.architect.findMany({
-      orderBy: { name: 'asc' }
-    });
-    res.json(architects);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch architects' });
-  }
-});
-
-app.post('/api/architects', authenticateToken, async (req: any, res: Response) => {
-  const { name, address, contact, email, birth_date, anniversary_date, associate_arch_name } = req.body;
-  try {
-    const newArch = await prisma.architect.create({
-      data: {
-        name,
-        address,
-        contact,
-        email,
-        associate_arch_name,
-        birth_date: birth_date ? new Date(birth_date) : null,
-        anniversary_date: anniversary_date ? new Date(anniversary_date) : null,
-      }
-    });
-    await logActivity(req.user.id, 'CREATE', 'ARCHITECT', newArch.id, `Created Architect: ${name}`);
-    res.json(newArch);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create architect' });
-  }
-});
-
-app.put('/api/architects/:id', authenticateToken, async (req: any, res: Response) => {
-  const { id } = req.params;
-  const { name, address, contact, email, birth_date, anniversary_date, associate_arch_name } = req.body;
-  try {
-    const updated = await prisma.architect.update({
-      where: { id },
-      data: {
-        name,
-        address,
-        contact,
-        email,
-        associate_arch_name,
-        birth_date: birth_date ? new Date(birth_date) : null,
-        anniversary_date: anniversary_date ? new Date(anniversary_date) : null,
-      }
-    });
-    await logActivity(req.user.id, 'UPDATE', 'ARCHITECT', id, `Updated Architect: ${name}`);
-    res.json(updated);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update architect' });
-  }
-});
-
-app.delete('/api/architects/:id', authenticateToken, async (req: any, res: Response) => {
-  try {
-    await prisma.architect.delete({ where: { id: req.params.id } });
-    await logActivity(req.user.id, 'DELETE', 'ARCHITECT', req.params.id, 'Deleted Architect');
-    res.json({ message: 'Architect deleted' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete architect' });
-  }
-});
-
-
-// ==========================================
-// 🆕 NEW PIPELINE & KANBAN ROUTES
-// ==========================================
-
-// GET PIPELINE BOARD DATA
-app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
-    const whereClause = isAdmin ? {} : { 
-      OR: [
-        { sales_person_id: req.user.id },            // Check default owner
-        { sales_persons: { some: { id: req.user.id } } } // Check multiple members list
-      ]
-    };
-
-    const inquiries = await prisma.inquiry.findMany({
-      where: whereClause,
-      include: {
-        // ✅ ADDED BACK: Default Owner
-        sales_person: { select: { id: true, name: true } }, 
-        
-        // ✅ KEPT: Multiple Members
-        sales_persons: { select: { id: true, name: true } }, 
-        
-        comments: { 
-          include: { user: { select: { name: true } } },
-          orderBy: { createdAt: 'desc' }
-        },
-        checklists: { 
-          include: { items: { orderBy: { id: 'asc' } } } 
-        },
-        labels: true,
-        _count: { select: { selections: true } }
-      },
-      orderBy: { updated_at: 'desc' }
-    });
-
-    res.json(inquiries);
-  } catch (error) {
-    console.error('Pipeline Error:', error);
-    res.status(500).json({ error: 'Failed to fetch pipeline' });
-  }
-});
-
-// 2. MOVE CARD (Update Stage)
-app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Response) => {
-  const { id } = req.params;
-  const { stage } = req.body; // e.g., "Quotation Submitted"
-
-  try {
-    const updated = await prisma.inquiry.update({
-      where: { id },
-      data: { stage }
-    });
-    
-    // Log the movement for Admin visibility
-    await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Moved to ${stage}`);
-    
-    res.json(updated);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to move card' });
-  }
-});
-
-// 3. ADD COMMENT TO INQUIRY
-app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res: Response) => {
-  const { id } = req.params;
-  const { content, attachmentUrl } = req.body; // <--- Accept attachmentUrl
-
-  try {
-    const comment = await prisma.inquiryComment.create({
-      data: {
-        content: content || '', // Allow empty content if there is an image
-        attachmentUrl: attachmentUrl || null,
-        inquiryId: id,
-        userId: req.user.id
-      },
-      include: { user: { select: { name: true } } }
-    });
-    res.json(comment);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to post comment' });
-  }
-});
-
-// 4. CREATE CHECKLIST
-app.post('/api/inquiries/:id/checklists', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const list = await prisma.inquiryChecklist.create({
-      data: {
-        title: req.body.title,
-        inquiryId: req.params.id
-      },
-      include: { items: true }
-    });
-    res.json(list);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create checklist' });
-  }
-});
-
-
-app.delete('/api/checklists/:id', authenticateToken, async (req: any, res: Response) => {
-  try {
-    // Items cascade delete usually, but we can delete explicitly to be safe if schema doesn't cascade
-    await prisma.inquiryChecklistItem.deleteMany({ where: { checklistId: req.params.id }});
-    
-    await prisma.inquiryChecklist.delete({
-      where: { id: req.params.id }
-    });
-    res.json({ success: true });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to delete checklist' });
-  }
-});
-// 5. ADD ITEM TO CHECKLIST
-app.post('/api/checklists/:id/items', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const item = await prisma.inquiryChecklistItem.create({
-      data: {
-        text: req.body.text,
-        checklistId: req.params.id,
-        isCompleted: false
-      }
-    });
-    res.json(item);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to add item' });
-  }
-});
-
-// 6. TOGGLE CHECKLIST ITEM
-app.put('/api/checklist-items/:id', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const item = await prisma.inquiryChecklistItem.update({
-      where: { id: req.params.id },
-      data: { isCompleted: req.body.isCompleted }
-    });
-    res.json(item);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update item' });
-  }
-});
-
-// 7. ADD COLORED LABEL
-app.post('/api/inquiries/:id/labels', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const label = await prisma.inquiryLabel.create({
-      data: {
-        text: req.body.text,
-        color: req.body.color,
-        inquiryId: req.params.id
-      }
-    });
-    res.json(label);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to add label' });
-  }
-});
-
-// ==========================================
-// NEW ROUTES (Add these at the end of your file)
-// ==========================================
-
-// UPLOAD IMAGE FOR COMMENT
-app.post('/api/upload', authenticateToken, uploadDocs.single('file'), (req: any, res: Response) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  // Return the URL that the frontend can use to display the image
-  res.json({ url: `/documents/${req.file.filename}` });
-});
-
-// UPDATE INQUIRY DESCRIPTION
-app.put('/api/inquiries/:id/description', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const updated = await prisma.inquiry.update({
-      where: { id: req.params.id },
-      data: { description: req.body.description }
-    });
-    res.json(updated);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update description' });
-  }
-});
-
-// ASSIGN MEMBER (Re-assign Sales Person)
-// ASSIGN MEMBER (Handle Single Owner OR Multiple Members)
-app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const { userIds, userId } = req.body;
-
-    // SCENARIO 1: Frontend sends a list of members (Collaborators)
-    if (userIds && Array.isArray(userIds)) {
-       const updated = await prisma.inquiry.update({
-          where: { id: req.params.id },
-          data: { 
-            // This 'set' command replaces the current list with the new list
-            sales_persons: {
-               set: userIds.map((uid: string) => ({ id: uid })) 
-            }
-          },
-          // Return the updated data so frontend updates immediately
-          include: {
-             sales_person: { select: { id: true, name: true } },
-             sales_persons: { select: { id: true, name: true } }
-          }
-       });
-       await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Updated assigned members`);
-       return res.json(updated);
-    } 
-    
-    // SCENARIO 2: Frontend sends a single user (Owner change)
-    if (userId) {
-       const updated = await prisma.inquiry.update({
-          where: { id: req.params.id },
-          data: { sales_person_id: userId }
-       });
-       await logActivity(req.user.id, 'UPDATE', 'INQUIRY_OWNER', req.params.id, `Reassigned inquiry owner`);
-       return res.json(updated);
-    }
-
-    res.status(400).json({ error: "Invalid assignment data" });
-
-  } catch (error) {
-    console.error("Assign Error:", error);
-    res.status(500).json({ error: 'Failed to assign member' });
-  }
-});
-
-// DELETE LABEL
-app.delete('/api/labels/:id', authenticateToken, async (req: any, res: Response) => {
-  try {
-    await prisma.inquiryLabel.delete({ where: { id: req.params.id } });
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to remove label' });
-  }
-});
-
-// GET ALL USERS (For Member Picker)
-app.get('/api/users/all', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const users = await prisma.user.findMany({
-      select: { id: true, name: true, role: true, email: true }
-    });
-    res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 

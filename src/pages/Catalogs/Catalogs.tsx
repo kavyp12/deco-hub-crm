@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Upload, Search, Edit2, Save, X, BookOpen, Trash2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { Plus, Upload, Search, Edit2, Save, X, BookOpen, Trash2, ChevronDown, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
+import * as XLSX from 'xlsx';
 
 interface Company { 
   id: string; 
@@ -29,9 +30,26 @@ interface Product {
   id: string; 
   name: string; 
   price: string;
-  attributes: any; 
+  description?: string; 
+  attributes: Record<string, any>; 
   imageUrl?: string; 
 }
+
+// --- SMART MAPPING CONFIGURATION ---
+const SMART_MAPPINGS: Record<string, string[]> = {
+  // Backend Required Name         // Excel Headers to Look For
+  // REMOVED 'RRP' from this list so it strictly picks 'RRP With Gst'
+  'RR Price after GST (Cut Rate)': ['RRP With Gst', 'RRP + with gst', 'RRP with GST', 'RRP + GST', 'RRP With GST', 'RRP_With_GST'], 
+  'Serial No':                     ['Serial No', 'Series no', 'SKU', 'Design No'],
+  'CL + GST':                      ['CL + gst rate', 'CL + GST', 'CL Rate'],
+  'Price Code':                    ['PRICE CODE', 'Price code', 'Code', 'Collection Code'],
+  'Material Description':          ['Material Description', 'Description', 'Item Name'],
+  // Collection is mapped here for data storage, even if hidden in table
+  'Collection':                    ['Collection', 'Book Name', 'Catalog Name'],
+  'Width':                         ['Width', 'Size'],
+  'HSN':                           ['HSN', 'HSN Code'],
+  'Gsm':                           ['Gsm', 'GSM', 'Weight']
+};
 
 const Catalogs: React.FC = () => {
   const { toast } = useToast();
@@ -44,8 +62,8 @@ const Catalogs: React.FC = () => {
   const [loading, setLoading] = useState(false);
   
   // Search States
-  const [searchQuery, setSearchQuery] = useState(''); // Sidebar search
-  const [productSearchQuery, setProductSearchQuery] = useState(''); // Product table search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [productSearchQuery, setProductSearchQuery] = useState('');
   
   // Dialog States
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
@@ -53,8 +71,11 @@ const Catalogs: React.FC = () => {
   const [newCompanyName, setNewCompanyName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<string>('');
-  const [uploadType, setUploadType] = useState('Curtains');
+  const [uploadType, setUploadType] = useState('Curtains'); 
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
+
+  // Editing State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editForm, setEditForm] = useState({ name: '', price: '' });
 
@@ -64,7 +85,7 @@ const Catalogs: React.FC = () => {
 
   useEffect(() => { 
     if (selectedCatalog) {
-      setProductSearchQuery(''); // Reset product search when changing catalogs
+      setProductSearchQuery('');
       fetchProducts(selectedCatalog);
     } else {
       setProducts([]);
@@ -102,7 +123,6 @@ const Catalogs: React.FC = () => {
       toast({ title: 'Error', description: 'Company name required', variant: 'destructive' });
       return;
     }
-
     try { 
       await api.post('/companies', { name: newCompanyName }); 
       toast({ title: 'Success', description: 'Company created successfully' }); 
@@ -110,17 +130,12 @@ const Catalogs: React.FC = () => {
       setNewCompanyName(''); 
       fetchCompanies(); 
     } catch (error: any) { 
-      toast({ 
-        title: 'Error', 
-        description: error.response?.data?.error || 'Failed to create company', 
-        variant: 'destructive' 
-      }); 
+      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to create company', variant: 'destructive' }); 
     }
   };
 
   const handleDeleteCompany = async (id: string, name: string) => {
     if(!confirm(`Delete "${name}" and all its catalogs/products? This cannot be undone.`)) return;
-    
     try { 
       await api.delete(`/companies/${id}`); 
       toast({ title: 'Deleted', description: `${name} has been deleted` }); 
@@ -130,12 +145,65 @@ const Catalogs: React.FC = () => {
       }
       fetchCompanies(); 
     } catch (error: any) { 
-      toast({ 
-        title: 'Error', 
-        description: error.response?.data?.error || 'Failed to delete company', 
-        variant: 'destructive' 
-      }); 
+      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to delete company', variant: 'destructive' }); 
     }
+  };
+
+  const processFile = (originalFile: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'binary' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          
+          if (jsonData.length > 0) {
+            const currentHeaders = jsonData[0] as string[];
+            const newHeaders = [...currentHeaders]; 
+            let changesMade = false;
+
+            Object.entries(SMART_MAPPINGS).forEach(([targetHeader, variations]) => {
+              if (currentHeaders.includes(targetHeader)) return;
+
+              // Find exact matching column in file from variations
+              const foundIndex = currentHeaders.findIndex(h => 
+                h && variations.some(v => h.trim().toLowerCase() === v.toLowerCase())
+              );
+
+              if (foundIndex !== -1) {
+                console.log(`Auto-Mapping: Renaming "${currentHeaders[foundIndex]}" to "${targetHeader}"`);
+                newHeaders[foundIndex] = targetHeader;
+                changesMade = true;
+              }
+            });
+            
+            if (changesMade) {
+              jsonData[0] = newHeaders;
+              const newWorksheet = XLSX.utils.aoa_to_sheet(jsonData);
+              const newWorkbook = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(newWorkbook, newWorksheet, "Sheet1");
+              
+              const excelBuffer = XLSX.write(newWorkbook, { bookType: 'xlsx', type: 'array' });
+              const newFile = new File([excelBuffer], originalFile.name, { type: originalFile.type });
+              resolve(newFile);
+              return;
+            }
+          }
+          resolve(originalFile);
+        } catch (error) {
+          console.error("Error processing file:", error);
+          resolve(originalFile);
+        }
+      };
+      
+      reader.onerror = (error) => reject(error);
+      reader.readAsBinaryString(originalFile);
+    });
   };
 
   const handleUpload = async () => {
@@ -145,34 +213,58 @@ const Catalogs: React.FC = () => {
     }
 
     setIsUploading(true);
-    const formData = new FormData(); 
-    formData.append('file', file); 
-    formData.append('companyId', selectedCompany); 
-    formData.append('defaultType', uploadType);
-    
-    try { 
-      const { data } = await api.post('/upload-catalog', formData, { 
+    setUploadStatus('Checking File...');
+
+    try {
+      const processedFile = await processFile(file);
+      
+      setUploadStatus('Uploading...');
+      const formData = new FormData(); 
+      formData.append('file', processedFile); 
+      formData.append('companyId', selectedCompany); 
+      formData.append('defaultType', uploadType); 
+      
+      const mapping = {
+         name: 'Material Description',
+         price: 'RR Price after GST (Cut Rate)',
+         sku: 'Serial No',
+         description: 'Collection'
+      };
+      formData.append('mapping', JSON.stringify(mapping));
+
+      const response = await api.post('/upload-catalog', formData, { 
         headers: { 'Content-Type': 'multipart/form-data' } 
       }); 
-      toast({ 
-        title: 'Success', 
-        description: data.message || 'Catalog uploaded successfully' 
-      }); 
+      
+      const { data } = response;
+      
+      if (data.errors && data.errors.length > 0) {
+        const firstError = typeof data.errors[0] === 'string' ? data.errors[0] : JSON.stringify(data.errors[0]);
+        toast({
+          title: 'Partial Success',
+          description: `Processed ${data.processed} items. ${data.errors.length} errors. First: ${firstError}`,
+          variant: 'destructive'
+        });
+      } else {
+        toast({ title: 'Success', description: data.message || `Catalog uploaded successfully.` }); 
+      }
+
       setIsUploadOpen(false); 
       setFile(null); 
       setSelectedCompany('');
       fetchCompanies(); 
-      if (selectedCatalog) {
-        fetchProducts(selectedCatalog);
-      }
+      if (selectedCatalog) fetchProducts(selectedCatalog);
+
     } catch (error: any) { 
+      console.error("Upload failed:", error);
       toast({ 
-        title: 'Error', 
-        description: error.response?.data?.error || 'Failed to upload', 
+        title: 'Upload Failed', 
+        description: error.response?.data?.message || 'Failed to upload.', 
         variant: 'destructive' 
       }); 
     } finally {
       setIsUploading(false);
+      setUploadStatus('');
     }
   };
 
@@ -183,7 +275,6 @@ const Catalogs: React.FC = () => {
 
   const handleUpdateProduct = async () => {
     if(!editingProduct) return;
-    
     try { 
       await api.put(`/products/${editingProduct.id}`, { 
         price: editForm.price, 
@@ -193,11 +284,7 @@ const Catalogs: React.FC = () => {
       setEditingProduct(null); 
       fetchProducts(selectedCatalog); 
     } catch (error: any) { 
-      toast({ 
-        title: 'Error', 
-        description: error.response?.data?.error || 'Failed to update', 
-        variant: 'destructive' 
-      }); 
+      toast({ title: 'Error', description: 'Failed to update', variant: 'destructive' }); 
     }
   };
 
@@ -211,30 +298,29 @@ const Catalogs: React.FC = () => {
     }
   };
 
-  // 1. Sidebar Filter: Companies
+  const getAttr = (product: Product, key: string) => {
+    if (product.attributes?.[key]) return product.attributes[key];
+    if (key === 'Price Code' && product.attributes?.['PRICE CODE']) return product.attributes['PRICE CODE'];
+    return '-';
+  };
+
   const filteredCompanies = companies.filter(company => {
     const searchLower = searchQuery.toLowerCase();
-    const companyMatches = company.name.toLowerCase().includes(searchLower);
-    const hasMatchingCatalog = company.catalogs.some(cat => 
-      cat.name.toLowerCase().includes(searchLower)
-    );
-    return companyMatches || hasMatchingCatalog;
+    return company.name.toLowerCase().includes(searchLower) || 
+           company.catalogs.some(cat => cat.name.toLowerCase().includes(searchLower));
   });
 
-  // 2. Product Table Filter: Products
   const filteredProducts = products.filter(product => {
     if (!productSearchQuery) return true;
     const searchLower = productSearchQuery.toLowerCase();
-    return (
-      product.name.toLowerCase().includes(searchLower) ||
-      product.price.toString().includes(searchLower)
-    );
+    const primaryMatch = product.name.toLowerCase().includes(searchLower) || product.price.toString().includes(searchLower);
+    if (primaryMatch) return true;
+    return Object.values(product.attributes || {}).some(val => String(val).toLowerCase().includes(searchLower));
   });
 
   return (
     <DashboardLayout>
       <div className="animate-fade-in space-y-6">
-        {/* Header - Stacks on Mobile */}
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-foreground">Catalog Manager</h1>
@@ -248,24 +334,13 @@ const Catalogs: React.FC = () => {
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-[90vw] md:max-w-lg">
-                  <DialogHeader>
-                    <DialogTitle>Add New Company</DialogTitle>
-                  </DialogHeader>
+                  <DialogHeader><DialogTitle>Add New Company</DialogTitle></DialogHeader>
                   <div className="pt-4 space-y-4">
                     <div className="space-y-2">
                       <Label>Company Name</Label>
-                      <Input 
-                        value={newCompanyName} 
-                        onChange={e=>setNewCompanyName(e.target.value)} 
-                        placeholder="Enter company name"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleAddCompany();
-                        }}
-                      />
+                      <Input value={newCompanyName} onChange={e=>setNewCompanyName(e.target.value)} placeholder="Enter company name" />
                     </div>
-                    <Button onClick={handleAddCompany} className="w-full">
-                      Create Company
-                    </Button>
+                    <Button onClick={handleAddCompany} className="w-full">Create Company</Button>
                   </div>
                 </DialogContent>
              </Dialog>
@@ -277,20 +352,14 @@ const Catalogs: React.FC = () => {
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-[90vw] md:max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle>Upload Catalog Excel</DialogTitle>
-                    </DialogHeader>
+                    <DialogHeader><DialogTitle>Upload Catalog Excel</DialogTitle></DialogHeader>
                     <div className="pt-4 space-y-4">
                         <div className="space-y-2">
                           <Label>Select Company</Label>
                           <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Choose company"/>
-                            </SelectTrigger>
+                            <SelectTrigger><SelectValue placeholder="Choose company"/></SelectTrigger>
                             <SelectContent>
-                              {companies.map(c=>
-                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                              )}
+                              {companies.map(c=><SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>
@@ -298,13 +367,11 @@ const Catalogs: React.FC = () => {
                         <div className="space-y-2">
                           <Label>Product Category</Label>
                           <Select value={uploadType} onValueChange={setUploadType}>
-                            <SelectTrigger>
-                              <SelectValue/>
-                            </SelectTrigger>
+                            <SelectTrigger><SelectValue/></SelectTrigger>
                             <SelectContent>
                              <SelectItem value="Curtains">Curtains</SelectItem>
-                              <SelectItem value="blinds">Blinds</SelectItem>
-                              <SelectItem value="rugs">Rugs</SelectItem>
+                             <SelectItem value="blinds">Blinds</SelectItem>
+                             <SelectItem value="rugs">Rugs</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -313,14 +380,20 @@ const Catalogs: React.FC = () => {
                           <Label>Excel File</Label>
                           <Input 
                             type="file" 
-                            accept=".xlsx,.xls"
+                            accept=".xlsx,.xls,.csv"
                             onChange={e=>setFile(e.target.files?.[0] || null)} 
                           />
-                          {file && (
-                            <p className="text-sm text-muted-foreground break-all">
-                              Selected: {file.name}
-                            </p>
-                          )}
+                          {file && <p className="text-xs text-muted-foreground mt-1">Selected: {file.name}</p>}
+                        </div>
+
+                        <div className="bg-green-500/10 border border-green-500/20 rounded-md p-3 flex gap-3 items-start">
+                          <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
+                          <div className="text-xs">
+                             <p className="font-semibold text-green-700 mb-1">Smart Auto-Fix Enabled</p>
+                             <p className="text-muted-foreground">
+                               Uploaded files will be automatically corrected. We will strictly use "RRP With Gst" for the price.
+                             </p>
+                          </div>
                         </div>
 
                         <Button 
@@ -329,13 +402,8 @@ const Catalogs: React.FC = () => {
                           className="w-full"
                         >
                           {isUploading ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Uploading...
-                            </>
-                          ) : (
-                            'Upload Catalog'
-                          )}
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {uploadStatus}</>
+                          ) : 'Upload Catalog'}
                         </Button>
                     </div>
                 </DialogContent>
@@ -344,227 +412,95 @@ const Catalogs: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 min-h-[calc(100vh-250px)]">
-          {/* ACCORDION SIDEBAR */}
           <div className="card-premium p-4 overflow-y-auto max-h-60 md:max-h-[calc(100vh-200px)]">
-            <h3 className="font-semibold mb-4 text-xs uppercase text-muted-foreground tracking-wider">
-              Companies & Catalogs
-            </h3>
-
-            {/* Sidebar Search Bar */}
+            <h3 className="font-semibold mb-4 text-xs uppercase text-muted-foreground tracking-wider">Companies & Catalogs</h3>
             <div className="relative mb-4">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search catalog..."
-                className="pl-9 h-9 text-sm"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+              <Input placeholder="Search..." className="pl-9 h-9 text-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
-
             <div className="space-y-2">
-              {filteredCompanies.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <BookOpen className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm">
-                    {searchQuery ? 'No results found.' : 'No companies yet.'}
-                  </p>
-                  {!searchQuery && <p className="text-xs">Add a company to get started.</p>}
-                </div>
-              ) : (
-                filteredCompanies.map(company => (
-                  <div key={company.id} className="border border-border rounded-lg overflow-hidden">
-                    <div 
-                      className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => toggleCompany(company.id)}
-                    >
-                      <div className="font-medium flex items-center gap-2">
-                          {expandedCompany === company.id ? (
-                            <ChevronDown className="h-4 w-4 text-primary"/>
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground"/>
-                          )}
-                          <span className="truncate">{company.name}</span>
-                      </div>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-7 w-7 text-destructive hover:bg-destructive/10" 
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          handleDeleteCompany(company.id, company.name); 
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+              {filteredCompanies.map(company => (
+                <div key={company.id} className="border border-border rounded-lg overflow-hidden">
+                  <div className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => toggleCompany(company.id)}>
+                    <div className="font-medium flex items-center gap-2">
+                      {expandedCompany === company.id ? <ChevronDown className="h-4 w-4 text-primary"/> : <ChevronRight className="h-4 w-4 text-muted-foreground"/>}
+                      <span className="truncate">{company.name}</span>
                     </div>
-
-                    {expandedCompany === company.id && (
-                      <div className="bg-background p-2 space-y-1 border-t border-border animate-in slide-in-from-top-2">
-                          {company.catalogs.length === 0 ? (
-                            <p className="text-xs text-muted-foreground p-2 text-center">
-                              No catalogs uploaded yet.
-                            </p>
-                          ) : (
-                            company.catalogs.map(catalog => (
-                                <button 
-                                    key={catalog.id} 
-                                    onClick={() => setSelectedCatalog(catalog.id)}
-                                    className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
-                                      selectedCatalog === catalog.id 
-                                        ? 'bg-accent/10 text-accent font-medium border border-accent/20' 
-                                        : 'text-muted-foreground hover:bg-muted'
-                                    }`}
-                                >
-                                    <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
-                                    <span className="truncate">{catalog.name}</span>
-                                    <span className="ml-auto text-xs opacity-60">
-                                      {catalog.type}
-                                    </span>
-                                </button>
-                            ))
-                          )}
-                      </div>
-                    )}
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company.id, company.name); }}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                ))
-              )}
+                  {expandedCompany === company.id && (
+                    <div className="bg-background p-2 space-y-1 border-t border-border animate-in slide-in-from-top-2">
+                      {company.catalogs.length === 0 ? <p className="text-xs text-muted-foreground p-2 text-center">No catalogs.</p> : company.catalogs.map(catalog => (
+                        <button key={catalog.id} onClick={() => setSelectedCatalog(catalog.id)} className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${selectedCatalog === catalog.id ? 'bg-accent/10 text-accent font-medium border border-accent/20' : 'text-muted-foreground hover:bg-muted'}`}>
+                          <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span className="truncate">{catalog.name}</span>
+                          <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded capitalize ${catalog.type === 'Curtains' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                            {catalog.type}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
-          {/* Product Table */}
           <div className="md:col-span-3 card-premium overflow-hidden flex flex-col">
              {selectedCatalog ? (
                <>
                  <div className="p-4 border-b border-border bg-muted/20 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                    <div className="flex items-center gap-2">
-                     <h3 className="font-semibold text-foreground whitespace-nowrap">
-                       Products ({filteredProducts.length})
-                     </h3>
+                     <h3 className="font-semibold text-foreground whitespace-nowrap">Products ({filteredProducts.length})</h3>
                      {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground"/>}
                    </div>
-
-                   {/* Product Search Bar */}
                    <div className="relative w-full md:w-64">
                       <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search products by code..."
-                        className="pl-9 h-9 text-sm"
-                        value={productSearchQuery}
-                        onChange={(e) => setProductSearchQuery(e.target.value)}
-                      />
+                      <Input placeholder="Search products..." className="pl-9 h-9 text-sm" value={productSearchQuery} onChange={(e) => setProductSearchQuery(e.target.value)} />
                    </div>
                  </div>
-
-                 {/* Table Container - Horizontal Scroll on Mobile */}
+                 
                  <div className="overflow-x-auto flex-1">
                    {loading ? (
-                     <div className="flex items-center justify-center h-full">
-                       <div className="text-center py-12">
-                         <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent mb-4"></div>
-                         <p className="text-muted-foreground">Loading products...</p>
-                       </div>
-                     </div>
+                     <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
                    ) : filteredProducts.length === 0 ? (
-                     <div className="flex items-center justify-center h-full text-muted-foreground">
-                       <div className="text-center py-12">
-                         <Search className="h-16 w-16 mx-auto mb-4 opacity-20" />
-                         <p className="text-lg font-medium">No products found</p>
-                         <p className="text-sm mt-1">
-                           {productSearchQuery 
-                             ? 'Try adjusting your search query.'
-                             : 'Upload an Excel file to add products to this catalog.'
-                           }
-                         </p>
-                       </div>
-                     </div>
+                     <div className="flex items-center justify-center h-full text-muted-foreground">No products found</div>
                    ) : (
-                     <table className="w-full text-sm min-w-[600px]">
+                     <table className="w-full text-sm min-w-[1000px]">
                        <thead className="sticky top-0 bg-muted/50 z-10">
                          <tr className="border-b">
-                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Design Code</th>
-                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">RR Price (GST)</th>
-                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Other Details</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Series No</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Width</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">HSN</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">CL + GST</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">RRP + GST</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Price Code</th>
+                           <th className="text-left px-4 py-3 font-semibold text-muted-foreground">GSM</th>
                            <th className="text-right px-4 py-3 font-semibold text-muted-foreground">Actions</th>
                          </tr>
                        </thead>
                        <tbody>
                          {filteredProducts.map((product) => (
                            <tr key={product.id} className="border-b hover:bg-muted/30 transition-colors">
-                             <td className="px-4 py-3">
-                               <p className="font-medium text-foreground">{product.name}</p>
-                             </td>
-                             <td className="px-4 py-3">
-                               <span className="font-semibold text-accent text-base">
-                                 ₹{product.price}
-                               </span>
-                             </td>
-                             <td className="px-4 py-3">
-                               <div className="flex gap-1 flex-wrap max-w-xs md:max-w-md">
-                                 {product.attributes && Object.keys(product.attributes).length > 0 ? (
-                                   <>
-                                     {Object.entries(product.attributes).slice(0, 4).map(([k,v]) => (
-                                       <span 
-                                         key={k} 
-                                         className="bg-muted px-2 py-0.5 rounded text-xs border border-border"
-                                       >
-                                         <span className="font-medium text-foreground">{k}:</span>
-                                         <span className="text-muted-foreground ml-1">{String(v)}</span>
-                                       </span>
-                                     ))}
-                                     {Object.keys(product.attributes).length > 4 && (
-                                       <span className="text-xs text-muted-foreground px-2 py-0.5">
-                                         +{Object.keys(product.attributes).length - 4} more
-                                       </span>
-                                     )}
-                                   </>
-                                 ) : (
-                                   <span className="text-xs text-muted-foreground italic">No additional details</span>
-                                 )}
-                               </div>
-                             </td>
+                             <td className="px-4 py-3 whitespace-nowrap">{getAttr(product, 'Serial No')}</td>
+                             <td className="px-4 py-3 whitespace-nowrap">{getAttr(product, 'Width')}</td>
+                             <td className="px-4 py-3 whitespace-nowrap">{getAttr(product, 'HSN')}</td>
+                             <td className="px-4 py-3 whitespace-nowrap font-medium text-accent">₹{getAttr(product, 'CL + GST')}</td>
+                             <td className="px-4 py-3 whitespace-nowrap font-medium">₹{product.price}</td>
+                             <td className="px-4 py-3 whitespace-nowrap font-bold text-muted-foreground">{getAttr(product, 'Price Code')}</td>
+                             <td className="px-4 py-3 whitespace-nowrap">{getAttr(product, 'Gsm')}</td>
                              <td className="px-4 py-3 text-right">
                                {editingProduct?.id === product.id ? (
                                  <div className="flex items-center gap-2 justify-end">
-                                   <Input
-                                     type="text"
-                                     value={editForm.name}
-                                     onChange={e => setEditForm({...editForm, name: e.target.value})}
-                                     className="h-8 w-24 md:w-32 text-xs"
-                                     placeholder="Name"
-                                   />
-                                   <Input
-                                     type="text"
-                                     value={editForm.price}
-                                     onChange={e => setEditForm({...editForm, price: e.target.value})}
-                                     className="h-8 w-20 md:w-24 text-xs"
-                                     placeholder="Price"
-                                   />
-                                   <Button 
-                                     size="icon" 
-                                     variant="ghost" 
-                                     className="h-8 w-8 text-success hover:bg-success/10"
-                                     onClick={handleUpdateProduct}
-                                   >
-                                     <Save className="h-4 w-4"/>
-                                   </Button>
-                                   <Button 
-                                     size="icon" 
-                                     variant="ghost" 
-                                     className="h-8 w-8 text-muted-foreground hover:bg-muted"
-                                     onClick={() => setEditingProduct(null)}
-                                   >
-                                     <X className="h-4 w-4"/>
-                                   </Button>
+                                   <Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="h-8 w-32 text-xs" />
+                                   <Input value={editForm.price} onChange={e => setEditForm({...editForm, price: e.target.value})} className="h-8 w-24 text-xs" />
+                                   <Button size="icon" variant="ghost" className="h-8 w-8 text-success" onClick={handleUpdateProduct}><Save className="h-4 w-4"/></Button>
+                                   <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProduct(null)}><X className="h-4 w-4"/></Button>
                                  </div>
                                ) : (
-                                 <Button 
-                                   size="icon" 
-                                   variant="ghost" 
-                                   className="h-8 w-8 text-primary hover:bg-primary/10"
-                                   onClick={() => handleEditProduct(product)}
-                                 >
-                                   <Edit2 className="h-4 w-4"/>
-                                 </Button>
+                                 <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleEditProduct(product)}><Edit2 className="h-4 w-4"/></Button>
                                )}
                              </td>
                            </tr>
@@ -579,9 +515,6 @@ const Catalogs: React.FC = () => {
                     <div className="text-center py-12 px-4">
                       <Search className="h-16 w-16 mx-auto mb-4 opacity-20"/>
                       <p className="text-lg font-medium mb-2">No Catalog Selected</p>
-                      <p className="text-sm">
-                        Select a company and catalog from the list to view products.
-                      </p>
                     </div>
                 </div>
              )}
@@ -592,4 +525,4 @@ const Catalogs: React.FC = () => {
   );
 };
 
-export default Catalogs;
+export default Catalogs; 

@@ -38,6 +38,12 @@ import SomfyCalculation from "./pages/Caculation/SomfyCalculation";
 import RomanCalculation from "./pages/Caculation/RomanCalculation";
 import BlindsCalculation from "./pages/Caculation/BlindsCalculation";
 import QuotationEdit from "./pages/Quotation/QuotationEdit";
+import ActivityLogs from './pages/logs/ActivityLogs.tsx'; // Add import
+
+// Architecture 
+import Architecture from "./pages/Architects/Architects";
+
+import Pipeline from "./pages/piplines/Pipeline";
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -220,6 +226,35 @@ const App = () => (
               }
             />
 
+            <Route
+              path="/logs"
+              element={
+                <ProtectedRoute>
+                  <ActivityLogs />
+                </ProtectedRoute>
+              }
+            />
+            
+            {/* Architecture */}
+            <Route
+              path="/architects"
+              element={
+                <ProtectedRoute>
+                  <Architecture />
+                </ProtectedRoute>
+              }
+            /> 
+
+            {/* Pipeline */}
+            <Route
+              path="/pipeline"
+              element={
+                <ProtectedRoute>
+                  <Pipeline />
+                </ProtectedRoute>
+              }
+            /> 
+
             {/* Quotation Routes - UPDATED */}
             <Route 
               path="/quotations" 
@@ -229,6 +264,8 @@ const App = () => (
                 </ProtectedRoute>
               } 
             />
+
+
             <Route path="/quotations/preview/:id" element={<ProtectedRoute><QuotationPreview /></ProtectedRoute>} />
 
             <Route 
