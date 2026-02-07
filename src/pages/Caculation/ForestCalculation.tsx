@@ -585,13 +585,21 @@ export default function ForestCalculation() {
 
                       {/* Dimensions */}
                       <td className="px-1 py-3 bg-blue-50/10">
-                        <Input type="number" className="h-8 text-xs text-center w-14 mx-auto"
-                          value={item.width || ''} onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} />
-                      </td>
-                      <td className="px-1 py-3 bg-blue-50/10">
-                        <Input type="number" className="h-8 text-xs text-center w-14 mx-auto"
-                          value={item.height || ''} onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} />
-                      </td>
+  <Input 
+    type="number" 
+    className="h-8 text-xs text-center w-20 mx-auto" // <--- Changed to w-20
+    value={item.width || ''} 
+    onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} 
+  />
+</td>
+<td className="px-1 py-3 bg-blue-50/10">
+  <Input 
+    type="number" 
+    className="h-8 text-xs text-center w-20 mx-auto" // <--- Changed to w-20
+    value={item.height || ''} 
+    onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} 
+  />
+</td>
                       <td className="px-1 py-3 bg-blue-50/10 border-r border-blue-100 text-center font-bold text-blue-700">
                         {item.rft}
                       </td>

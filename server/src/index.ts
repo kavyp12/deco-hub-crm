@@ -731,6 +731,7 @@ app.get('/api/selections/by-inquiry/:inquiryId', authenticateToken, async (req: 
     res.status(500).json({ error: 'Failed to fetch selection' });
   }
 });
+
 app.post('/api/selections', authenticateToken, async (req: any, res: Response) => {
   const { inquiryId, delivery_date, notes, items, status } = req.body;
   
@@ -1930,24 +1931,64 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
 // ==========================================
 // QUOTATION ROUTES - CLEANED UP
 // ==========================================
+// [FILE: src/index.ts]
 
-// 1. LIST ALL QUOTATIONS
-app.get('/api/quotations', authenticateToken, async (req: Request, res: Response) => {
+// 1. LIST QUOTATIONS (Filtered by Role & Assignment)
+app.get('/api/quotations', authenticateToken, async (req: any, res: Response) => {
   try {
+    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
+    
+    // ✅ FIX: Allow agents to see quotes if they are assigned to the Inquiry
+    const whereClause = isAdmin ? {} : {
+      OR: [
+        // 1. I created the quotation
+        { created_by_id: req.user.id },
+        
+        // 2. OR: The quotation belongs to an inquiry I OWN (Main Sales Person)
+        { 
+          selection: { 
+            inquiry: { 
+              sales_person_id: req.user.id 
+            } 
+          } 
+        },
+        
+        // 3. OR: The quotation belongs to an inquiry where I am a COLLABORATOR
+        {
+          selection: {
+            inquiry: {
+              sales_persons: {
+                some: { id: req.user.id }
+              }
+            }
+          }
+        }
+      ]
+    };
+
     const quotes = await prisma.quotation.findMany({
+      where: whereClause, // Apply the smart filter
       include: {
-        selection: { include: { inquiry: true } },
-        created_by: { select: { name: true } }
+        selection: { 
+          include: { 
+            inquiry: { 
+              include: { sales_person: { select: { name: true } } } 
+            } 
+          } 
+        },
+        created_by: { select: { name: true } },
+        labels: true,
+        _count: { select: { comments: true } } 
       },
       orderBy: { created_at: 'desc' }
     });
+    
     res.json(quotes);
   } catch (error) {
+    console.error("Error fetching quotations:", error);
     res.status(500).json({ error: 'Failed to fetch quotations' });
   }
 });
-// [FILE: index.ts] - Search for the "GENERATE NEW QUOTATION" route and replace it
-// [FILE: src/index.ts]
 
 app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Response) => {
   const { selectionId, quotationType } = req.body;
@@ -2206,10 +2247,20 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       data: { subTotal, taxableValue: subTotal, gstTotal, grandTotal }
     });
 
+    if (selection.inquiryId) {
+        await prisma.inquiry.update({
+            where: { id: selection.inquiryId },
+            data: { stage: 'Quotation Submitted' }
+        });
+        
+        // Log the stage change
+        await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', selection.inquiryId, `Auto-moved to Quotation Submitted`);
+    }
+
     console.log(`✅ Quotation ${quoteNumber} generated.`);
     res.json({ ...newQuote, subTotal, gstTotal, grandTotal });
 
-  } catch (error: any) {
+ } catch (error: any) {
     console.error('❌ Quotation Generation Error:', error);
     res.status(500).json({ error: 'Failed to generate quotation', details: error.message });
   }
@@ -2217,7 +2268,6 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
 
 
 
-// 3. GET SINGLE QUOTATION BY ID (Must be AFTER /generate)
 app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const quote = await prisma.quotation.findUnique({
@@ -2232,7 +2282,17 @@ app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Resp
               } 
             } 
           } 
-        }
+        },
+        // === NEW FIELDS ===
+        comments: { 
+          include: { user: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' }
+        },
+        checklists: { 
+          include: { items: { orderBy: { id: 'asc' } } } 
+        },
+        labels: true,
+        created_by: { select: { id: true, name: true } }
       }
     });
 
@@ -2414,26 +2474,26 @@ app.delete('/api/architects/:id', authenticateToken, async (req: any, res: Respo
 // 🆕 NEW PIPELINE & KANBAN ROUTES
 // ==========================================
 
+// [FILE: src/index.ts]
+
 // GET PIPELINE BOARD DATA
 app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
   try {
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
+    
+    // Filter: Agents see Inquiries they own OR are assigned to
     const whereClause = isAdmin ? {} : { 
       OR: [
-        { sales_person_id: req.user.id },            // Check default owner
-        { sales_persons: { some: { id: req.user.id } } } // Check multiple members list
+        { sales_person_id: req.user.id },
+        { sales_persons: { some: { id: req.user.id } } }
       ]
     };
 
     const inquiries = await prisma.inquiry.findMany({
       where: whereClause,
       include: {
-        // ✅ ADDED BACK: Default Owner
-        sales_person: { select: { id: true, name: true } }, 
-        
-        // ✅ KEPT: Multiple Members
-        sales_persons: { select: { id: true, name: true } }, 
-        
+        sales_person: { select: { id: true, name: true } },
+        sales_persons: { select: { id: true, name: true } },
         comments: { 
           include: { user: { select: { name: true } } },
           orderBy: { createdAt: 'desc' }
@@ -2442,7 +2502,15 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
           include: { items: { orderBy: { id: 'asc' } } } 
         },
         labels: true,
-        _count: { select: { selections: true } }
+        // ✅ FETCH LINKED QUOTATIONS (Removing 'select' to fetch full object)
+        selections: {
+          include: {
+            quotations: {
+              orderBy: { created_at: 'desc' }, // Latest quote first
+              take: 1
+            }
+          }
+        }
       },
       orderBy: { updated_at: 'desc' }
     });
@@ -2568,6 +2636,164 @@ app.post('/api/inquiries/:id/labels', authenticateToken, async (req: any, res: R
     res.json(label);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add label' });
+  }
+});
+
+
+// ==========================================
+// 🆕 QUOTATION PIPELINE & KANBAN ROUTES
+// ==========================================
+
+// 1. GET PIPELINE BOARD DATA
+app.get('/api/quotations/pipeline/board', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const quotes = await prisma.quotation.findMany({
+      include: {
+        selection: {
+          include: { 
+            inquiry: { include: { sales_person: { select: { id: true, name: true } } } } 
+          }
+        },
+        created_by: { select: { id: true, name: true } },
+        comments: { 
+          include: { user: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' }
+        },
+        checklists: { 
+          include: { items: { orderBy: { id: 'asc' } } } 
+        },
+        labels: true,
+        items: { select: { id: true } } // Optimization: only fetch IDs
+      },
+      orderBy: { updated_at: 'desc' }
+    });
+
+    res.json(quotes);
+  } catch (error) {
+    console.error('Quote Pipeline Error:', error);
+    res.status(500).json({ error: 'Failed to fetch quotation pipeline' });
+  }
+});
+
+// 2. MOVE CARD (Update Stage)
+app.put('/api/quotations/:id/stage', authenticateToken, async (req: any, res: Response) => {
+  const { id } = req.params;
+  const { stage } = req.body; 
+
+  try {
+    const updated = await prisma.quotation.update({
+      where: { id },
+      data: { stage }
+    });
+    
+    // Log the movement
+    await logActivity(req.user.id, 'UPDATE', 'QUOTATION_STAGE', id, `Moved Quotation to ${stage}`);
+    
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to move card' });
+  }
+});
+
+// 3. ADD COMMENT TO QUOTATION
+app.post('/api/quotations/:id/comments', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const comment = await prisma.quotationComment.create({
+      data: {
+        content: req.body.content || '',
+        attachmentUrl: req.body.attachmentUrl || null,
+        quotationId: req.params.id,
+        userId: req.user.id
+      },
+      include: { user: { select: { name: true } } }
+    });
+    res.json(comment);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to post comment' });
+  }
+});
+
+// 4. MANAGE LABELS
+app.post('/api/quotations/:id/labels', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const label = await prisma.quotationLabel.create({
+      data: {
+        text: req.body.text,
+        color: req.body.color,
+        quotationId: req.params.id
+      }
+    });
+    res.json(label);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add label' });
+  }
+});
+
+app.delete('/api/quotation-labels/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    await prisma.quotationLabel.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove label' });
+  }
+});
+
+// 5. MANAGE CHECKLISTS
+app.post('/api/quotations/:id/checklists', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const list = await prisma.quotationChecklist.create({
+      data: {
+        title: req.body.title,
+        quotationId: req.params.id
+      },
+      include: { items: true }
+    });
+    res.json(list);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create checklist' });
+  }
+});
+
+app.delete('/api/quotation-checklists/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Explicitly delete items first to ensure cleanliness
+    await prisma.quotationChecklistItem.deleteMany({ where: { checklistId: req.params.id }});
+    
+    await prisma.quotationChecklist.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete checklist' });
+  }
+});
+
+// 6. MANAGE CHECKLIST ITEMS
+app.post('/api/quotation-checklists/:id/items', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const item = await prisma.quotationChecklistItem.create({
+      data: {
+        text: req.body.text,
+        checklistId: req.params.id,
+        isCompleted: false
+      }
+    });
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to add item' });
+  }
+});
+
+app.put('/api/quotation-checklist-items/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const item = await prisma.quotationChecklistItem.update({
+      where: { id: req.params.id },
+      data: { isCompleted: req.body.isCompleted }
+    });
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update item' });
   }
 });
 

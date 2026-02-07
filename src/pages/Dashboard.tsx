@@ -6,13 +6,20 @@ import {
   ShoppingCart, 
   ArrowRight, 
   MoreHorizontal,
-  BookOpen
+  BookOpen,
+  ArrowUpRight,
+  ArrowDownRight,
+  Plus,
+  Activity,
+  BarChart3,
+  PieChart
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
-import { format } from 'date-fns';
+import { format, subMonths, isSameMonth, parseISO, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 interface DashboardStats {
   totalInquiries: number;
@@ -21,7 +28,15 @@ interface DashboardStats {
   blindsCount: number;
   rugsCount: number;
   thisMonthInquiries: number;
+  lastMonthInquiries: number;
   pendingSelections: number;
+  conversionRate: number;
+}
+
+interface MonthlyData {
+  month: string;
+  inquiries: number;
+  selections: number;
 }
 
 const Dashboard: React.FC = () => {
@@ -33,10 +48,13 @@ const Dashboard: React.FC = () => {
     blindsCount: 0,
     rugsCount: 0,
     thisMonthInquiries: 0,
+    lastMonthInquiries: 0,
     pendingSelections: 0,
+    conversionRate: 0,
   });
   const [recentInquiries, setRecentInquiries] = useState<any[]>([]);
   const [recentSelections, setRecentSelections] = useState<any[]>([]);
+  const [monthlyActivity, setMonthlyActivity] = useState<MonthlyData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,16 +66,20 @@ const Dashboard: React.FC = () => {
           api.get('/companies')
         ]);
 
-        const inquiries = inquiriesRes.data;
-        const selections = selectionsRes.data;
-        const companies = companiesRes.data;
-        const thisMonth = format(new Date(), 'yyyy-MM');
+        const inquiries = inquiriesRes.data || [];
+        const selections = selectionsRes.data || [];
+        const companies = companiesRes.data || [];
+        
+        const now = new Date();
+        const thisMonth = format(now, 'yyyy-MM');
+        const lastMonth = format(subMonths(now, 1), 'yyyy-MM');
 
+        // --- Calculate Inventory ---
         let curtains = 0;
         let blinds = 0;
         let rugs = 0;
 
-        if (companies && Array.isArray(companies)) {
+        if (Array.isArray(companies)) {
           companies.forEach((comp: any) => {
             if (comp.catalogs && Array.isArray(comp.catalogs)) {
               const hasCurtains = comp.catalogs.some((cat: any) => (cat.type || '').toLowerCase().includes('curtain'));
@@ -70,26 +92,50 @@ const Dashboard: React.FC = () => {
           });
         }
 
-        const thisMonthInquiriesCount = inquiries?.filter((i: any) => 
+        // --- Calculate Stats ---
+        const thisMonthInquiriesCount = inquiries.filter((i: any) => 
           format(new Date(i.created_at), 'yyyy-MM') === thisMonth
-        ).length || 0;
+        ).length;
+
+        const lastMonthInquiriesCount = inquiries.filter((i: any) => 
+          format(new Date(i.created_at), 'yyyy-MM') === lastMonth
+        ).length;
         
-        const pendingSelectionsCount = selections?.filter((s: any) => 
+        const pendingSelectionsCount = selections.filter((s: any) => 
           s.status === 'pending'
-        ).length || 0;
+        ).length;
+
+        const conversionRate = inquiries.length > 0 
+          ? Math.round((selections.length / inquiries.length) * 100) 
+          : 0;
+
+        // --- Calculate Monthly History (Last 6 Months) ---
+        const last6Months = Array.from({ length: 6 }, (_, i) => {
+          const d = subMonths(now, 5 - i);
+          const monthKey = format(d, 'yyyy-MM');
+          const monthLabel = format(d, 'MMM');
+          
+          const montlyInq = inquiries.filter((item: any) => format(new Date(item.created_at), 'yyyy-MM') === monthKey).length;
+          const montlySel = selections.filter((item: any) => format(new Date(item.created_at), 'yyyy-MM') === monthKey).length;
+          
+          return { month: monthLabel, inquiries: montlyInq, selections: montlySel };
+        });
 
         setStats({
-          totalInquiries: inquiries?.length || 0,
-          totalSelections: selections?.length || 0,
+          totalInquiries: inquiries.length,
+          totalSelections: selections.length,
           curtainsCount: curtains,
           blindsCount: blinds,
           rugsCount: rugs,
           thisMonthInquiries: thisMonthInquiriesCount,
+          lastMonthInquiries: lastMonthInquiriesCount,
           pendingSelections: pendingSelectionsCount,
+          conversionRate,
         });
 
-        setRecentInquiries(inquiries?.slice(0, 5) || []);
-        setRecentSelections(selections?.slice(0, 5) || []);
+        setMonthlyActivity(last6Months);
+        setRecentInquiries(inquiries.slice(0, 5));
+        setRecentSelections(selections.slice(0, 5));
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       } finally {
@@ -100,11 +146,49 @@ const Dashboard: React.FC = () => {
     fetchDashboardData();
   }, []);
 
+  // Calculate trends
+  const inquiryTrend = stats.lastMonthInquiries > 0 
+    ? Math.round(((stats.thisMonthInquiries - stats.lastMonthInquiries) / stats.lastMonthInquiries) * 100)
+    : 100;
+
   const statCards = [
-    { title: 'Total Inquiries', value: stats.totalInquiries, icon: FileText, color: 'bg-primary', shadow: 'shadow-primary/20', link: '/inquiries' },
-    { title: 'Total Selections', value: stats.totalSelections, icon: ShoppingCart, color: 'bg-success', shadow: 'shadow-success/20', link: '/selections' },
-    { title: 'Pending Selections', value: stats.pendingSelections, icon: Calendar, color: 'bg-accent', shadow: 'shadow-accent/20', link: '/selections' },
-    { title: 'This Month', value: stats.thisMonthInquiries, icon: TrendingUp, color: 'bg-foreground/80', shadow: 'shadow-foreground/20', link: '/inquiries' },
+    { 
+      title: 'Total Inquiries', 
+      value: stats.totalInquiries, 
+      icon: FileText, 
+      color: 'bg-blue-500', 
+      shadow: 'shadow-blue-500/20', 
+      link: '/inquiries',
+      subtext: 'Lifetime Volume'
+    },
+    { 
+      title: 'This Month', 
+      value: stats.thisMonthInquiries, 
+      icon: TrendingUp, 
+      color: 'bg-indigo-500', 
+      shadow: 'shadow-indigo-500/20', 
+      link: '/inquiries',
+      trend: inquiryTrend,
+      subtext: 'vs last month'
+    },
+    { 
+      title: 'Active Selections', 
+      value: stats.pendingSelections, 
+      icon: ShoppingCart, 
+      color: 'bg-amber-500', 
+      shadow: 'shadow-amber-500/20', 
+      link: '/selections',
+      subtext: 'Requires Attention'
+    },
+    { 
+      title: 'Conversion Rate', 
+      value: `${stats.conversionRate}%`, 
+      icon: Activity, 
+      color: 'bg-emerald-500', 
+      shadow: 'shadow-emerald-500/20', 
+      link: '/selections',
+      subtext: 'Inquiry to Selection'
+    },
   ];
 
   const getStatusBadge = (status: string) => {
@@ -122,210 +206,266 @@ const Dashboard: React.FC = () => {
 
   return (
     <DashboardLayout>
-      <div className="animate-fade-in max-w-7xl mx-auto space-y-6 md:space-y-8">
+      <div className="animate-fade-in max-w-7xl mx-auto space-y-6 md:space-y-8 pb-10">
         
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* Header & Quick Actions */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight">
               Dashboard
             </h1>
-            <p className="text-sm md:text-base text-muted-foreground mt-1">
-              Welcome back, <span className="font-semibold text-foreground">{profile?.name?.split(' ')[0] || 'User'}</span>. Here's your daily overview.
+            <p className="text-sm text-muted-foreground mt-1">
+              Overview for <span className="font-semibold text-foreground">{format(new Date(), 'MMMM d, yyyy')}</span>
             </p>
           </div>
-          <div className="flex items-center gap-2 self-start md:self-auto">
-            <span className="text-xs md:text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full border border-border/50">
-              {format(new Date(), 'EEEE, MMMM do, yyyy')}
-            </span>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/inquiries/new">
+              <Button className="h-9 gap-2 shadow-sm">
+                <Plus className="h-4 w-4" /> New Inquiry
+              </Button>
+            </Link>
+            <Link to="/selections/new">
+              <Button variant="outline" className="h-9 gap-2">
+                <ShoppingCart className="h-4 w-4" /> New Selection
+              </Button>
+            </Link>
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+        {/* Top Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((stat, index) => (
             <Link 
               to={stat.link} 
               key={stat.title}
-              className="card-premium p-4 md:p-6 animate-fade-in group hover:-translate-y-1 transition-all duration-300 hover:shadow-lg border border-border/50 cursor-pointer"
-              style={{ animationDelay: `${index * 100}ms` }}
+              className="card-premium p-5 animate-fade-in group hover:-translate-y-1 transition-all duration-300 hover:shadow-lg border border-border/50 relative overflow-hidden"
+              style={{ animationDelay: `${index * 50}ms` }}
             >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
-                  <p className="text-3xl md:text-4xl font-bold text-foreground mt-2 tracking-tight">
-                    {loading ? (
-                      <span className="animate-pulse bg-muted h-8 w-12 block rounded"/>
-                    ) : stat.value}
-                  </p>
+              <div className="flex justify-between items-start mb-4">
+                <div className={`${stat.color}/10 p-2.5 rounded-xl`}>
+                  <stat.icon className={`h-6 w-6 ${stat.color.replace('bg-', 'text-')}`} />
                 </div>
-                <div className={`${stat.color} ${stat.shadow} p-2 md:p-3 rounded-2xl shadow-lg transition-transform group-hover:scale-110`}>
-                  <stat.icon className="h-5 w-5 md:h-6 md:w-6 text-primary-foreground" />
-                </div>
+                {stat.trend !== undefined && (
+                  <div className={`flex items-center text-xs font-medium px-2 py-1 rounded-full ${stat.trend >= 0 ? 'bg-green-500/10 text-green-600' : 'bg-red-500/10 text-red-600'}`}>
+                    {stat.trend >= 0 ? <ArrowUpRight className="h-3 w-3 mr-1" /> : <ArrowDownRight className="h-3 w-3 mr-1" />}
+                    {Math.abs(stat.trend)}%
+                  </div>
+                )}
               </div>
+              <div>
+                <h3 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight">
+                  {loading ? <span className="animate-pulse bg-muted h-8 w-16 block rounded"/> : stat.value}
+                </h3>
+                <p className="text-sm text-muted-foreground font-medium mt-1">{stat.title}</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">{stat.subtext}</p>
+              </div>
+              {/* Decorative background element */}
+              <div className={`absolute -right-4 -bottom-4 h-24 w-24 rounded-full ${stat.color} opacity-5 blur-2xl group-hover:opacity-10 transition-opacity`} />
             </Link>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recent Inquiries */}
-          <div className="card-premium p-4 md:p-6 border border-border/50 h-full flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                Recent Inquiries
-              </h2>
-              <Link to="/inquiries" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
-                View All <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
+        {/* Main Content Grid: Analytics + Feeds */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          
+          {/* Left Column: Charts & Inquiries (2/3 width) */}
+          <div className="xl:col-span-2 space-y-6">
             
-            {loading ? (
-              <div className="space-y-4">
-                {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-muted/50 rounded-xl animate-pulse" />)}
+            {/* Performance Chart */}
+            <div className="card-premium p-6 border border-border/50">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5 text-primary" />
+                    Performance History
+                  </h2>
+                  <p className="text-sm text-muted-foreground">Inquiries vs Selections (Last 6 Months)</p>
+                </div>
               </div>
-            ) : recentInquiries.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
-                <FileText className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                <p>No inquiries found.</p>
-              </div>
-            ) : (
-              <div className="space-y-3 flex-1">
-                {recentInquiries.map((inquiry) => (
-                  <Link
-                    to={`/inquiries`}
-                    key={inquiry.id}
-                    className="group flex items-center justify-between p-3 md:p-4 rounded-xl bg-card hover:bg-muted/40 border border-transparent hover:border-border/50 transition-all duration-200"
-                  >
-                    <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
-                      <div className="flex-shrink-0 flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm shadow-sm">
-                        {inquiry.client_name?.charAt(0)}
+              
+              <div className="h-64 w-full flex items-end justify-between gap-2 md:gap-4 mt-4">
+                {monthlyActivity.map((data, idx) => {
+                  const maxVal = Math.max(...monthlyActivity.map(d => Math.max(d.inquiries, d.selections, 10))); // Scale
+                  const inqHeight = (data.inquiries / maxVal) * 100;
+                  const selHeight = (data.selections / maxVal) * 100;
+                  
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group cursor-pointer">
+                      <div className="w-full flex justify-center gap-1 md:gap-2 items-end h-full">
+                        {/* Inquiry Bar */}
+                        <div 
+                          style={{ height: `${Math.max(inqHeight, 5)}%` }} 
+                          className="w-3 md:w-6 bg-primary/80 rounded-t-sm transition-all duration-500 hover:bg-primary relative group/bar"
+                        >
+                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
+                              {data.inquiries} Inquiries
+                           </div>
+                        </div>
+                        {/* Selection Bar */}
+                        <div 
+                          style={{ height: `${Math.max(selHeight, 5)}%` }} 
+                          className="w-3 md:w-6 bg-success/80 rounded-t-sm transition-all duration-500 hover:bg-success relative group/bar"
+                        >
+                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
+                              {data.selections} Selections
+                           </div>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-foreground text-sm truncate">{inquiry.client_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{inquiry.inquiry_number}</p>
-                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">{data.month}</span>
                     </div>
-                    <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
-                      <span className="text-xs text-muted-foreground">
-                        {format(new Date(inquiry.created_at), 'MMM d')}
-                      </span>
-                      <MoreHorizontal className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hidden md:block" />
-                    </div>
-                  </Link>
-                ))}
+                  );
+                })}
               </div>
-            )}
+            </div>
+
+            {/* Recent Inquiries Table (Detailed) */}
+            <div className="card-premium p-0 border border-border/50 overflow-hidden">
+              <div className="p-5 border-b border-border/50 flex justify-between items-center bg-muted/20">
+                <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  Recent Inquiries
+                </h2>
+                <Link to="/inquiries">
+                  <Button variant="ghost" size="sm" className="text-xs h-8">View All</Button>
+                </Link>
+              </div>
+              <div className="p-0">
+                {recentInquiries.length === 0 && !loading ? (
+                  <div className="p-8 text-center text-muted-foreground">No recent inquiries.</div>
+                ) : (
+                  <div className="divide-y divide-border/40">
+                    {recentInquiries.map((inquiry) => (
+                      <div key={inquiry.id} className="p-4 hover:bg-muted/30 transition-colors flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                            {inquiry.client_name?.charAt(0)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{inquiry.client_name}</p>
+                            <p className="text-xs text-muted-foreground flex items-center gap-2">
+                              {inquiry.inquiry_number}
+                              <span className="w-1 h-1 rounded-full bg-border" />
+                              {format(new Date(inquiry.created_at), 'MMM d, h:mm a')}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right hidden sm:block">
+                            <p className="text-xs font-medium text-foreground">{inquiry.location || 'Local'}</p>
+                            <p className="text-[10px] text-muted-foreground uppercase">{inquiry.source || 'Direct'}</p>
+                          </div>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <ArrowRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Recent Selections */}
-          <div className="card-premium p-4 md:p-6 border border-border/50 h-full flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5 text-success" />
-                Recent Selections
+          {/* Right Column: Inventory & Status (1/3 width) */}
+          <div className="space-y-6">
+            
+            {/* Catalog Distribution (Visual Update) */}
+            <div className="card-premium p-6 border border-border/50">
+              <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-primary" />
+                Inventory Mix
               </h2>
-              <Link to="/selections" className="text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-1">
-                View All <ArrowRight className="h-4 w-4" />
+              
+              <div className="space-y-6 relative">
+                 {/* Donut Chart Simulation with CSS Conic Gradient */}
+                 <div className="flex justify-center mb-6">
+                    <div className="relative h-40 w-40 rounded-full border-8 border-muted/30 flex items-center justify-center">
+                        <div className="text-center">
+                          <span className="block text-2xl font-bold text-foreground">{totalCompanies}</span>
+                          <span className="text-xs text-muted-foreground">Catalogs</span>
+                        </div>
+                         {/* Simple visual indicator rings */}
+                         <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-orange-500 opacity-20" />
+                            <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-blue-500" strokeDasharray={`${(stats.blindsCount / totalCompanies) * 251} 251`} />
+                         </svg>
+                    </div>
+                 </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-sm p-2 rounded-lg bg-orange-500/5 border border-orange-500/10">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-orange-500" />
+                      <span className="font-medium">Curtains</span>
+                    </div>
+                    <span className="font-bold">{stats.curtainsCount}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm p-2 rounded-lg bg-blue-500/5 border border-blue-500/10">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+                      <span className="font-medium">Blinds</span>
+                    </div>
+                    <span className="font-bold">{stats.blindsCount}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm p-2 rounded-lg bg-green-500/5 border border-green-500/10">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="font-medium">Rugs</span>
+                    </div>
+                    <span className="font-bold">{stats.rugsCount}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Recent Selections (Mini List) */}
+            <div className="card-premium p-6 border border-border/50 flex flex-col h-fit">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5 text-success" />
+                  Latest Selections
+                </h2>
+              </div>
+              <div className="space-y-4">
+                {recentSelections.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No active selections.</p>
+                ) : (
+                  recentSelections.map((selection) => (
+                    <Link
+                      to={`/selections/${selection.id}`}
+                      key={selection.id}
+                      className="block"
+                    >
+                      <div className="flex items-start gap-3 group">
+                        <div className={`mt-1 h-2 w-2 rounded-full ${selection.status === 'pending' ? 'bg-amber-500' : 'bg-success'}`} />
+                        <div className="flex-1 space-y-1 pb-4 border-b border-border/40 group-last:border-0 group-last:pb-0">
+                          <div className="flex justify-between">
+                            <p className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+                              {selection.inquiry?.client_name}
+                            </p>
+                            <span className="text-[10px] text-muted-foreground">
+                              {format(new Date(selection.created_at), 'MMM d')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <p className="text-xs text-muted-foreground">
+                              {selection.selection_number}
+                            </p>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border capitalize ${getStatusBadge(selection.status)}`}>
+                              {selection.status?.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))
+                )}
+              </div>
+              <Link to="/selections" className="mt-4 pt-2 text-center text-xs text-primary hover:underline">
+                View All Selections
               </Link>
             </div>
 
-            {loading ? (
-              <div className="space-y-4">
-                {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-muted/50 rounded-xl animate-pulse" />)}
-              </div>
-            ) : recentSelections.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
-                <ShoppingCart className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                <p>No selections found.</p>
-              </div>
-            ) : (
-              <div className="space-y-3 flex-1">
-                {recentSelections.map((selection) => (
-                  <Link
-                    to={`/selections/${selection.id}`}
-                    key={selection.id}
-                    className="group flex items-center justify-between p-3 md:p-4 rounded-xl bg-card hover:bg-muted/40 border border-transparent hover:border-border/50 transition-all duration-200"
-                  >
-                    <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
-                      <div className="flex-shrink-0 flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-full bg-success/10 text-success font-bold text-sm shadow-sm">
-                        {selection.items?.length || 0}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-foreground text-sm truncate">{selection.inquiry?.client_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{selection.selection_number}</p>
-                      </div>
-                    </div>
-                    <span className={`badge-category border px-2 py-0.5 rounded-full text-[10px] md:text-xs font-medium capitalize ${getStatusBadge(selection.status)}`}>
-                      {selection.status?.replace('_', ' ')}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Catalog Inventory Distribution */}
-        <div className="card-premium p-4 md:p-6 border border-border/50">
-          <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-primary" />
-            Catalog Inventory
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
-            {/* Curtains */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-foreground">Curtains</span>
-                <span className="text-muted-foreground">
-                  {stats.curtainsCount} <span className="text-xs opacity-70">
-                  ({totalCompanies ? Math.round((stats.curtainsCount / totalCompanies) * 100) : 0}%)
-                  </span>
-                </span>
-              </div>
-              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
-                <div
-                  className="h-full bg-orange-500 transition-all duration-1000 ease-out rounded-r-full"
-                  style={{ width: `${totalCompanies ? (stats.curtainsCount / totalCompanies) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Blinds */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-foreground">Blinds</span>
-                <span className="text-muted-foreground">
-                  {stats.blindsCount} <span className="text-xs opacity-70">
-                    ({totalCompanies ? Math.round((stats.blindsCount / totalCompanies) * 100) : 0}%)
-                  </span>
-                </span>
-              </div>
-              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
-                <div
-                  className="h-full bg-blue-500 transition-all duration-1000 ease-out rounded-r-full"
-                  style={{ width: `${totalCompanies ? (stats.blindsCount / totalCompanies) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Rugs */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-foreground">Rugs</span>
-                <span className="text-muted-foreground">
-                  {stats.rugsCount} <span className="text-xs opacity-70">
-                    ({totalCompanies ? Math.round((stats.rugsCount / totalCompanies) * 100) : 0}%)
-                  </span>
-                </span>
-              </div>
-              <div className="h-3 rounded-full bg-muted overflow-hidden ring-1 ring-border/20">
-                <div
-                  className="h-full bg-green-500 transition-all duration-1000 ease-out rounded-r-full"
-                  style={{ width: `${totalCompanies ? (stats.rugsCount / totalCompanies) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
           </div>
         </div>
       </div>

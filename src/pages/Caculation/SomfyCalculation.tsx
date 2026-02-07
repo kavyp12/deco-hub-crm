@@ -469,22 +469,22 @@ const SomfyCalculation = () => {
 
                       {/* Dimensions */}
                       <td className="px-1 py-3 bg-blue-50/10">
-                        <Input 
-                          type="number" 
-                          className="h-8 text-xs text-center w-16 mx-auto"
-                          value={item.width || ''} 
-                          onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} 
-                        />
-                        <div className="text-[9px] text-center text-gray-400 mt-1">{item.unit}</div>
-                      </td>
-                      <td className="px-1 py-3 bg-blue-50/10"> {/* Added Height Input */}
-                        <Input 
-                          type="number" 
-                          className="h-8 text-xs text-center w-16 mx-auto"
-                          value={item.height || ''} 
-                          onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} 
-                        />
-                      </td>
+  <Input 
+    type="number" 
+    className="h-8 text-xs text-center w-20 mx-auto" // <--- Changed to w-20
+    value={item.width || ''} 
+    onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)} 
+  />
+  <div className="text-[9px] text-center text-gray-400 mt-1">{item.unit}</div>
+</td>
+<td className="px-1 py-3 bg-blue-50/10"> 
+  <Input 
+    type="number" 
+    className="h-8 text-xs text-center w-20 mx-auto" // <--- Changed to w-20
+    value={item.height || ''} 
+    onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)} 
+  />
+</td>
                       <td className="px-1 py-3 bg-blue-50/10 border-r border-blue-100 text-center">
                          <div className="font-bold text-blue-700">{(toMeters(item.width, item.unit)).toFixed(2)}m</div>
                          <Badge variant="outline" className="text-[9px] mt-1 h-4 px-1 border-blue-200 bg-white text-blue-700">

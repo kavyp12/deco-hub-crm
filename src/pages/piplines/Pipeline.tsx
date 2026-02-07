@@ -1,8 +1,10 @@
+// [FILE: src/pages/Pipeline.tsx]
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { 
-  Calendar, MessageSquare, CheckSquare, Plus, Activity, Search, 
-  Tag, X, AlignLeft, Image as ImageIcon, Check, Pencil, Trash2, Clock, Monitor
+  MessageSquare, CheckSquare, Plus, Activity, Search, 
+  X, AlignLeft, Image as ImageIcon, Check, Pencil, Monitor, FileText, IndianRupee,
+  MoreHorizontal, PlusCircle, Trash2
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
@@ -15,6 +17,7 @@ import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import api from '@/lib/api';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -28,16 +31,24 @@ interface Task {
   stage: string;
   updated_at: string;
   
-  // ✅ ADDED BACK: Default Owner
   sales_person?: { id: string, name: string }; 
-  
-  // ✅ KEPT: Multiple Members
   sales_persons?: { id: string, name: string }[]; 
 
   comments?: Comment[];
   checklists?: Checklist[];
   labels?: Label[];
   description?: string;
+
+  selections?: {
+    id: string; 
+    selection_number: string; 
+    status: string; 
+    quotations: {
+      quotation_number: string;
+      grandTotal: number;
+      stage: string;
+    }[]
+  }[];
 }
 
 interface Comment {
@@ -68,6 +79,13 @@ interface Checklist {
 
 interface AppUser { id: string; name: string; role: string; }
 
+interface ColumnDef {
+  id: string;
+  title: string;
+  color: string;
+  isSystem?: boolean; 
+}
+
 // --- CONSTANTS ---
 const LABEL_COLORS = [
   'bg-green-600', 'bg-yellow-500', 'bg-orange-500', 
@@ -75,12 +93,21 @@ const LABEL_COLORS = [
   'bg-sky-500', 'bg-lime-600', 'bg-pink-500', 'bg-slate-500'
 ];
 
-const COLUMNS = {
-  "Inquiry": { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500" },
-  "Quotation Submitted": { id: "Quotation Submitted", title: "Quotation Submitted", color: "border-t-4 border-purple-500" },
-  "Ongoing Projects": { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500" },
-  "Completed": { id: "Completed", title: "Completed", color: "border-t-4 border-green-500" }
-};
+// ✅ CORRECTED PERMANENT COLUMNS (Only the 4 you requested)
+const DEFAULT_COLUMNS: ColumnDef[] = [
+  { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500", isSystem: true }, 
+  { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
+  { id: "Quotation Submitted", title: "Quotation Submitted", color: "border-t-4 border-purple-500", isSystem: true },
+  { id: "Completed", title: "Completed", color: "border-t-4 border-green-500", isSystem: true }
+];
+
+const COLORS_LIST = [
+  "border-gray-500", "border-red-500", "border-orange-500", "border-amber-500",
+  "border-yellow-500", "border-lime-500", "border-green-500", "border-emerald-500",
+  "border-teal-500", "border-cyan-500", "border-sky-500", "border-blue-500",
+  "border-indigo-500", "border-violet-500", "border-purple-500", "border-fuchsia-500",
+  "border-pink-500", "border-rose-500"
+];
 
 // --- HELPER: Consistent Member Colors ---
 const getMemberColor = (name: string) => {
@@ -112,6 +139,15 @@ const Pipeline: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   
+  // --- COLUMN MANAGEMENT STATE ---
+  const [columns, setColumns] = useState<ColumnDef[]>(DEFAULT_COLUMNS);
+  const [newColumnTitle, setNewColumnTitle] = useState('');
+  
+  // --- QUICK CREATE CARD STATE ---
+  const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
+  const [newCardTitle, setNewCardTitle] = useState('');
+  const [newCardAssignee, setNewCardAssignee] = useState<string>('');
+
   // Modal State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
@@ -153,6 +189,31 @@ const Pipeline: React.FC = () => {
     try {
       const { data } = await api.get('/pipeline');
       setTasks(data);
+      
+      // Auto-discover extra stages from DB that aren't in our default list
+      const systemIds = new Set(DEFAULT_COLUMNS.map(c => c.id));
+      const foundStages = new Set(data.map((t: Task) => t.stage));
+      const customStages: ColumnDef[] = [];
+      
+      foundStages.forEach((stage: string) => {
+          if (!systemIds.has(stage)) {
+              customStages.push({
+                  id: stage,
+                  title: stage,
+                  color: "border-t-4 border-gray-400",
+                  isSystem: false
+              });
+          }
+      });
+      
+      if(customStages.length > 0) {
+          setColumns(prev => {
+              const existingIds = new Set(prev.map(p => p.id));
+              const newCols = customStages.filter(c => !existingIds.has(c.id));
+              return [...prev, ...newCols];
+          });
+      }
+
     } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
@@ -161,6 +222,86 @@ const Pipeline: React.FC = () => {
       const { data } = await api.get('/users/all');
       setAllUsers(data);
     } catch(e) { console.error(e); }
+  };
+
+  // --- COLUMN ACTIONS ---
+
+  const handleAddColumn = () => {
+      if (!newColumnTitle.trim()) return;
+      const newId = newColumnTitle.trim();
+      
+      if(columns.some(c => c.id === newId)) {
+          toast({ title: "Error", description: "Stage already exists", variant: "destructive" });
+          return;
+      }
+
+      const randomColor = COLORS_LIST[Math.floor(Math.random() * COLORS_LIST.length)];
+      
+      const newCol: ColumnDef = {
+          id: newId,
+          title: newColumnTitle,
+          color: `border-t-4 ${randomColor}`,
+          isSystem: false
+      };
+      
+      setColumns([...columns, newCol]);
+      setNewColumnTitle('');
+      toast({ title: "Stage Added", description: `Added stage "${newColumnTitle}"` });
+  };
+
+  const handleDeleteColumn = (colId: string) => {
+      if (getTasksByStage(colId).length > 0) {
+          toast({ title: "Cannot Delete", description: "Please move all cards out of this stage first.", variant: "destructive" });
+          return;
+      }
+      setColumns(prev => prev.filter(c => c.id !== colId));
+  };
+
+  // --- MANUAL CARD ACTIONS ---
+
+  const handleQuickCreateCard = async (stageId: string) => {
+      if (!newCardTitle.trim()) return;
+      
+      try {
+          // Creating a minimal inquiry
+          const payload = {
+              client_name: newCardTitle,
+              mobile_number: "0000000000",
+              inquiry_date: new Date().toISOString(),
+              address: "Manual Entry",
+              sales_person_id: newCardAssignee || allUsers[0]?.id, 
+          };
+
+          const { data: newInquiry } = await api.post('/inquiries', payload);
+          
+          // Move to correct stage immediately if not default
+          if (stageId !== "Inquiry") {
+              await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
+              newInquiry.stage = stageId; 
+          }
+
+          const assignedUser = allUsers.find(u => u.id === payload.sales_person_id);
+          
+          const newTask: Task = {
+              ...newInquiry,
+              sales_person: assignedUser ? { id: assignedUser.id, name: assignedUser.name } : undefined,
+              stage: stageId,
+              labels: [],
+              comments: [],
+              checklists: [],
+              selections: []
+          };
+
+          setTasks(prev => [newTask, ...prev]);
+          setNewCardTitle('');
+          setNewCardAssignee('');
+          setAddingCardToColumn(null);
+          toast({ title: "Card Created", description: "New card added successfully." });
+
+      } catch (error) {
+          console.error(error);
+          toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
+      }
   };
 
   const handleTaskClick = (task: Task) => {
@@ -183,40 +324,28 @@ const Pipeline: React.FC = () => {
     } catch (e) { toast({ title: "Error", variant: "destructive" }); }
   };
 
-  // 🔥 SAFE MEMBER TOGGLE
   const handleToggleMember = async (userId: string) => {
     if (!selectedTask) return;
-    
-    // Safely get current members (default to empty array if undefined)
     const currentMembers = selectedTask.sales_persons || [];
     const isAssigned = currentMembers.some(p => p.id === userId);
-    
     let newUserIds: string[];
-
     if (isAssigned) {
-        // Remove
         newUserIds = currentMembers.filter(p => p.id !== userId).map(p => p.id);
     } else {
-        // Add
         newUserIds = [...currentMembers.map(p => p.id), userId];
     }
-
     try {
       await api.put(`/inquiries/${selectedTask.id}/assign`, { userIds: newUserIds });
-      
-      // Update local state
       const newMembers = allUsers.filter(u => newUserIds.includes(u.id)).map(u => ({ id: u.id, name: u.name }));
       const updatedTask = { ...selectedTask, sales_persons: newMembers };
       updateLocalTask(updatedTask);
-      
     } catch(e) { console.error(e); }
   };
 
-  // --- LABEL LOGIC ---
   const getUniqueLabels = () => {
     const unique = new Map();
     tasks.forEach(t => {
-        (t.labels || []).forEach(l => { // Safe check
+        (t.labels || []).forEach(l => { 
             const key = `${l.text}-${l.color}`;
             if (!unique.has(key)) {
                 unique.set(key, { text: l.text, color: l.color });
@@ -228,8 +357,6 @@ const Pipeline: React.FC = () => {
 
   const handleToggleLabel = async (labelDef: {text: string, color: string}) => {
       if (!selectedTask) return;
-      
-      // Safe check
       const currentLabels = selectedTask.labels || [];
       const existingLabel = currentLabels.find(l => l.text === labelDef.text && l.color === labelDef.color);
 
@@ -254,8 +381,6 @@ const Pipeline: React.FC = () => {
     setNewLabelTitle(''); 
     setIsCreatingLabel(false);
   };
-
-  // --- CHECKLIST LOGIC ---
 
   const handleAddChecklist = async () => {
     if (!selectedTask || !newChecklistTitle.trim()) return;
@@ -309,7 +434,6 @@ const Pipeline: React.FC = () => {
       } catch (e) { console.error("Failed to delete checklist", e); }
   };
 
-  // --- COMMENTS & ATTACHMENTS ---
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -357,11 +481,18 @@ const Pipeline: React.FC = () => {
     if (!destination) return;
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
     
+    const realId = draggableId.split('::')[1]; 
+
     const updatedTasks = tasks.map(t => 
-      t.id === draggableId ? { ...t, stage: destination.droppableId, updated_at: new Date().toISOString() } : t
+      t.id === realId ? { ...t, stage: destination.droppableId, updated_at: new Date().toISOString() } : t
     );
     setTasks(updatedTasks);
-    try { await api.put(`/inquiries/${draggableId}/stage`, { stage: destination.droppableId }); } catch (error) { fetchPipeline(); }
+    
+    try { 
+      await api.put(`/inquiries/${realId}/stage`, { stage: destination.droppableId }); 
+    } catch (error) { 
+      fetchPipeline(); 
+    }
   };
 
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
@@ -384,96 +515,246 @@ const Pipeline: React.FC = () => {
     window.addEventListener('mouseup', onMouseUp);
   }, [sidebarWidth]);
 
-  const getTasksByStage = (stage: string) => {
-    return tasks.filter(t => t.stage === stage || (stage === "Inquiry" && !COLUMNS[t.stage as keyof typeof COLUMNS]))
-      .filter(t => t.client_name.toLowerCase().includes(search.toLowerCase()) || t.inquiry_number.toLowerCase().includes(search.toLowerCase()));
+  // --- SELECTORS ---
+  const getLinkedQuote = (task: Task) => {
+    if (!task.selections || task.selections.length === 0) return null;
+    for (const selection of task.selections) {
+        if (selection.quotations && selection.quotations.length > 0) return selection.quotations[0];
+    }
+    return null;
   };
 
+  const getLinkedSelection = (task: Task) => {
+    if (!task.selections || task.selections.length === 0) return null;
+    return task.selections[0];
+  };
+
+ // ✅ CORRECT FILTERING LOGIC
+ const getTasksByStage = (stage: string) => {
+    return tasks.filter(t => {
+      const linkedQuote = getLinkedQuote(t);
+      const linkedSelection = getLinkedSelection(t);
+
+      // 1. Completed Column: always wins if specifically marked
+      if (t.stage === 'Completed') return stage === 'Completed';
+
+      // 2. Quotation Column: Data Driven (Has Quote?)
+      if (stage === "Quotation Submitted") return !!linkedQuote;
+
+      // 3. Ongoing Projects: Data Driven (Has Selection? No Quote?)
+      if (stage === "Ongoing Projects") return !!linkedSelection && !linkedQuote;
+
+      // 4. Inquiry Column: Default (No Data, No Custom Stage)
+      //    We only show here if it doesn't have Selection/Quote AND 
+      //    the stage in DB is strictly 'Inquiry' (so moving it to "Queries" hides it here)
+      if (stage === "Inquiry") {
+         return !linkedSelection && !linkedQuote && t.stage === 'Inquiry';
+      }
+
+      // 5. Custom Columns (Queries, Pending Works, etc.)
+      return t.stage === stage;
+    })
+    .filter(t => t.client_name.toLowerCase().includes(search.toLowerCase()) || t.inquiry_number.toLowerCase().includes(search.toLowerCase()));
+  };
+  
   return (
     <DashboardLayout>
       <div className="h-[calc(100vh-6rem)] flex flex-col animate-fade-in">
         
         {/* Header */}
         <div className="flex justify-between items-center mb-6 px-1">
-          <div><h1 className="text-2xl font-bold">Sales Pipeline</h1><p className="text-muted-foreground">Manage inquiries</p></div>
-          <div className="w-64 relative">
-             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-             <Input placeholder="Search board..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+          <div><h1 className="text-2xl font-bold">Sales Pipeline</h1><p className="text-muted-foreground">Manage inquiries & quotations</p></div>
+          <div className="flex items-center gap-3">
+             {/* ADD STAGE DROPDOWN */}
+             <Popover>
+                <PopoverTrigger asChild>
+                    <Button variant="outline" className="gap-2 border-dashed">
+                        <PlusCircle className="h-4 w-4" /> Add Stage
+                    </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-3" align="end">
+                    <h4 className="font-semibold text-sm mb-2">Create New Stage</h4>
+                    <div className="flex gap-2">
+                        <Input 
+                            placeholder="Stage Name (e.g. Queries)" 
+                            value={newColumnTitle} 
+                            onChange={(e) => setNewColumnTitle(e.target.value)} 
+                            className="h-8 text-xs"
+                        />
+                        <Button size="sm" className="h-8" onClick={handleAddColumn}>Add</Button>
+                    </div>
+                </PopoverContent>
+             </Popover>
+
+             <div className="w-64 relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="Search board..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+             </div>
           </div>
         </div>
 
         {/* Board */}
         <DragDropContext onDragEnd={onDragEnd}>
           <div className="flex-1 flex gap-4 overflow-x-auto pb-4 px-1">
-            {Object.values(COLUMNS).map((column) => (
-              <div key={column.id} className="flex-shrink-0 w-80 flex flex-col rounded-xl bg-muted/40 border border-border/50">
+            {columns.map((column) => (
+              <div key={column.id} className="flex-shrink-0 w-80 flex flex-col rounded-xl bg-muted/40 border border-border/50 group/col relative">
+                
+                {/* Column Header */}
                 <div className={`p-3 font-semibold text-xs flex justify-between items-center bg-background rounded-t-xl border-b ${column.color} border-t-4`}>
-                  <span className="flex items-center gap-2">{column.title}<Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge></span>
+                  <span className="flex items-center gap-2">
+                      {column.title}
+                      <Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge>
+                  </span>
+                  
+                  {/* Delete Option for Custom Columns ONLY */}
+                  {!column.isSystem && (
+                      <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover/col:opacity-100 transition-opacity">
+                                  <MoreHorizontal className="h-3 w-3" />
+                              </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteColumn(column.id)}>
+                                  <Trash2 className="h-3 w-3 mr-2" /> Delete Stage
+                              </DropdownMenuItem>
+                          </DropdownMenuContent>
+                      </DropdownMenu>
+                  )}
                 </div>
+
+                {/* Droppable Area */}
                 <Droppable droppableId={column.id}>
                   {(provided, snapshot) => (
                     <div {...provided.droppableProps} ref={provided.innerRef} className={cn("flex-1 p-2 overflow-y-auto space-y-2 min-h-[100px]", snapshot.isDraggingOver ? "bg-muted/50" : "")}>
-                      {getTasksByStage(column.id).map((task, index) => (
-                        <Draggable key={task.id} draggableId={task.id} index={index}>
-                          {(provided, snapshot) => (
-                            <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} onClick={() => handleTaskClick(task)}
-                              className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
-                            >
-                              {(task.labels || []).length > 0 && (
-                                <div className="flex gap-1 mb-1.5 flex-wrap">
-                                  {task.labels!.map((l:any) => (
-                                    <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
-                                  ))}
-                                </div>
-                              )}
-                              
-                              <div className="mb-1 flex justify-between items-start">
-                                <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1 rounded border leading-none py-0.5">{task.inquiry_number}</span>
-                              </div>
-                              <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
-                              
-                             <div className="flex items-center justify-between">
-    {/* MULTIPLE MEMBERS AVATAR STACK (Merged Owner + Others) */}
-    <div className="flex -space-x-1.5">
-        {(() => {
-            // Merge Owner + Collaborators, remove duplicates
-            const uniqueMembers = [
-                ...(task.sales_person ? [task.sales_person] : []),
-                ...(task.sales_persons || [])
-            ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
+                        
+                        {getTasksByStage(column.id).map((task, index) => {
+                            // Link Logic
+                            const linkedQuote = getLinkedQuote(task);
+                            const linkedSelection = getLinkedSelection(task); 
+                            const isQuoteStage = column.id === 'Quotation Submitted';
+                            const isOngoingStage = column.id === 'Ongoing Projects'; 
+                            const uniqueDraggableId = `${column.id}::${task.id}`;
 
-            return uniqueMembers.length > 0 ? (
-                uniqueMembers.map(person => (
-                    <div key={person.id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(person.name))} title={person.name}>
-                        {getInitials(person.name)}
-                    </div>
-                ))
-            ) : (
-                <div className="h-5"></div>
-            );
-        })()}
-    </div>
+                            return (
+                            <Draggable key={uniqueDraggableId} draggableId={uniqueDraggableId} index={index}>
+                                {(provided, snapshot) => (
+                                <div 
+                                    ref={provided.innerRef} 
+                                    {...provided.draggableProps} 
+                                    {...provided.dragHandleProps} 
+                                    onClick={() => handleTaskClick(task)}
+                                    className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
+                                >
+                                    {(task.labels || []).length > 0 && (
+                                    <div className="flex gap-1 mb-1.5 flex-wrap">
+                                        {task.labels!.map((l:any) => (
+                                        <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
+                                        ))}
+                                    </div>
+                                    )}
+                                    
+                                    <div className="mb-1 flex justify-between items-start">
+                                    <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1 rounded border leading-none py-0.5">
+                                        {isQuoteStage && linkedQuote ? linkedQuote.quotation_number : 
+                                        isOngoingStage && linkedSelection ? linkedSelection.selection_number : 
+                                        task.inquiry_number}
+                                    </span>
+                                    
+                                    {(isQuoteStage && linkedQuote) && (
+                                        <span className="text-[10px] font-bold text-green-600 flex items-center">
+                                        <IndianRupee className="w-2 h-2 mr-0.5" />
+                                        {linkedQuote.grandTotal.toLocaleString()}
+                                        </span>
+                                    )}
 
-                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                    {((task.comments || []).length > 0 || (task.checklists || []).length > 0) && (
-                                        <div className="flex items-center gap-1.5 bg-muted/50 px-1 py-0.5 rounded">
-                                            {(task.comments || []).length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-2.5 w-2.5" />{task.comments!.length}</span>}
-                                            {(task.checklists || []).length > 0 && (
-                                                <span className="flex items-center gap-0.5">
-                                                    <CheckSquare className="h-2.5 w-2.5" />
-                                                    {task.checklists!.reduce((acc, cl) => acc + cl.items.filter(i => i.isCompleted).length, 0)}/
-                                                    {task.checklists!.reduce((acc, cl) => acc + cl.items.length, 0)}
-                                                </span>
+                                    {(isOngoingStage && linkedSelection) && (
+                                        <span className={cn(
+                                        "text-[9px] px-1.5 py-0.5 rounded border font-medium uppercase",
+                                        linkedSelection.status === 'pending' ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
+                                        linkedSelection.status === 'confirmed' ? "bg-blue-100 text-blue-700 border-blue-200" :
+                                        "bg-gray-100 text-gray-600 border-gray-200"
+                                        )}>
+                                        {linkedSelection.status}
+                                        </span>
+                                    )}
+                                    </div>
+                                    
+                                    <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
+                                    
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex -space-x-1.5">
+                                            {(() => {
+                                                const uniqueMembers = [
+                                                    ...(task.sales_person ? [task.sales_person] : []),
+                                                    ...(task.sales_persons || [])
+                                                ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
+
+                                                return uniqueMembers.length > 0 ? (
+                                                    uniqueMembers.map(person => (
+                                                        <div key={person.id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(person.name))} title={person.name}>
+                                                            {getInitials(person.name)}
+                                                        </div>
+                                                    ))
+                                                ) : ( <div className="h-5"></div> );
+                                            })()}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                            {((task.comments || []).length > 0 || (task.checklists || []).length > 0) && (
+                                                <div className="flex items-center gap-1.5 bg-muted/50 px-1 py-0.5 rounded">
+                                                    {(task.comments || []).length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-2.5 w-2.5" />{task.comments!.length}</span>}
+                                                    {(task.checklists || []).length > 0 && (
+                                                        <span className="flex items-center gap-0.5">
+                                                            <CheckSquare className="h-2.5 w-2.5" />
+                                                            {task.checklists!.reduce((acc, cl) => acc + cl.items.filter(i => i.isCompleted).length, 0)}/
+                                                            {task.checklists!.reduce((acc, cl) => acc + cl.items.length, 0)}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                              </div>
+                                )}
+                            </Draggable>
+                            );
+                        })}
+                        {provided.placeholder}
+
+                        {/* --- QUICK ADD CARD BUTTON --- */}
+                        {addingCardToColumn === column.id ? (
+                            <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
+                                <Input 
+                                    placeholder="Client Name / Task Title" 
+                                    value={newCardTitle} 
+                                    onChange={(e) => setNewCardTitle(e.target.value)} 
+                                    className="mb-2 h-8 text-sm"
+                                    autoFocus
+                                />
+                                <select 
+                                    className="w-full mb-2 text-xs border rounded p-1.5 bg-background"
+                                    value={newCardAssignee}
+                                    onChange={(e) => setNewCardAssignee(e.target.value)}
+                                >
+                                    <option value="">Assign to...</option>
+                                    {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                                </select>
+                                <div className="flex gap-2">
+                                    <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+                                    <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => setAddingCardToColumn(null)}>Cancel</Button>
+                                </div>
                             </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {provided.placeholder}
+                        ) : (
+                            <Button 
+                                variant="ghost" 
+                                className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
+                                onClick={() => setAddingCardToColumn(column.id)}
+                            >
+                                <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
+                            </Button>
+                        )}
+
                     </div>
                   )}
                 </Droppable>
@@ -482,7 +763,7 @@ const Pipeline: React.FC = () => {
           </div>
         </DragDropContext>
 
-        {/* --- DETAIL MODAL --- */}
+        {/* --- DETAIL MODAL (Unchanged) --- */}
         <Dialog open={!!selectedTask} onOpenChange={(open) => !open && setSelectedTask(null)}>
            <DialogContent className="max-w-5xl h-[85vh] p-0 bg-background border-border flex flex-col overflow-hidden text-foreground">
               {selectedTask && (
@@ -498,6 +779,16 @@ const Pipeline: React.FC = () => {
                             </div>
                         </div>
                     </div>
+                    {/* ✅ SHOW QUOTE TOTAL IN HEADER IF AVAILABLE */}
+                    {getLinkedQuote(selectedTask) && (
+                       <div className="text-right">
+                          <div className="text-xl font-bold text-green-600 flex items-center justify-end">
+                             <IndianRupee className="w-5 h-5" />
+                             {getLinkedQuote(selectedTask).grandTotal.toLocaleString()}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Quoted Amount</div>
+                       </div>
+                    )}
                   </div>
 
                   <div className="flex-1 flex overflow-hidden relative">
@@ -506,23 +797,22 @@ const Pipeline: React.FC = () => {
                           
                           <div className="flex flex-wrap items-start gap-8">
                               
-                              {/* 1. MEMBERS (MULTIPLE SELECT) - SAFE RENDER */}
+                              {/* 1. MEMBERS */}
                               <div className="space-y-1.5">
-    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members</h4>
-    <div className="flex items-center gap-1">
-        {(() => {
-            // Merge Owner + Collaborators, remove duplicates
-            const uniqueMembers = [
-                ...(selectedTask.sales_person ? [selectedTask.sales_person] : []),
-                ...(selectedTask.sales_persons || [])
-            ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
+                                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members</h4>
+                                <div className="flex items-center gap-1">
+                                    {(() => {
+                                        const uniqueMembers = [
+                                            ...(selectedTask.sales_person ? [selectedTask.sales_person] : []),
+                                            ...(selectedTask.sales_persons || [])
+                                        ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
 
-            return uniqueMembers.map(person => (
-                <div key={person.id} className={cn("h-8 w-8 rounded-full text-white flex items-center justify-center text-xs font-bold shadow-sm -ml-2 first:ml-0 ring-2 ring-background", getMemberColor(person.name))} title={person.name}>
-                    {getInitials(person.name)}
-                </div>
-            ));
-        })()}
+                                        return uniqueMembers.map(person => (
+                                            <div key={person.id} className={cn("h-8 w-8 rounded-full text-white flex items-center justify-center text-xs font-bold shadow-sm -ml-2 first:ml-0 ring-2 ring-background", getMemberColor(person.name))} title={person.name}>
+                                                {getInitials(person.name)}
+                                            </div>
+                                        ));
+                                    })()}
                                       
                                       <Popover>
                                         <PopoverTrigger asChild>
@@ -534,7 +824,6 @@ const Pipeline: React.FC = () => {
                                             <h4 className="text-xs font-bold text-muted-foreground mb-2 px-2">Assign Members</h4>
                                             <ScrollArea className="h-48">
                                                 {allUsers.map(user => {
-                                                    // 🔥 SAFE CHECK HERE to prevent crash
                                                     const isSelected = (selectedTask.sales_persons || []).some(p => p.id === user.id);
                                                     return (
                                                         <div key={user.id} 
@@ -553,7 +842,7 @@ const Pipeline: React.FC = () => {
                                   </div>
                               </div>
 
-                              {/* 2. LABELS - SAFE RENDER */}
+                              {/* 2. LABELS */}
                               <div className="space-y-1.5">
                                   <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Labels</h4>
                                   <div className="flex items-center gap-2 flex-wrap">
@@ -586,7 +875,6 @@ const Pipeline: React.FC = () => {
                                                         <div className="space-y-1 max-h-[200px] overflow-y-auto">
                                                             <div className="text-xs text-muted-foreground px-1 pb-1">Available Labels</div>
                                                             {getUniqueLabels().filter(l => l.text.toLowerCase().includes(labelSearch.toLowerCase())).map((labelDef, i) => {
-                                                                // 🔥 SAFE CHECK HERE
                                                                 const isChecked = (selectedTask.labels || []).some(l => l.text === labelDef.text && l.color === labelDef.color);
                                                                 return (
                                                                     <div key={i} className="flex items-center gap-2 p-1.5 hover:bg-accent rounded cursor-pointer group" onClick={() => handleToggleLabel(labelDef)}>
@@ -656,9 +944,12 @@ const Pipeline: React.FC = () => {
                                         </PopoverContent>
                                     </Popover>
                                     
-                                    <Button variant="secondary" className="h-8 text-sm bg-muted shadow-sm px-3">
-                                        <Clock className="h-3.5 w-3.5 mr-2" /> Dates
-                                    </Button>
+                                    {/* ✅ IF QUOTATION EXISTS - LINK TO IT */}
+                                    {getLinkedQuote(selectedTask) && (
+                                       <Button variant="outline" className="h-8 text-sm shadow-sm px-3 text-green-600 border-green-200 bg-green-50">
+                                            <FileText className="h-3.5 w-3.5 mr-2" /> View Quote
+                                       </Button>
+                                    )}
                                   </div>
                               </div>
                           </div>
@@ -783,11 +1074,9 @@ const Pipeline: React.FC = () => {
                                       className="min-h-[40px] border-none focus-visible:ring-0 p-0 resize-none text-sm shadow-none"
                                   />
                                   
-                                  {/* Attachment Preview (Fixed) */}
                                   {commentAttachment && (
                                       <div className="mt-3 flex items-start gap-3 bg-muted/30 p-2 rounded-md border border-border/50">
                                           <div className="relative h-16 w-24 rounded overflow-hidden border border-border bg-background flex items-center justify-center group">
-                                              {/* FIX: URL CLEANUP for 404 */}
                                               <img src={getFileUrl(commentAttachment)} className="w-full h-full object-cover" />
                                               <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setCommentAttachment(null)}>
                                                   <X className="text-white h-5 w-5 drop-shadow-md" />

@@ -50,6 +50,8 @@ model User {
   
   // === ADD THIS NEW LINE ===
   comments_made      InquiryComment[] 
+
+  quotation_comments QuotationComment[]
 }
 
 model Inquiry {
@@ -537,39 +539,89 @@ enum QuotationType {
   detailed
 }
 
+// [UPDATE YOUR EXISTING Quotation MODEL]
 model Quotation {
-  id               String @id @default(uuid())
-  quotation_number String @unique
+  id                   String   @id @default(uuid())
+  quotation_number     String   @unique
+  quotationType        QuotationType @default(detailed)
 
-  quotationType    QuotationType @default(detailed)
+  selectionId          String?
+  selection            Selection? @relation(fields: [selectionId], references: [id])
 
-  selectionId String?
-  selection   Selection? @relation(fields: [selectionId], references: [id])
-
-  date   DateTime @default(now())
-  status String   @default("draft") // draft, confirmed, sent
+  date                 DateTime @default(now())
+  status               String   @default("draft")
 
   // Client Details
-  clientName    String
-  clientAddress String?
-  
-  // Financials - ✅ FIXED FIELD NAMES
-  subTotal             Float @default(0) // Sum of all item subtotals (Qty × Rate)
-  discountTotal        Float @default(0) // Sum of all discounts
-  taxableValue         Float @default(0) // subTotal - discountTotal
-  gstTotal             Float @default(0) // Sum of all GST amounts
+  clientName           String
+  clientAddress        String?
+
+  // Financials
+  subTotal             Float @default(0)
+  discountTotal        Float @default(0)
+  taxableValue         Float @default(0)
+  gstTotal             Float @default(0)
   transportationCharge Float @default(0)
   installationCharge   Float @default(0)
-  grandTotal           Float @default(0) // taxableValue + gstTotal + charges
+  grandTotal           Float @default(0)
 
-  // Items
-  items QuotationItem[]
+  items                QuotationItem[]
 
-  created_by_id String
-  created_by    User   @relation(fields: [created_by_id], references: [id])
+  created_by_id        String
+  created_by           User   @relation(fields: [created_by_id], references: [id])
 
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  // === 🆕 NEW PIPELINE FIELDS ===
+  stage       String    @default("Draft") // "Draft", "Sent", "Negotiation", "Approved", "Rejected"
+  priority    String    @default("Medium") // "High", "Medium", "Low"
+
+  comments    QuotationComment[]
+  checklists  QuotationChecklist[]
+  labels      QuotationLabel[]
+}
+
+// [ADD THESE NEW MODELS AT THE BOTTOM OF THE FILE]
+
+model QuotationComment {
+  id            String    @id @default(uuid())
+  content       String
+  attachmentUrl String?
+  createdAt     DateTime  @default(now())
+  
+  quotationId   String
+  quotation     Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+}
+
+model QuotationLabel {
+  id          String    @id @default(uuid())
+  text        String
+  color       String
+  
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+model QuotationChecklist {
+  id          String    @id @default(uuid())
+  title       String
+  
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  
+  items       QuotationChecklistItem[]
+}
+
+model QuotationChecklistItem {
+  id          String             @id @default(uuid())
+  text        String
+  isCompleted Boolean            @default(false)
+  
+  checklistId String
+  checklist   QuotationChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
 }
 model QuotationItem {
   id          String    @id @default(uuid())
