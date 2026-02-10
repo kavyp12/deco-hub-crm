@@ -229,6 +229,51 @@ model DeepCalculationItem {
   updated_at DateTime @updatedAt
 }
 
+
+// [APPEND TO schema.prisma]
+
+// ==========================================
+// GPW CALCULATION (Gravel, Pulse, Weave)
+// ==========================================
+
+model GpwCalculation {
+  id          String               @id @default(uuid())
+  selectionId String               @unique
+  selection   Selection            @relation(fields: [selectionId], references: [id], onDelete: Cascade)
+  items       GpwCalculationItem[]
+  created_at  DateTime             @default(now())
+  updated_at  DateTime             @updatedAt
+}
+
+model GpwCalculationItem {
+  id              String         @id @default(uuid())
+  calculationId   String
+  calculation     GpwCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+
+  selectionItemId String
+  selectionItem   SelectionItem  @relation(fields: [selectionItemId], references: [id], onDelete: Cascade)
+
+  // Type: Gravel, Pulse, Weave
+  type            String         @default("Gravel") 
+
+  // Dimensions
+  rft             Float          @default(0)
+
+  // Track (Channel)
+  trackPrice      Float          @default(0)
+  trackGst        Float          @default(0)
+  trackFinal      Float          @default(0)
+
+  // Motor
+  motorPrice      Float          @default(0)
+  motorGst        Float          @default(0)
+  motorFinal      Float          @default(0)
+
+  // Remote
+  remotePrice     Float          @default(0)
+  remoteGst       Float          @default(0)
+  remoteFinal     Float          @default(0)
+}
 // ==========================================
 // SELECTION MANAGEMENT
 // ==========================================
@@ -257,7 +302,7 @@ model Selection {
   deepCalculation   DeepCalculation?
   forestCalculation ForestCalculation? // Dedicated Forest
   somfyCalculation  SomfyCalculation? // Dedicated Somfy (NEW)
-
+  gpwCalculation    GpwCalculation?    // Dedicated GPW (NEW)
   quotations Quotation[]
 }
 
@@ -300,6 +345,7 @@ model SelectionItem {
   deepItems        DeepCalculationItem[]
   forestItems      ForestCalculationItem[]
   somfyItems       SomfyCalculationItem[]
+  gpwItems         GpwCalculationItem[]
 }
 
 model SelectionCounter {

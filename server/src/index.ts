@@ -147,23 +147,97 @@ const logActivity = async (userId: string, action: string, entity: string, entit
 // GET LOGS (Missing Route)
 app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Check for super_admin role
     if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Access Denied: Super Admin Only' });
+      return res.status(403).json({ error: 'Access Denied' });
     }
 
+    // Fetch logs
     const logs = await prisma.activityLog.findMany({
-      orderBy: { createdAt: 'desc' }, // Newest first
-      take: 200 // Limit to last 200
+      orderBy: { createdAt: 'desc' },
+      take: 500 // Increased limit for better visibility
     });
 
-    res.json(logs);
+    // Fetch users to map names
+    const users = await prisma.user.findMany({ select: { id: true, name: true } });
+    const userMap = new Map(users.map(u => [u.id, u.name]));
+
+    // Attach user names to logs
+    const enrichedLogs = logs.map(log => ({
+      ...log,
+      userName: userMap.get(log.userId) || 'Unknown User'
+    }));
+
+    res.json(enrichedLogs);
   } catch (error) {
     console.error('Error fetching logs:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
+// 2. EXCEL EXPORT ENDPOINT (NEW)
+app.get('/api/logs/export', authenticateToken, async (req: any, res: Response): Promise<void> => {
+    try {
+      if (req.user.role !== 'super_admin') {
+         res.status(403).json({ error: 'Access Denied' });
+         return;
+      }
+  
+      // 1. Fetch ALL logs (No limit for export)
+      const logs = await prisma.activityLog.findMany({
+        orderBy: { createdAt: 'desc' }
+      });
+  
+      // 2. Fetch Users for Name Mapping
+      const users = await prisma.user.findMany({ select: { id: true, name: true, role: true } });
+      const userMap = new Map(users.map(u => [u.id, u]));
+  
+      // 3. Format Data for Excel
+      const excelData = logs.map(log => {
+        const user = userMap.get(log.userId);
+        return {
+          "Date": new Date(log.createdAt).toLocaleDateString(),
+          "Time": new Date(log.createdAt).toLocaleTimeString(),
+          "Action": log.action,
+          "Entity": log.entity,
+          "Description": log.details,
+          "User Name": user ? user.name : 'Unknown',
+          "User Role": user ? user.role : 'Unknown',
+          "Related ID": log.entityId || 'N/A'
+        };
+      });
+  
+      // 4. Create Workbook
+      const wb = xlsx.utils.book_new();
+      const ws = xlsx.utils.json_to_sheet(excelData);
+      
+      // Auto-width for columns (Optional helper)
+      const wscols = [
+        { wch: 12 }, // Date
+        { wch: 12 }, // Time
+        { wch: 10 }, // Action
+        { wch: 15 }, // Entity
+        { wch: 50 }, // Description
+        { wch: 20 }, // User Name
+        { wch: 15 }, // Role
+        { wch: 30 }, // ID
+      ];
+      ws['!cols'] = wscols;
+  
+      xlsx.utils.book_append_sheet(wb, ws, "Activity Logs");
+  
+      // 5. Send Buffer
+      const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      
+      res.setHeader('Content-Disposition', 'attachment; filename="ActivityLogs.xlsx"');
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.send(buffer);
+  
+    } catch (error) {
+      console.error("Export Error:", error);
+      res.status(500).json({ error: "Failed to generate export" });
+    }
+  });
+  
 // ==========================================
 // 1. AUTH ROUTES
 // ==========================================
@@ -1745,6 +1819,151 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
     res.status(500).json({ error: 'Failed to save forest calculation' });
   }
 });
+
+
+// [APPEND TO src/index.ts]
+
+// ==========================================
+// GPW CALCULATION ROUTES (Gravel/Pulse/Weave)
+// ==========================================
+
+app.get('/api/calculations/gpw/:selectionId', authenticateToken, async (req: Request, res: Response) => {
+  const { selectionId } = req.params;
+  try {
+    // 1. Fetch saved GPW calculation
+    const gpwCalc = await prisma.gpwCalculation.findUnique({
+      where: { selectionId },
+      include: {
+        items: {
+          include: { selectionItem: true }
+        }
+      }
+    });
+
+    // 2. Fetch Selection items to check for new assignments
+    const selection = await prisma.selection.findUnique({
+      where: { id: selectionId },
+      include: { 
+        items: { 
+          orderBy: { orderIndex: 'asc' }
+        } 
+      }
+    });
+
+    if (!selection) return res.status(404).json({ error: 'Selection not found' });
+
+    // 3. Filter items assigned to 'GPW'
+    const relevantItems = selection.items.filter(item => 
+      item.calculationType && item.calculationType.includes('GPW')
+    );
+
+    // 4. Merge Logic
+    const mergedItems = relevantItems.map(item => {
+      const savedItem = gpwCalc?.items.find(si => si.selectionItemId === item.id);
+      
+      if (savedItem) {
+        return { ...savedItem, selectionItem: item };
+      }
+
+      // Default Structure for new items
+      return {
+        selectionItemId: item.id,
+        selectionItem: item,
+        type: 'Gravel', // Default
+        rft: 0,
+        trackPrice: 0, trackGst: 0, trackFinal: 0,
+        motorPrice: 0, motorGst: 0, motorFinal: 0,
+        remotePrice: 0, remoteGst: 0, remoteFinal: 0
+      };
+    });
+
+    res.json({ 
+      id: gpwCalc?.id || null,
+      selectionId,
+      items: mergedItems
+    });
+
+  } catch (error) {
+    console.error("GPW Fetch Error:", error);
+    res.status(500).json({ error: 'Failed to fetch GPW calculation' });
+  }
+});
+
+app.post('/api/calculations/gpw/:selectionId', authenticateToken, async (req: any, res: Response) => {
+  const { selectionId } = req.params;
+  const { items } = req.body;
+
+  try {
+    // Update widths first if changed in UI
+    for (const item of items) {
+      if (item.selectionItemId && item.width !== undefined) {
+        await prisma.selectionItem.update({
+          where: { id: item.selectionItemId },
+          data: { 
+             width: parseFloat(item.width || 0),
+             height: parseFloat(item.height || 0), 
+             unit: item.unit 
+          }
+        });
+      }
+    }
+
+    const gpwCalc = await prisma.gpwCalculation.upsert({
+      where: { selectionId },
+      update: {
+        items: {
+          deleteMany: {},
+          create: items.map((item: any) => ({
+            selectionItemId: item.selectionItemId,
+            type: item.type || 'Gravel',
+            rft: parseFloat(item.rft || 0),
+            
+            trackPrice: parseFloat(item.trackPrice || 0),
+            trackGst: parseFloat(item.trackGst || 0),
+            trackFinal: parseFloat(item.trackFinal || 0),
+            
+            motorPrice: parseFloat(item.motorPrice || 0),
+            motorGst: parseFloat(item.motorGst || 0),
+            motorFinal: parseFloat(item.motorFinal || 0),
+            
+            remotePrice: parseFloat(item.remotePrice || 0),
+            remoteGst: parseFloat(item.remoteGst || 0),
+            remoteFinal: parseFloat(item.remoteFinal || 0),
+          }))
+        }
+      },
+      create: {
+        selectionId,
+        items: {
+          create: items.map((item: any) => ({
+            selectionItemId: item.selectionItemId,
+            type: item.type || 'Gravel',
+            rft: parseFloat(item.rft || 0),
+            
+            trackPrice: parseFloat(item.trackPrice || 0),
+            trackGst: parseFloat(item.trackGst || 0),
+            trackFinal: parseFloat(item.trackFinal || 0),
+            
+            motorPrice: parseFloat(item.motorPrice || 0),
+            motorGst: parseFloat(item.motorGst || 0),
+            motorFinal: parseFloat(item.motorFinal || 0),
+            
+            remotePrice: parseFloat(item.remotePrice || 0),
+            remoteGst: parseFloat(item.remoteGst || 0),
+            remoteFinal: parseFloat(item.remoteFinal || 0),
+          }))
+        }
+      }
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved GPW calculation`);
+    res.json(gpwCalc);
+  } catch (error) {
+    console.error('GPW Save Error:', error);
+    res.status(500).json({ error: 'Failed to save GPW calculation' });
+  }
+});
+
 
 // [APPEND TO index.ts]
 

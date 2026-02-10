@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Settings, Ruler,
-  ChevronRight, LayoutDashboard, Calculator, Layers,  // ← Calculator added here
+  ChevronRight, LayoutDashboard, Calculator, Layers,
   Edit2, Save, Plus, Trash2, X, Grid, Blinds, ChevronDown, Loader2
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -17,19 +17,22 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,           // <--- ADD THIS
-  DropdownMenuSubContent,    // <--- ADD THIS
-  DropdownMenuSubTrigger,    // <--- ADD THIS
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
+
 // Colors for tags
 const TYPE_COLORS: any = {
   Local: 'bg-blue-100 text-blue-800 border-blue-300 ring-blue-300',
   'Forest (Manual)': 'bg-teal-100 text-teal-800 border-teal-300 ring-teal-300',
   'Forest (Auto)': 'bg-green-100 text-green-800 border-green-300 ring-green-300',
   Somfy: 'bg-yellow-100 text-yellow-800 border-yellow-300 ring-yellow-300',
+  'Somfy (Manual)': 'bg-amber-100 text-amber-800 border-amber-300 ring-amber-300',
+  GPW: 'bg-indigo-100 text-indigo-800 border-indigo-300 ring-indigo-300', // <--- ADDED GPW COLOR
   Roman: 'bg-orange-100 text-orange-800 border-orange-300 ring-orange-300',
   Blinds: 'bg-purple-100 text-purple-800 border-purple-300 ring-purple-300',
 };
@@ -41,6 +44,7 @@ const COMMON_AREAS = [
   "Puja Room", "Staircase", "Lobby", "Entrance",
   "Bathroom", "Store Room", "Servant Room", "Utility Area"
 ];
+
 // Button base styles for active/inactive states
 const BUTTON_STYLES = {
   Local: {
@@ -59,12 +63,14 @@ const BUTTON_STYLES = {
     active: 'bg-yellow-100 text-yellow-700 border-yellow-300 ring-1 ring-yellow-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
-
-  'Somfy (Manual)': { // <--- ADD THIS BLOCK
+  'Somfy (Manual)': {
     active: 'bg-amber-100 text-amber-700 border-amber-300 ring-1 ring-amber-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
-
+  GPW: { // <--- ADDED GPW STYLE
+    active: 'bg-indigo-100 text-indigo-700 border-indigo-300 ring-1 ring-indigo-300 font-bold',
+    inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+  },
   Roman: {
     active: 'bg-orange-100 text-orange-700 border-orange-300 ring-1 ring-orange-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
@@ -74,6 +80,7 @@ const BUTTON_STYLES = {
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
 };
+
 interface EditItem {
   id: string;
   productId?: string;
@@ -86,8 +93,7 @@ interface EditItem {
   price: number;
   calculationType: string;
   details?: any;
-  orderIndex: number; // ✅ ADD THIS LINE
-
+  orderIndex: number;
 }
 
 const CalculationEditor: React.FC = () => {
@@ -117,9 +123,9 @@ const CalculationEditor: React.FC = () => {
 
       console.log('✅ Fetched Selection:', selRes.data);
 
-      // ✅ PRESERVE orderIndex and sort by it
+      // Preserve orderIndex and sort by it
       const items = (selRes.data.items || [])
-        .sort((a: any, b: any) => a.orderIndex - b.orderIndex) // Sort by existing order
+        .sort((a: any, b: any) => a.orderIndex - b.orderIndex)
         .map((i: any) => ({
           id: i.id,
           productId: i.productId,
@@ -132,7 +138,7 @@ const CalculationEditor: React.FC = () => {
           price: i.price || 0,
           calculationType: i.calculationType || 'Local',
           details: i.details || {},
-          orderIndex: i.orderIndex || 0 // ✅ PRESERVE THIS
+          orderIndex: i.orderIndex || 0
         }));
 
       console.log('✅ Mapped Items with orderIndex:', items);
@@ -171,11 +177,10 @@ const CalculationEditor: React.FC = () => {
       price: 0,
       calculationType: 'Local',
       details: { areaName: 'New Area' },
-      orderIndex: editItems.length // ✅ Set to the end of the list
+      orderIndex: editItems.length
     };
     setEditItems([...editItems, newItem]);
   };
-
 
   const handleRemoveItem = (index: number) => {
     const updated = [...editItems];
@@ -208,7 +213,7 @@ const CalculationEditor: React.FC = () => {
       console.log('💾 Saving Items:', editItems);
 
       const payload = {
-        items: editItems.map((item, index) => ({ // ✅ Use map index to ensure sequential order
+        items: editItems.map((item, index) => ({
           productId: (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : null,
           productName: item.productName || 'Manual Entry',
           quantity: item.quantity || 1,
@@ -225,7 +230,7 @@ const CalculationEditor: React.FC = () => {
             ...(item.details || {})
           },
 
-          orderIndex: index // ✅ CRITICAL: Preserve the current order
+          orderIndex: index
         })),
         status: selection?.status || 'pending',
         delivery_date: selection?.delivery_date,
@@ -245,11 +250,10 @@ const CalculationEditor: React.FC = () => {
       });
 
       setIsEditing(false);
-      await fetchData(); // Reload fresh data with preserved order
+      await fetchData();
 
     } catch (error: any) {
       console.error('❌ Save Error:', error);
-      console.error('❌ Error Response:', error.response?.data);
       toast({
         title: 'Error',
         description: error.response?.data?.error || 'Failed to save changes',
@@ -260,8 +264,8 @@ const CalculationEditor: React.FC = () => {
     }
   };
 
-  // Count items by type (using 'includes' for multi-select support)
-const countType = (type: string) => editItems.filter(i => 
+  // Count items by type
+  const countType = (type: string) => editItems.filter(i => 
     i.calculationType && i.calculationType.split(',').includes(type)
   ).length;
 
@@ -270,11 +274,11 @@ const countType = (type: string) => editItems.filter(i =>
     ForestManual: countType('Forest (Manual)'),
     ForestAuto: countType('Forest (Auto)'),
     Somfy: countType('Somfy'),
-    SomfyManual: countType('Somfy (Manual)'), // <--- ADD THIS
+    SomfyManual: countType('Somfy (Manual)'),
+    GPW: countType('GPW'), // <--- ADDED GPW COUNT
     Roman: countType('Roman'),
     Blinds: countType('Blinds'),
   };
-  // --- UI ---
 
   if (loading) return (
     <DashboardLayout>
@@ -307,7 +311,7 @@ const countType = (type: string) => editItems.filter(i =>
                   Items: <span className="font-bold text-gray-900">{editItems.length}</span>
                 </div>
 
-                {/* ✅ ADD DEEP COSTING BUTTON */}
+                {/* DEEP COSTING BUTTON */}
                 <div className="h-6 w-px bg-gray-200"></div>
                 <Button
                   onClick={() => navigate(`/calculations/deep/${selectionId}`)}
@@ -318,7 +322,7 @@ const countType = (type: string) => editItems.filter(i =>
                   Deep Costing
                 </Button>
 
-                {/* ✅ QUOTATION BUTTON - FIXED */}
+                {/* QUOTATION BUTTON */}
                 <>
                   <div className="h-6 w-px bg-gray-200"></div>
                   <Button
@@ -329,7 +333,6 @@ const countType = (type: string) => editItems.filter(i =>
                     Generate Quote
                   </Button>
 
-                  {/* ✅ ADD THE MODAL */}
                   <QuotationTypeModal
                     isOpen={showQuoteModal}
                     onClose={() => setShowQuoteModal(false)}
@@ -381,15 +384,15 @@ const countType = (type: string) => editItems.filter(i =>
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Curtains & Automation</h3>
-                    {(typeCounts.Local + typeCounts.ForestManual + typeCounts.ForestAuto + typeCounts.Somfy + typeCounts.Roman) > 0 && (
+                    {(typeCounts.Local + typeCounts.ForestManual + typeCounts.ForestAuto + typeCounts.Somfy + typeCounts.Roman + typeCounts.GPW) > 0 && (
                       <p className="text-xs text-gray-500">
-                        {typeCounts.Local} Local • {typeCounts.ForestManual + typeCounts.ForestAuto} Forest • {typeCounts.Somfy} Somfy • {typeCounts.Roman} Roman
+                        {typeCounts.Local} Local • {typeCounts.GPW} GPW • {typeCounts.ForestManual + typeCounts.ForestAuto} Forest • {typeCounts.Somfy} Somfy • {typeCounts.Roman} Roman
                       </p>
                     )}
                   </div>
                 </div>
                 <p className="text-sm text-gray-500 mb-6">
-                  Calculations for Standard Panna/Fabric, Forest Tracks, Somfy Motors, and Roman Blinds.
+                  Calculations for Standard Panna, Forest, Somfy, Gravel/Pulse/Weave, and Roman Blinds.
                 </p>
               </div>
 
@@ -405,7 +408,7 @@ const countType = (type: string) => editItems.filter(i =>
                   <DropdownMenuLabel>Choose Method</DropdownMenuLabel>
                   <DropdownMenuSeparator />
 
-                  {/* 1. LOCAL / STANDARD (Top Level) */}
+                  {/* 1. LOCAL / STANDARD */}
                   <DropdownMenuItem onClick={() => navigate(`/calculations/local/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
                       <div className="h-7 w-7 rounded bg-blue-50 flex items-center justify-center text-blue-600">
@@ -422,7 +425,25 @@ const countType = (type: string) => editItems.filter(i =>
                     </div>
                   </DropdownMenuItem>
 
-                  {/* 2. FOREST GROUP (Sub Menu) */}
+                  {/* 2. GPW (Gravel/Pulse/Weave) - ADDED THIS */}
+                  <DropdownMenuItem onClick={() => navigate(`/calculations/gpw/${selectionId}`)} className="cursor-pointer py-2.5">
+                    <div className="flex items-center gap-3 w-full">
+                      <div className="h-7 w-7 rounded bg-indigo-50 flex items-center justify-center text-indigo-600">
+                        <Calculator className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-bold text-sm">Gravel / Pulse / Weave</div>
+                        <div className="text-[10px] text-gray-400">Fixed Rates per RFT</div>
+                      </div>
+                      {typeCounts.GPW > 0 && (
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5">
+                          {typeCounts.GPW}
+                        </Badge>
+                      )}
+                    </div>
+                  </DropdownMenuItem>
+
+                  {/* 3. FOREST GROUP */}
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
                       <div className="flex items-center gap-3">
@@ -462,7 +483,7 @@ const countType = (type: string) => editItems.filter(i =>
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
 
-                  {/* 3. SOMFY GROUP (Sub Menu) */}
+                  {/* 4. SOMFY GROUP */}
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
                       <div className="flex items-center gap-3">
@@ -502,7 +523,7 @@ const countType = (type: string) => editItems.filter(i =>
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
 
-                  {/* 4. ROMAN (Top Level) */}
+                  {/* 5. ROMAN */}
                   <DropdownMenuItem onClick={() => navigate(`/calculations/roman/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
                       <div className="h-7 w-7 rounded bg-orange-50 flex items-center justify-center text-orange-600">
@@ -667,7 +688,6 @@ const countType = (type: string) => editItems.filter(i =>
                         </td>
 
                         {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
-                       {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
                         <td className="px-6 py-4">
                           {isEditing ? (
                             <div className="flex gap-2 flex-wrap">
@@ -677,10 +697,10 @@ const countType = (type: string) => editItems.filter(i =>
                                 'Forest (Auto)', 
                                 'Somfy', 
                                 'Somfy (Manual)', 
+                                'GPW', // <--- ADDED GPW
                                 'Roman', 
                                 'Blinds'
                               ].map((type) => {
-                                // 🔥 FIX: Use .split(',') to ensure "Somfy" doesn't match "Somfy (Manual)"
                                 const isActive = item.calculationType && item.calculationType.split(',').includes(type);
                                 const style = BUTTON_STYLES[type as keyof typeof BUTTON_STYLES];
 

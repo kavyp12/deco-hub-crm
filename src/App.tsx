@@ -39,6 +39,7 @@ import RomanCalculation from "./pages/Caculation/RomanCalculation";
 import BlindsCalculation from "./pages/Caculation/BlindsCalculation";
 import QuotationEdit from "./pages/Quotation/QuotationEdit";
 import ActivityLogs from './pages/activityLogs/ActivityLogs.tsx'; // Add import
+import GpwCalculation from "./pages/Caculation/GpwCalculation";
 
 // Architecture 
 import Architecture from "./pages/Architects/Architects";
@@ -205,6 +206,14 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+            <Route
+            path="/calculations/gpw/:selectionId"
+            element={
+              <ProtectedRoute>
+                <GpwCalculation />
+              </ProtectedRoute>
+            }
+          />
 
             {/* Employees */}
             <Route

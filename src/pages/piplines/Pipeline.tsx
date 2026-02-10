@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { 
   MessageSquare, CheckSquare, Plus, Activity, Search, 
   X, AlignLeft, Image as ImageIcon, Check, Pencil, Monitor, FileText, IndianRupee,
-  MoreHorizontal, PlusCircle, Trash2
+  MoreHorizontal, PlusCircle, Trash2, ChevronDown
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Input } from '@/components/ui/input';
@@ -93,7 +93,6 @@ const LABEL_COLORS = [
   'bg-sky-500', 'bg-lime-600', 'bg-pink-500', 'bg-slate-500'
 ];
 
-// ✅ CORRECTED PERMANENT COLUMNS (Only the 4 you requested)
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500", isSystem: true }, 
   { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
@@ -146,8 +145,8 @@ const Pipeline: React.FC = () => {
   // --- QUICK CREATE CARD STATE ---
   const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
-  const [newCardAssignee, setNewCardAssignee] = useState<string>('');
-
+  const [newCardAssignee, setNewCardAssignee] = useState<string[]>([]);
+  
   // Modal State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
@@ -180,6 +179,14 @@ const Pipeline: React.FC = () => {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
 
+  const toggleAssignee = (userId: string) => {
+    setNewCardAssignee(prev => 
+      prev.includes(userId) 
+        ? prev.filter(id => id !== userId) 
+        : [...prev, userId]
+    );
+  };
+
   useEffect(() => {
     fetchPipeline();
     fetchUsers();
@@ -190,7 +197,6 @@ const Pipeline: React.FC = () => {
       const { data } = await api.get('/pipeline');
       setTasks(data);
       
-      // Auto-discover extra stages from DB that aren't in our default list
       const systemIds = new Set(DEFAULT_COLUMNS.map(c => c.id));
       const foundStages = new Set(data.map((t: Task) => t.stage));
       const customStages: ColumnDef[] = [];
@@ -257,51 +263,69 @@ const Pipeline: React.FC = () => {
       setColumns(prev => prev.filter(c => c.id !== colId));
   };
 
-  // --- MANUAL CARD ACTIONS ---
+  // --- CARD ACTIONS ---
 
   const handleQuickCreateCard = async (stageId: string) => {
-      if (!newCardTitle.trim()) return;
-      
-      try {
-          // Creating a minimal inquiry
-          const payload = {
-              client_name: newCardTitle,
-              mobile_number: "0000000000",
-              inquiry_date: new Date().toISOString(),
-              address: "Manual Entry",
-              sales_person_id: newCardAssignee || allUsers[0]?.id, 
-          };
+    if (!newCardTitle.trim()) return;
+    
+    try {
+        const payload = {
+            client_name: newCardTitle,
+            mobile_number: "0000000000",
+            inquiry_date: new Date().toISOString(),
+            address: "Manual Entry",
+            sales_person_id: newCardAssignee.length > 0 ? newCardAssignee[0] : allUsers[0]?.id, 
+        };
 
-          const { data: newInquiry } = await api.post('/inquiries', payload);
-          
-          // Move to correct stage immediately if not default
-          if (stageId !== "Inquiry") {
-              await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
-              newInquiry.stage = stageId; 
-          }
+        const { data: newInquiry } = await api.post('/inquiries', payload);
+        
+        if (newCardAssignee.length > 0) {
+            await api.put(`/inquiries/${newInquiry.id}/assign`, { userIds: newCardAssignee });
+            const selectedUsersObjects = allUsers.filter(u => newCardAssignee.includes(u.id));
+            newInquiry.sales_persons = selectedUsersObjects;
+        }
 
-          const assignedUser = allUsers.find(u => u.id === payload.sales_person_id);
-          
-          const newTask: Task = {
-              ...newInquiry,
-              sales_person: assignedUser ? { id: assignedUser.id, name: assignedUser.name } : undefined,
-              stage: stageId,
-              labels: [],
-              comments: [],
-              checklists: [],
-              selections: []
-          };
+        if (stageId !== "Inquiry") {
+            await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
+            newInquiry.stage = stageId; 
+        }
 
-          setTasks(prev => [newTask, ...prev]);
-          setNewCardTitle('');
-          setNewCardAssignee('');
-          setAddingCardToColumn(null);
-          toast({ title: "Card Created", description: "New card added successfully." });
+        const assignedUser = allUsers.find(u => u.id === payload.sales_person_id);
+        
+        const newTask: Task = {
+            ...newInquiry,
+            sales_person: assignedUser ? { id: assignedUser.id, name: assignedUser.name } : undefined,
+            stage: stageId,
+            labels: [],
+            comments: [],
+            checklists: [],
+            selections: []
+        };
 
-      } catch (error) {
-          console.error(error);
-          toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
-      }
+        setTasks(prev => [newTask, ...prev]);
+        setNewCardTitle('');
+        setNewCardAssignee([]); 
+        setAddingCardToColumn(null);
+        toast({ title: "Card Created", description: "New card added successfully." });
+
+    } catch (error) {
+        console.error(error);
+        toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
+    }
+};
+
+  const handleDeleteCard = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop click from opening the modal
+    if (!confirm("Are you sure you want to delete this card? This cannot be undone.")) return;
+
+    try {
+        await api.delete(`/inquiries/${taskId}`);
+        setTasks(prev => prev.filter(t => t.id !== taskId));
+        toast({ title: "Deleted", description: "Card deleted successfully." });
+    } catch (error) {
+        console.error(error);
+        toast({ title: "Error", description: "Failed to delete card", variant: "destructive" });
+    }
   };
 
   const handleTaskClick = (task: Task) => {
@@ -310,8 +334,6 @@ const Pipeline: React.FC = () => {
     setIsEditingDesc(false);
     setEditingCommentId(null);
   };
-
-  // --- ACTIONS ---
 
   const handleSaveDescription = async () => {
     if (!selectedTask) return;
@@ -529,29 +551,19 @@ const Pipeline: React.FC = () => {
     return task.selections[0];
   };
 
- // ✅ CORRECT FILTERING LOGIC
  const getTasksByStage = (stage: string) => {
     return tasks.filter(t => {
       const linkedQuote = getLinkedQuote(t);
       const linkedSelection = getLinkedSelection(t);
 
-      // 1. Completed Column: always wins if specifically marked
       if (t.stage === 'Completed') return stage === 'Completed';
-
-      // 2. Quotation Column: Data Driven (Has Quote?)
       if (stage === "Quotation Submitted") return !!linkedQuote;
-
-      // 3. Ongoing Projects: Data Driven (Has Selection? No Quote?)
       if (stage === "Ongoing Projects") return !!linkedSelection && !linkedQuote;
 
-      // 4. Inquiry Column: Default (No Data, No Custom Stage)
-      //    We only show here if it doesn't have Selection/Quote AND 
-      //    the stage in DB is strictly 'Inquiry' (so moving it to "Queries" hides it here)
       if (stage === "Inquiry") {
          return !linkedSelection && !linkedQuote && t.stage === 'Inquiry';
       }
 
-      // 5. Custom Columns (Queries, Pending Works, etc.)
       return t.stage === stage;
     })
     .filter(t => t.client_name.toLowerCase().includes(search.toLowerCase()) || t.inquiry_number.toLowerCase().includes(search.toLowerCase()));
@@ -565,27 +577,6 @@ const Pipeline: React.FC = () => {
         <div className="flex justify-between items-center mb-6 px-1">
           <div><h1 className="text-2xl font-bold">Sales Pipeline</h1><p className="text-muted-foreground">Manage inquiries & quotations</p></div>
           <div className="flex items-center gap-3">
-             {/* ADD STAGE DROPDOWN */}
-             <Popover>
-                <PopoverTrigger asChild>
-                    <Button variant="outline" className="gap-2 border-dashed">
-                        <PlusCircle className="h-4 w-4" /> Add Stage
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64 p-3" align="end">
-                    <h4 className="font-semibold text-sm mb-2">Create New Stage</h4>
-                    <div className="flex gap-2">
-                        <Input 
-                            placeholder="Stage Name (e.g. Queries)" 
-                            value={newColumnTitle} 
-                            onChange={(e) => setNewColumnTitle(e.target.value)} 
-                            className="h-8 text-xs"
-                        />
-                        <Button size="sm" className="h-8" onClick={handleAddColumn}>Add</Button>
-                    </div>
-                </PopoverContent>
-             </Popover>
-
              <div className="w-64 relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Search board..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
@@ -606,7 +597,6 @@ const Pipeline: React.FC = () => {
                       <Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge>
                   </span>
                   
-                  {/* Delete Option for Custom Columns ONLY */}
                   {!column.isSystem && (
                       <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -629,7 +619,6 @@ const Pipeline: React.FC = () => {
                     <div {...provided.droppableProps} ref={provided.innerRef} className={cn("flex-1 p-2 overflow-y-auto space-y-2 min-h-[100px]", snapshot.isDraggingOver ? "bg-muted/50" : "")}>
                         
                         {getTasksByStage(column.id).map((task, index) => {
-                            // Link Logic
                             const linkedQuote = getLinkedQuote(task);
                             const linkedSelection = getLinkedSelection(task); 
                             const isQuoteStage = column.id === 'Quotation Submitted';
@@ -644,17 +633,25 @@ const Pipeline: React.FC = () => {
                                     {...provided.draggableProps} 
                                     {...provided.dragHandleProps} 
                                     onClick={() => handleTaskClick(task)}
-                                    className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
+                                    className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group relative", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
                                 >
+                                    
+                                    {/* DELETE BUTTON (Visible on Hover) */}
+                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={(e) => handleDeleteCard(task.id, e)}>
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+
                                     {(task.labels || []).length > 0 && (
-                                    <div className="flex gap-1 mb-1.5 flex-wrap">
+                                    <div className="flex gap-1 mb-1.5 flex-wrap pr-6">
                                         {task.labels!.map((l:any) => (
                                         <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
                                         ))}
                                     </div>
                                     )}
                                     
-                                    <div className="mb-1 flex justify-between items-start">
+                                    <div className="mb-1 flex justify-between items-start pr-6">
                                     <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1 rounded border leading-none py-0.5">
                                         {isQuoteStage && linkedQuote ? linkedQuote.quotation_number : 
                                         isOngoingStage && linkedSelection ? linkedSelection.selection_number : 
@@ -732,14 +729,43 @@ const Pipeline: React.FC = () => {
                                     className="mb-2 h-8 text-sm"
                                     autoFocus
                                 />
-                                <select 
-                                    className="w-full mb-2 text-xs border rounded p-1.5 bg-background"
-                                    value={newCardAssignee}
-                                    onChange={(e) => setNewCardAssignee(e.target.value)}
-                                >
-                                    <option value="">Assign to...</option>
-                                    {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                </select>
+                                {/* CORRECTED: Multi-Select Popover */}
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="outline" className="w-full mb-2 justify-between h-8 text-xs font-normal bg-background border-input">
+                                            {newCardAssignee.length > 0 
+                                                ? `${newCardAssignee.length} selected` 
+                                                : "Assign to..."}
+                                            <ChevronDown className="h-3 w-3 opacity-50" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[200px] p-0" align="start">
+                                        <div className="max-h-[200px] overflow-y-auto p-1">
+                                            {allUsers.map((user) => {
+                                                const isSelected = newCardAssignee.includes(user.id);
+                                                return (
+                                                    <div 
+                                                        key={user.id} 
+                                                        className={cn(
+                                                            "flex items-center gap-2 px-2 py-1.5 hover:bg-accent rounded cursor-pointer text-xs transition-colors",
+                                                            isSelected && "bg-accent/50 font-medium"
+                                                        )}
+                                                        onClick={() => toggleAssignee(user.id)}
+                                                    >
+                                                        <div className={cn(
+                                                            "h-4 w-4 rounded border border-primary/30 flex items-center justify-center transition-colors",
+                                                            isSelected ? "bg-primary border-primary" : "bg-transparent"
+                                                        )}>
+                                                            {isSelected && <Check className="h-3 w-3 text-white" />}
+                                                        </div>
+                                                        {user.name}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
+
                                 <div className="flex gap-2">
                                     <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
                                     <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => setAddingCardToColumn(null)}>Cancel</Button>
@@ -779,7 +805,6 @@ const Pipeline: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                    {/* ✅ SHOW QUOTE TOTAL IN HEADER IF AVAILABLE */}
                     {getLinkedQuote(selectedTask) && (
                        <div className="text-right">
                           <div className="text-xl font-bold text-green-600 flex items-center justify-end">
@@ -944,7 +969,6 @@ const Pipeline: React.FC = () => {
                                         </PopoverContent>
                                     </Popover>
                                     
-                                    {/* ✅ IF QUOTATION EXISTS - LINK TO IT */}
                                     {getLinkedQuote(selectedTask) && (
                                        <Button variant="outline" className="h-8 text-sm shadow-sm px-3 text-green-600 border-green-200 bg-green-50">
                                             <FileText className="h-3.5 w-3.5 mr-2" /> View Quote
@@ -1113,7 +1137,6 @@ const Pipeline: React.FC = () => {
                                                     <span className="font-semibold text-sm">{comment.user.name}</span>
                                                     <span className="text-[10px] text-muted-foreground">{format(parseISO(comment.createdAt), 'MMM d, p')}</span>
                                                   </div>
-                                                  {/* Edit Button */}
                                                   {editingCommentId !== comment.id && (
                                                     <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100" onClick={() => { setEditingCommentId(comment.id); setEditingCommentText(comment.content); }}>
                                                         <Pencil className="h-3 w-3 text-muted-foreground" />
