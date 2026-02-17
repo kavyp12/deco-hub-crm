@@ -11,7 +11,10 @@ import {
   Trash2, 
   X, 
   RefreshCw,
-  Calculator // <--- Imported Calculator Icon
+  Calculator,
+  PlusCircle, 
+  History,
+  Clock
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -33,9 +36,16 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
+import { Badge } from '@/components/ui/badge'; 
 
 interface SelectionItem {
   id: string;
@@ -48,6 +58,7 @@ interface SelectionItem {
   areaName?: string;
   catalogName?: string;
   catalogType?: string; 
+  version?: number; // ✅ Version is crucial here
   
   // Measurement fields
   unit?: string;
@@ -68,6 +79,7 @@ interface Selection {
     inquiry_number: string;
   };
   status: string;
+  version: number; 
   selection_date: string;
   delivery_date: string | null;
   notes: string | null;
@@ -91,27 +103,26 @@ const Selections: React.FC = () => {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedSelection, setSelectedSelection] = useState<Selection | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  
+  // New Version Mode Flag
+  const [isNewVersionMode, setIsNewVersionMode] = useState(false);
+
   const [editForm, setEditForm] = useState({
     status: '',
     delivery_date: '',
     notes: '',
   });
 
-  // Product selection for editing items
+  // Product selection states
   const [companies, setCompanies] = useState<any[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
-  
-  // Catalog State
   const [catalogs, setCatalogs] = useState<any[]>([]);
   const [selectedCatalogId, setSelectedCatalogId] = useState('');
   const [selectedCatalogType, setSelectedCatalogType] = useState<string>(''); 
-
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
   
-  // Logic to swap product for existing row
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
-
   const [currentItem, setCurrentItem] = useState({ 
     productId: '', 
     quantity: 1, 
@@ -140,14 +151,11 @@ const Selections: React.FC = () => {
     }
   }, [selectedCompanyId, companies]);
 
-  // Handle Catalog Selection -> Detect Type
+  // Handle Catalog Selection
   useEffect(() => {
     if (selectedCatalogId) {
-      // Find catalog object to get type
       const catalog = catalogs.find(c => c.id === selectedCatalogId);
-      if (catalog) {
-        setSelectedCatalogType(catalog.type || 'Generic');
-      }
+      if (catalog) setSelectedCatalogType(catalog.type || 'Generic');
 
       api.get(`/catalogs/${selectedCatalogId}/products`).then(({ data }) => {
         setProducts(data);
@@ -171,21 +179,16 @@ const Selections: React.FC = () => {
     setLoading(true);
     try {
         const { data: allSelections } = await api.get('/selections');
-
         let filtered = allSelections;
         if (statusFilter && statusFilter !== 'all') {
             filtered = filtered.filter((s: any) => s.status === statusFilter);
         }
-        
         setTotalCount(filtered.length);
-
         const from = (currentPage - 1) * ITEMS_PER_PAGE;
         const to = from + ITEMS_PER_PAGE;
         const paginatedData = filtered.slice(from, to);
-
         setSelections(paginatedData);
     } catch (error) {
-        console.error('Error:', error);
         toast({ title: 'Error', description: 'Failed to load selections', variant: 'destructive' });
     } finally {
         setLoading(false);
@@ -194,54 +197,62 @@ const Selections: React.FC = () => {
 
   const handleEditOpen = (selection: Selection) => {
     setSelectedSelection(selection);
+    setIsNewVersionMode(false); 
     setEditForm({
       status: selection.status,
       delivery_date: selection.delivery_date ? new Date(selection.delivery_date).toISOString().split('T')[0] : '',
       notes: selection.notes || '',
     });
-    
-    // Correctly map items so they show up in the table
-    setEditedItems(selection.items.map(item => {
-      const details = item.details || {};
-      
-      return {
-        id: item.id, 
-        productId: item.productId,
-        name: item.productName || 'Custom Item',
-        quantity: item.quantity,
-        price: item.price,
-        total: item.total,
-        
-        areaName: details.areaName || item.areaName || '', 
-        catalogName: details.catalogName || item.catalogName || '',
-        catalogType: details.catalogType || item.catalogType || '',
-        companyId: details.companyId || '',
-        
-        // Pass through measurement data
-        unit: item.unit,
-        width: item.width,
-        height: item.height,
-        type: item.type,
-        motorizationMode: item.motorizationMode,
-        opsType: item.opsType,
-        pelmet: item.pelmet,
-        openingType: item.openingType,
-        attributes: details
-      };
-    }));
-    
+    mapItemsToTable(selection.items);
     setEditingItemIndex(null);
     setIsEditOpen(true);
   };
+
+  const handleNewVersionOpen = (selection: Selection) => {
+    setSelectedSelection(selection);
+    setIsNewVersionMode(true); 
+    setEditForm({
+      status: selection.status,
+      delivery_date: selection.delivery_date ? new Date(selection.delivery_date).toISOString().split('T')[0] : '',
+      notes: selection.notes || '',
+    });
+    setEditedItems([]); // Start empty for new version
+    setEditingItemIndex(null);
+    setIsEditOpen(true);
+  };
+
+  const mapItemsToTable = (items: SelectionItem[]) => {
+    setEditedItems(items.map(item => {
+        const details = item.details || {};
+        return {
+          id: item.id, 
+          productId: item.productId,
+          name: item.productName || 'Custom Item',
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total,
+          areaName: details.areaName || item.areaName || '', 
+          catalogName: details.catalogName || item.catalogName || '',
+          catalogType: details.catalogType || item.catalogType || '',
+          companyId: details.companyId || '',
+          unit: item.unit,
+          width: item.width,
+          height: item.height,
+          type: item.type,
+          motorizationMode: item.motorizationMode,
+          opsType: item.opsType,
+          pelmet: item.pelmet,
+          openingType: item.openingType,
+          attributes: details
+        };
+      }));
+  }
 
   const handleProductSelect = (prodId: string) => {
     const prod = products.find(p => p.id === prodId);
     if (prod) {
       setSelectedProduct(prod);
-      const priceValue = typeof prod.price === 'string' 
-        ? parseFloat(prod.price.replace(/,/g, '')) 
-        : prod.price;
-      
+      const priceValue = typeof prod.price === 'string' ? parseFloat(prod.price.replace(/,/g, '')) : prod.price;
       setCurrentItem(prev => ({ ...prev, productId: prod.id, price: priceValue }));
     }
   };
@@ -249,8 +260,6 @@ const Selections: React.FC = () => {
   const handleAddItemOrUpdate = () => {
     if (!selectedProduct) return;
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
-
-    // Prepare new data with Company/Type tracking
     const newItemData = {
         name: selectedProduct.name,
         catalogName: catalog?.name || '',
@@ -261,52 +270,40 @@ const Selections: React.FC = () => {
     };
 
     if (editingItemIndex !== null) {
-        // Update existing row
         const newItems = [...editedItems];
         const existingItem = newItems[editingItemIndex];
-
         newItems[editingItemIndex] = {
             ...existingItem,
             ...newItemData,
             productId: selectedProduct.id,
             total: existingItem.quantity * currentItem.price
         };
-
         setEditedItems(newItems);
         setEditingItemIndex(null);
-        toast({ title: 'Updated', description: 'Product updated for selected row' });
+        toast({ title: 'Updated', description: 'Product updated' });
     } else {
-        // Add new row
         if (!currentItem.areaName.trim()) {
             toast({ title: 'Error', description: 'Area Name is required', variant: 'destructive' });
             return;
         }
-
         setEditedItems([...editedItems, {
-            id: selectedProduct.id, // Temp ID
+            id: selectedProduct.id, 
             productId: selectedProduct.id,
             ...newItemData,
             quantity: currentItem.quantity,
             total: currentItem.quantity * currentItem.price,
             areaName: currentItem.areaName,
-            // Init default measurements
             unit: 'mm',
-            width: null,
-            height: null
+            width: null, height: null
         }]);
     }
-
-    // Reset Form
     setSelectedProduct(null);
     setCurrentItem({ productId: '', quantity: 1, price: 0, areaName: '' });
   };
 
   const handleEditRowProduct = (index: number) => {
       setEditingItemIndex(index);
-      toast({ 
-          title: 'Edit Mode', 
-          description: 'Select a Company > Collection > Product above to replace the product for this row.' 
-      });
+      toast({ title: 'Edit Mode', description: 'Select product above to replace.' });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -333,10 +330,9 @@ const Selections: React.FC = () => {
     e.preventDefault();
     if (!selectedSelection) return;
     if (editedItems.length === 0) {
-      toast({ title: 'Error', description: 'Selection must have at least one item', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Please add items', variant: 'destructive' });
       return;
     }
-    
     setFormLoading(true);
     try {
       const itemsToSave = editedItems.map(item => ({
@@ -344,41 +340,32 @@ const Selections: React.FC = () => {
         productName: item.name,
         quantity: item.quantity,
         price: item.price,
-        
-        // Pass measurements
         unit: item.unit,
-        width: item.width,
-        height: item.height,
-        type: item.type,
-        motorizationMode: item.motorizationMode,
-        opsType: item.opsType,
-        pelmet: item.pelmet,
-        openingType: item.openingType,
-
+        width: item.width, height: item.height,
+        type: item.type, motorizationMode: item.motorizationMode, opsType: item.opsType, pelmet: item.pelmet, openingType: item.openingType,
         areaName: item.areaName,
         catalogName: item.catalogName,
         catalogType: item.catalogType, 
-        
-        // CRITICAL: Save Type and Company to Details for Measurement Form
         details: {
             ...(item.attributes || {}),
             areaName: item.areaName,
             catalogName: item.catalogName,
-            catalogType: item.catalogType, // Save Type
-            companyId: item.companyId      // Save Company
+            catalogType: item.catalogType, 
+            companyId: item.companyId      
         }
       }));
 
       await api.put(`/selections/${selectedSelection.id}`, {
         ...editForm,
-        items: itemsToSave
+        items: itemsToSave,
+        createNewVersion: isNewVersionMode
       });
       
-      toast({ title: 'Success', description: 'Selection updated successfully' });
+      toast({ title: isNewVersionMode ? 'Version Created' : 'Updated', description: 'Success' });
       setIsEditOpen(false);
       fetchData();
     } catch (err: any) {
-      toast({ title: 'Error', description: err.response?.data?.error || 'Failed to update', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to update', variant: 'destructive' });
     } finally {
       setFormLoading(false);
     }
@@ -394,11 +381,11 @@ const Selections: React.FC = () => {
     setFormLoading(true);
     try {
       await api.delete(`/selections/${selectedSelection.id}`);
-      toast({ title: 'Deleted', description: 'Selection deleted successfully' });
+      toast({ title: 'Deleted', description: 'Selection deleted' });
       setIsDeleteOpen(false);
       fetchData();
     } catch (err: any) {
-      toast({ title: 'Error', description: 'Failed to delete selection', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to delete', variant: 'destructive' });
     } finally {
       setFormLoading(false);
     }
@@ -422,6 +409,17 @@ const Selections: React.FC = () => {
       cancelled: 'bg-red-500/10 text-red-600 border-red-500/20',
     };
     return styles[status] || 'bg-muted text-muted-foreground';
+  };
+
+  // Helper to group historical items
+  const getGroupedHistory = () => {
+    if (!selectedSelection || !selectedSelection.items) return {};
+    return selectedSelection.items.reduce((acc, item) => {
+      const ver = item.version || 1;
+      if (!acc[ver]) acc[ver] = [];
+      acc[ver].push(item);
+      return acc;
+    }, {} as Record<number, SelectionItem[]>);
   };
 
   const filteredSelections = selections.filter((selection) => {
@@ -478,7 +476,7 @@ const Selections: React.FC = () => {
                   <th className="table-header text-left px-6 py-4">Selection #</th>
                   <th className="table-header text-left px-6 py-4">Client</th>
                   <th className="table-header text-left px-6 py-4">Status</th>
-                  <th className="table-header text-left px-6 py-4">Items</th>
+                  <th className="table-header text-left px-6 py-4">Ver</th>
                   <th className="table-header text-left px-6 py-4">Date</th>
                   <th className="table-header text-left px-6 py-4">Actions</th>
                 </tr>
@@ -496,19 +494,16 @@ const Selections: React.FC = () => {
                         <p className="text-xs text-muted-foreground">{selection.inquiry?.inquiry_number}</p>
                       </td>
                       <td className="px-6 py-4"><span className={`badge-category border ${getStatusBadge(selection.status)}`}>{selection.status.replace('_', ' ')}</span></td>
-                      <td className="px-6 py-4"><span className="font-semibold text-primary">{selection.items?.length || 0}</span></td>
+                      <td className="px-6 py-4">
+                        <Badge variant="outline" className="flex w-fit items-center gap-1">
+                             <History className="h-3 w-3" /> v{selection.version || 1}
+                        </Badge>
+                      </td>
                       <td className="px-6 py-4 text-muted-foreground">{format(new Date(selection.selection_date), 'MMM d, yyyy')}</td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          
-                          {/* --- CALCULATE BUTTON (NEW) --- */}
                           <Link to={`/calculations/edit/${selection.id}`}>
-                             <Button 
-                               variant="ghost" 
-                               size="icon" 
-                               title="Calculate Requirements"
-                               className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
-                             >
+                             <Button variant="ghost" size="icon" title="Calculate Requirements" className="text-orange-600 hover:text-orange-700 hover:bg-orange-50">
                                <Calculator className="h-4 w-4" />
                              </Button>
                           </Link>
@@ -517,7 +512,18 @@ const Selections: React.FC = () => {
                             <Button variant="ghost" size="icon" title="View Details"><Eye className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
                           </Link>
                           
-                          <Button variant="ghost" size="icon" onClick={() => handleEditOpen(selection)} title="Edit Selection"><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleEditOpen(selection)} title="Edit Existing Items"><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
+
+                          <Button 
+                             variant="ghost" 
+                             size="icon" 
+                             onClick={() => handleNewVersionOpen(selection)} 
+                             title="Add New Version"
+                             className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                          >
+                            <PlusCircle className="h-4 w-4" />
+                          </Button>
+
                           <Button variant="ghost" size="icon" onClick={() => handleDeleteOpen(selection)} title="Delete Selection"><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
                         </div>
                       </td>
@@ -537,14 +543,87 @@ const Selections: React.FC = () => {
           )}
         </div>
 
-        {/* Edit Selection Modal */}
+        {/* Edit / New Version Modal */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Selection - {selectedSelection?.selection_number}</DialogTitle>
-              <DialogDescription>Update status, notes, or products.</DialogDescription>
+              <DialogTitle className="flex items-center gap-2">
+                 {isNewVersionMode ? (
+                    <>
+                      <PlusCircle className="h-5 w-5 text-blue-600" />
+                      <span>Create New Version (v{(selectedSelection?.version || 1) + 1})</span>
+                    </>
+                 ) : (
+                    <>
+                      <Pencil className="h-5 w-5" />
+                      <span>Edit Selection - {selectedSelection?.selection_number}</span>
+                    </>
+                 )}
+              </DialogTitle>
+              <DialogDescription>
+                  {isNewVersionMode 
+                    ? "Adding new items below will create a new version. Old items are preserved."
+                    : "Update status, notes, or modify existing items in the current version."}
+              </DialogDescription>
             </DialogHeader>
+            
             <form onSubmit={handleUpdate} className="space-y-6">
+              
+              {/* ✅ SHOW HISTORY ONLY IN NEW VERSION MODE */}
+              {isNewVersionMode && selectedSelection && (
+                <div className="bg-slate-50 border rounded-lg p-4 mb-6">
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                    <Clock className="h-4 w-4" /> Previous Version History
+                  </h3>
+                  <Accordion type="single" collapsible className="w-full">
+                    {Object.entries(getGroupedHistory()).map(([version, items]) => (
+                      <AccordionItem key={version} value={`v-${version}`}>
+                        <AccordionTrigger className="text-sm font-medium hover:no-underline">
+                          <div className="flex items-center justify-between w-full pr-4">
+                             <span>Version {version} ({items.length} items)</span>
+                             <span className="text-xs text-muted-foreground font-normal">
+                               Total: ₹{items.reduce((s, i) => s + i.total, 0).toLocaleString()}
+                             </span>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="border rounded-md overflow-hidden bg-white">
+                            <table className="w-full text-xs">
+                              <thead className="bg-slate-100">
+                                <tr>
+                                  <th className="py-2 px-3 text-left">Area</th>
+                                  <th className="py-2 px-3 text-left">Product</th>
+                                  <th className="py-2 px-3 text-center">Qty</th>
+                                  <th className="py-2 px-3 text-right">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {items.map((item, idx) => (
+                                  <tr key={idx} className="border-b last:border-0">
+                                    <td className="py-2 px-3 text-slate-600">{item.details?.areaName}</td>
+                                    <td className="py-2 px-3 font-medium">{item.productName}</td>
+                                    <td className="py-2 px-3 text-center">{item.quantity}</td>
+                                    <td className="py-2 px-3 text-right">₹{item.total}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
+                </div>
+              )}
+
+              {/* Banner for New Version Mode */}
+              {isNewVersionMode && (
+                  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-md text-sm flex items-center gap-2">
+                      <History className="h-4 w-4" />
+                      Current Version: <strong>{selectedSelection?.version}</strong>. You are creating <strong>Version {(selectedSelection?.version || 1) + 1}</strong>.
+                  </div>
+              )}
+
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Status</Label>
@@ -583,7 +662,6 @@ const Selections: React.FC = () => {
                 
                 <div className="bg-muted/30 p-4 rounded-lg space-y-4">
                   <div className="grid grid-cols-3 gap-4">
-                    
                     {/* COMPANY SELECTION */}
                     <div className="space-y-2">
                       <Label>Company</Label>
@@ -592,7 +670,6 @@ const Selections: React.FC = () => {
                         <SelectContent>{companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
-
                     {/* CATALOG SELECTION */}
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -614,7 +691,6 @@ const Selections: React.FC = () => {
                         </SelectContent>
                       </Select>
                     </div>
-
                     {/* PRODUCT SELECTION */}
                     <div className="space-y-2">
                       <Label>Product</Label>
@@ -634,38 +710,34 @@ const Selections: React.FC = () => {
                           <p className="font-medium text-sm text-primary mb-1">{selectedProduct.name}</p>
                           <p className="text-xs text-muted-foreground">Base Price: ₹{selectedProduct.price}</p>
                         </div>
-                        
                         <div className="flex gap-4 items-end">
                             {editingItemIndex === null && (
                                 <div className="space-y-1 flex-1">
-    <Label className="text-xs">Area Name *</Label>
-    <Input 
-      list="selection-area-options"
-      placeholder="e.g. Master Bedroom" 
-      value={currentItem.areaName} 
-      onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
-      className="h-9" 
-    />
-    <datalist id="selection-area-options">
-       {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
-          <option key={area} value={area} />
-       ))}
-    </datalist>
-</div>
+                                  <Label className="text-xs">Area Name *</Label>
+                                  <Input 
+                                    list="selection-area-options"
+                                    placeholder="e.g. Master Bedroom" 
+                                    value={currentItem.areaName} 
+                                    onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
+                                    className="h-9" 
+                                  />
+                                  <datalist id="selection-area-options">
+                                     {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
+                                        <option key={area} value={area} />
+                                     ))}
+                                  </datalist>
+                                </div>
                             )}
-                            
                             <div className="space-y-1 w-28">
                                 <Label className="text-xs">Price</Label>
                                 <Input type="number" value={currentItem.price} onChange={(e) => setCurrentItem({...currentItem, price: parseFloat(e.target.value)})} className="h-9" />
                             </div>
-                            
                             {editingItemIndex === null && (
                                 <div className="space-y-1 w-20">
                                     <Label className="text-xs">Qty</Label>
                                     <Input type="number" value={currentItem.quantity} onChange={(e) => setCurrentItem({...currentItem, quantity: parseFloat(e.target.value)})} className="h-9" />
                                 </div>
                             )}
-
                             <div className="flex gap-2">
                                 <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
                                     {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
@@ -680,8 +752,7 @@ const Selections: React.FC = () => {
                                             setSelectedCatalogId('');
                                         }} 
                                         size="sm" 
-                                        variant="outline" 
-                                        className="h-9"
+                                        variant="outline" className="h-9"
                                     >
                                         Cancel Edit
                                     </Button>
@@ -696,9 +767,15 @@ const Selections: React.FC = () => {
 
               {/* Items List */}
               <div className="border-t pt-4">
-                <h3 className="font-semibold mb-4">Selection Items ({editedItems.length})</h3>
+                <h3 className="font-semibold mb-4">
+                    {isNewVersionMode ? "New Items to Add" : "Selection Items"} ({editedItems.length})
+                </h3>
                 {editedItems.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">No items in selection</p>
+                  <div className="text-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
+                     <p className="text-sm text-muted-foreground">
+                        {isNewVersionMode ? "No new items added yet." : "No items in selection."}
+                     </p>
+                  </div>
                 ) : (
                   <div className="border rounded-lg overflow-hidden">
                     <table className="w-full text-sm">
@@ -718,21 +795,16 @@ const Selections: React.FC = () => {
                           <tr key={idx} className={editingItemIndex === idx ? 'bg-blue-50' : ''}>
                             <td className="py-2 px-3">
                               <Input 
-  list={`edit-area-${idx}`} // Unique ID per row
-  value={item.areaName || ''}
-  onChange={(e) => {
-    const newItems = [...editedItems];
-    newItems[idx].areaName = e.target.value;
-    setEditedItems(newItems);
-  }}
-  className="h-8 w-full text-xs font-medium"
-  placeholder="Area"
-/>
-<datalist id={`edit-area-${idx}`}>
-    {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room"].map(area => (
-      <option key={area} value={area} />
-    ))}
-</datalist>
+                                list={`edit-area-${idx}`}
+                                value={item.areaName || ''}
+                                onChange={(e) => {
+                                  const newItems = [...editedItems];
+                                  newItems[idx].areaName = e.target.value;
+                                  setEditedItems(newItems);
+                                }}
+                                className="h-8 w-full text-xs font-medium"
+                                placeholder="Area"
+                              />
                             </td>
                             <td className="py-2 px-3 text-xs">
                                 <div className="flex flex-col gap-1">
@@ -751,9 +823,7 @@ const Selections: React.FC = () => {
                                     </span>
                                     <Button
                                         type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6 text-blue-600 hover:text-blue-800"
+                                        variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800"
                                         title="Change Product"
                                         onClick={() => handleEditRowProduct(idx)}
                                     >
@@ -802,7 +872,9 @@ const Selections: React.FC = () => {
 
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
-                <Button type="submit" variant="accent" disabled={formLoading}>{formLoading ? 'Saving...' : 'Save Changes'}</Button>
+                <Button type="submit" variant="accent" disabled={formLoading}>
+                    {formLoading ? 'Saving...' : (isNewVersionMode ? 'Save New Version' : 'Save Changes')}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>

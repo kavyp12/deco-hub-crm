@@ -11,7 +11,8 @@ import {
   Calculator,
   ShieldAlert,
   Briefcase, // <--- Added Icon for Architects
-  Kanban
+  Kanban,
+  Clock
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
@@ -27,6 +28,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { name: 'Attendance', href: '/attendance', icon: Clock }, // <--- ADD ATTENDANCE HERE
     { name: 'Pipeline', href: '/pipeline', icon: Kanban }, // <--- ADD THIS (Import Kanban from lucide-react)
     { name: 'Inquiries', href: '/inquiries', icon: FileText },
     { name: 'Selections', href: '/selections', icon: ShoppingCart },

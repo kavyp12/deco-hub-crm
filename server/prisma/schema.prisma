@@ -48,10 +48,12 @@ model User {
   selections_created Selection[] @relation("SelectionCreatedBy")
   quotations_created Quotation[]
   
+  catalogMovements   CatalogMovement[]
   // === ADD THIS NEW LINE ===
   comments_made      InquiryComment[] 
 
   quotation_comments QuotationComment[]
+  attendance         Attendance[]
 }
 
 model Inquiry {
@@ -92,9 +94,30 @@ model Inquiry {
   comments    InquiryComment[]
   checklists  InquiryChecklist[]
   labels      InquiryLabel[]
+  catalogMovements CatalogMovement[]
 }
 
-
+model Attendance {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  
+  date        DateTime  @default(now()) // Used to filter "today's" record
+  
+  checkIn     DateTime  @default(now())
+  checkOut    DateTime?
+  
+  // Daily Report Data
+  reportTasks    String? @db.Text
+  reportWip      String? @db.Text
+  reportIssues   String? @db.Text
+  reportPending  String? @db.Text
+  
+  status      String    @default("ACTIVE") // ACTIVE, COMPLETED, INCOMPLETE
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
 // ==========================================
 // PIPELINE / KANBAN MODELS (NEW)
 // ==========================================
@@ -160,6 +183,7 @@ model Architect {
   updated_at          DateTime  @updatedAt
 
   inquiries           Inquiry[]
+  catalogMovements    CatalogMovement[]
 }
 
 
@@ -283,7 +307,9 @@ model Selection {
   selection_number String  @unique
   inquiryId        String
   inquiry          Inquiry @relation(fields: [inquiryId], references: [id])
-
+  
+  version          Int     @default(1)
+  
   status         SelectionStatus @default(pending)
   selection_date DateTime        @default(now())
   delivery_date  DateTime?
@@ -315,6 +341,9 @@ model SelectionItem {
 
   orderIndex Int @default(0)
 
+ 
+  version     Int       @default(1)
+  
   productId String?
   product   Product? @relation(fields: [productId], references: [id])
 
@@ -375,6 +404,7 @@ model Catalog {
   companyId String
   company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   products  Product[]
+  copies    CatalogCopy[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -396,6 +426,51 @@ model Product {
 }
 
 
+// [APPEND TO schema.prisma]
+
+// ==========================================
+// CATALOGUE TRACKING SYSTEM
+// ==========================================
+
+model CatalogCopy {
+  id          String   @id @default(uuid())
+  catalogId   String
+  catalog     Catalog  @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  
+  copyNumber  String   // e.g., "001", "002"
+  status      String   @default("AVAILABLE") // "AVAILABLE", "ISSUED"
+  
+  createdAt   DateTime @default(now())
+  
+  movements   CatalogMovement[]
+}
+
+model CatalogMovement {
+  id              String       @id @default(uuid())
+  
+  copyId          String
+  copy            CatalogCopy  @relation(fields: [copyId], references: [id], onDelete: Cascade)
+  
+  // Issue Details
+  inquiryId       String?      // The Project
+  inquiry         Inquiry?     @relation(fields: [inquiryId], references: [id])
+  
+  architectId     String?
+  architect       Architect?   @relation(fields: [architectId], references: [id])
+  
+  issuedByUserId  String
+  issuedByUser    User         @relation(fields: [issuedByUserId], references: [id])
+  
+  clientName      String
+  areaName        String?
+  remarks         String?
+  
+  // Dates
+  issueDate       DateTime     @default(now())
+  returnDate      DateTime?    // Null means currently out
+  
+  status          String       @default("ISSUED") // "ISSUED", "RETURNED"
+}
 
 
 // ==========================================

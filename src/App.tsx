@@ -45,6 +45,8 @@ import GpwCalculation from "./pages/Caculation/GpwCalculation";
 import Architecture from "./pages/Architects/Architects";
 
 import Pipeline from "./pages/piplines/Pipeline";
+
+import Attendance from "./pages/Attendance/Attendance";
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -224,7 +226,16 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-
+             
+             {/* Attendance */}
+             <Route
+               path="/attendance"
+               element={
+                 <ProtectedRoute>
+                   <Attendance />
+                 </ProtectedRoute>
+               }
+             /> 
             {/* Catalogs */}
             <Route
               path="/catalogs"

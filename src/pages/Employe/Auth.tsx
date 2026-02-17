@@ -95,7 +95,7 @@ const Auth: React.FC = () => {
       <div className="flex w-full lg:w-1/2 items-center justify-center p-4 md:p-8 bg-background">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
-            {/* Mobile Logo (only visible when left brand section is hidden) */}
+          {/* Mobile Logo (only visible when left brand section is hidden) */}
             <div className="lg:hidden flex justify-center mb-6">
                <img src="/sulit-logo-dark.svg" alt="Logo" className="h-12 w-auto" />
             </div>

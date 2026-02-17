@@ -68,35 +68,23 @@ const calculateRow = (item: any) => {
   };
 };
 
-
-// ==========================================
-// GET LOGS ROUTE (SUPER ADMIN ONLY)
-// ==========================================
-app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body;
+const logActivity = async (userId: string, action: string, entity: string, entityId: string | null, details: any) => {
   try {
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      res.status(400).json({ error: 'User not found' });
-      return;
-    }
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      res.status(400).json({ error: 'Invalid password' });
-      return;
-    }
-    
-    // --- LOGGING ADDED ---
-    await logActivity(user.id, 'LOGIN', 'AUTH', user.id, `User ${user.name} logged in`);
-    // ---------------------
+    const detailsString = typeof details === 'object' ? JSON.stringify(details) : String(details);
 
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-    const { password: _, ...userInfo } = user;
-    res.json({ token, user: userInfo });
-  } catch (error) {
-    res.status(500).json({ error: 'Login failed' });
+    await prisma.activityLog.create({
+      data: {
+        userId: userId,
+        action: action.toUpperCase(),
+        entity: entity.toUpperCase(),
+        entityId: entityId ? String(entityId) : null,
+        details: detailsString
+      }
+    });
+  } catch (err) {
+    console.error("LOGGING ERROR:", err);
   }
-});
+};
 
 
 app.post('/api/companies', authenticateToken, async (req: any, res) => {
@@ -126,23 +114,7 @@ app.post('/api/companies', authenticateToken, async (req: any, res) => {
 // ==========================================
 // LOGGING HELPER FUNCTION
 // ==========================================
-const logActivity = async (userId: string, action: string, entity: string, entityId: string | null, details: any) => {
-  try {
-    const detailsString = typeof details === 'object' ? JSON.stringify(details) : String(details);
 
-    await prisma.activityLog.create({
-      data: {
-        userId: userId,
-        action: action.toUpperCase(),
-        entity: entity.toUpperCase(),
-        entityId: entityId ? String(entityId) : null,
-        details: detailsString
-      }
-    });
-  } catch (err) {
-    console.error("LOGGING ERROR:", err);
-  }
-};
 
 // GET LOGS (Missing Route)
 app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
@@ -244,21 +216,32 @@ app.get('/api/logs/export', authenticateToken, async (req: any, res: Response): 
 
 app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
+  console.log('🔵 Login attempt:', { email }); // Add logging
+  
   try {
     const user = await prisma.user.findUnique({ where: { email } });
+    console.log('🔵 User found:', !!user); // Add logging
+    
     if (!user) {
       res.status(400).json({ error: 'User not found' });
       return;
     }
+    
     const validPassword = await bcrypt.compare(password, user.password);
+    console.log('🔵 Password valid:', validPassword); // Add logging
+    
     if (!validPassword) {
       res.status(400).json({ error: 'Invalid password' });
       return;
     }
+    
     const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
     const { password: _, ...userInfo } = user;
+    
+    console.log('✅ Login successful'); // Add logging
     res.json({ token, user: userInfo });
   } catch (error) {
+    console.error('❌ Login error:', error); // Add logging
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -607,7 +590,289 @@ app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'adm
     res.status(500).json({ error: 'Failed to update product' });
   }
 });
+// [IN server/index.ts]
 
+// ==========================================
+// ATTENDANCE & REPORTING ROUTES
+// ==========================================
+
+// 1. GET MY ATTENDANCE (For Everyone: Returns own history + today's status)
+app.get('/api/attendance/me', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get today's record (for the Timer/Toggle)
+    const todayRecord = await prisma.attendance.findFirst({
+      where: {
+        userId: req.user.id,
+        date: { gte: today }
+      }
+    });
+
+    // Get recent history (for the Employee to see their own past reports)
+    const history = await prisma.attendance.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 30 // Last 30 days
+    });
+
+    res.json({ today: todayRecord, history });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch attendance' });
+  }
+});
+
+// 2. GET ALL ATTENDANCE (Super Admin Only: Returns everyone's history)
+app.get('/api/attendance/all', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+  try {
+    const allRecords = await prisma.attendance.findMany({
+      include: {
+        // Include User details so Admin knows who submitted the report
+        user: { select: { id: true, name: true, role: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100 // Fetch last 100 records (pagination can be added later)
+    });
+    res.json(allRecords);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch team attendance' });
+  }
+});
+
+// 3. CHECK IN
+app.post('/api/attendance/check-in', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existing = await prisma.attendance.findFirst({
+      where: { userId: req.user.id, date: { gte: today } }
+    });
+
+    if (existing) {
+       return res.status(400).json({ error: 'Already checked in for today' });
+    }
+
+    const newRecord = await prisma.attendance.create({
+      data: {
+        userId: req.user.id,
+        checkIn: new Date(),
+        status: 'ACTIVE'
+      }
+    });
+
+    // Log for Admin Audit
+    await logActivity(req.user.id, 'CREATE', 'ATTENDANCE', newRecord.id, 'Checked In');
+    
+    res.json(newRecord);
+  } catch (error) {
+    res.status(500).json({ error: 'Check-in failed' });
+  }
+});
+
+// 4. CHECK OUT (With Report)
+app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Response) => {
+  const { tasks, wip, issues, pending } = req.body;
+
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const record = await prisma.attendance.findFirst({
+      where: { userId: req.user.id, date: { gte: today }, status: 'ACTIVE' }
+    });
+
+    if (!record) {
+      return res.status(404).json({ error: 'No active session found.' });
+    }
+
+    const updated = await prisma.attendance.update({
+      where: { id: record.id },
+      data: {
+        checkOut: new Date(),
+        status: 'COMPLETED',
+        reportTasks: tasks,
+        reportWip: wip,
+        reportIssues: issues,
+        reportPending: pending
+      }
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'ATTENDANCE', record.id, 'Checked Out with Report');
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Check-out failed' });
+  }
+});
+
+
+// ==========================================
+// CATALOGUE TRACKING ROUTES (FINAL)
+// ==========================================
+
+// 1. GET TRACKING HISTORY (Includes Return Date/Time)
+app.get('/api/catalogs/tracking', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const movements = await prisma.catalogMovement.findMany({
+      include: {
+        copy: { 
+          include: { 
+            catalog: { include: { company: true } } 
+          } 
+        },
+        inquiry: { select: { inquiry_number: true, client_name: true } },
+        architect: { select: { name: true } },
+        issuedByUser: { select: { name: true } } // <--- Handover Person
+      },
+      orderBy: { issueDate: 'desc' }
+    });
+    res.json(movements);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch tracking data' });
+  }
+});
+
+// 2. GET COPIES
+app.get('/api/catalogs/copies', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const copies = await prisma.catalogCopy.findMany({
+      include: {
+        catalog: { include: { company: true } },
+        movements: {
+          where: { status: 'ISSUED' },
+          take: 1, 
+          include: {
+            inquiry: true,
+            issuedByUser: { select: { name: true } }
+          }
+        }
+      },
+      orderBy: { copyNumber: 'asc' }
+    });
+    res.json(copies);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch copies' });
+  }
+});
+
+// 3. CREATE COPIES (Batch Generate)
+app.post('/api/catalogs/:id/copies', authenticateToken, async (req: any, res: Response) => {
+  const { id } = req.params;
+  const { quantity } = req.body; 
+
+  try {
+    const lastCopy = await prisma.catalogCopy.findFirst({
+      where: { catalogId: id },
+      orderBy: { copyNumber: 'desc' }
+    });
+
+    let startNum = lastCopy ? parseInt(lastCopy.copyNumber) : 0;
+    const newCopiesData = [];
+
+    for (let i = 1; i <= quantity; i++) {
+      const numStr = (startNum + i).toString().padStart(3, '0');
+      newCopiesData.push({
+        catalogId: id,
+        copyNumber: numStr,
+        status: 'AVAILABLE'
+      });
+    }
+
+    await prisma.catalogCopy.createMany({ data: newCopiesData });
+    
+    await logActivity(req.user.id, 'CREATE', 'CATALOG_COPY', id, `Added ${quantity} copies`);
+    res.json({ message: 'Copies added successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create copies' });
+  }
+});
+
+// 4. ISSUE CATALOGUE (With Admin Override & Manual Date)
+app.post('/api/catalogs/issue', authenticateToken, async (req: any, res: Response) => {
+  const { 
+    copyId, inquiryId, architectId, clientName, remarks, 
+    issueDate,       // <--- Manual Date
+    issuedByUserId   // <--- Admin Override
+  } = req.body;
+
+  try {
+    // 1. Determine who is issuing (Admin can override, else it's the logged-in user)
+    let finalIssuerId = req.user.id;
+    if (req.user.role === 'super_admin' && issuedByUserId) {
+      finalIssuerId = issuedByUserId;
+    }
+
+    // 2. Determine Date (Manual or Now)
+    const finalIssueDate = issueDate ? new Date(issueDate) : new Date();
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Create Movement
+      const movement = await tx.catalogMovement.create({
+        data: {
+          copyId,
+          inquiryId: inquiryId || null,
+          architectId: architectId || null,
+          issuedByUserId: finalIssuerId,
+          clientName,
+          remarks,
+          status: 'ISSUED',
+          issueDate: finalIssueDate
+        }
+      });
+
+      // Update Copy Status
+      await tx.catalogCopy.update({
+        where: { id: copyId },
+        data: { status: 'ISSUED' }
+      });
+
+      return movement;
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'CATALOG_ISSUE', copyId, `Issued copy to ${clientName}`);
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to issue catalogue' });
+  }
+});
+
+// 5. RETURN CATALOGUE (With Manual Date)
+app.put('/api/catalogs/return/:movementId', authenticateToken, async (req: any, res: Response) => {
+  const { movementId } = req.params;
+  const { returnDate } = req.body; // <--- Manual Date
+
+  try {
+    const movement = await prisma.catalogMovement.findUnique({ where: { id: movementId } });
+    if (!movement) return res.status(404).json({ error: 'Movement not found' });
+
+    // Determine Date (Manual or Now)
+    const finalReturnDate = returnDate ? new Date(returnDate) : new Date();
+
+    await prisma.$transaction(async (tx) => {
+      // Close Movement
+      await tx.catalogMovement.update({
+        where: { id: movementId },
+        data: {
+          returnDate: finalReturnDate,
+          status: 'RETURNED'
+        }
+      });
+
+      // Free up Copy
+      await tx.catalogCopy.update({
+        where: { id: movement.copyId },
+        data: { status: 'AVAILABLE' }
+      });
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'CATALOG_RETURN', movement.copyId, `Returned catalogue`);
+    res.json({ message: 'Returned successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to return catalogue' });
+  }
+});
 // ==========================================
 // 4. INQUIRY ROUTES
 // ==========================================
@@ -903,23 +1168,19 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
 
 app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { status, delivery_date, notes, items } = req.body;
+  // ✅ Extract the createNewVersion flag from the request body
+  const { status, delivery_date, notes, items, createNewVersion } = req.body;
   
   try {
-    console.log('🔥 Received Update Request:', { 
-      selectionId: id, 
-      itemsCount: items?.length 
-    });
+    console.log(`🔥 Update Request for Selection ${id} | New Version Mode: ${!!createNewVersion}`);
 
     // ==================================================================
-    // 🛡️ STEP 0: VALIDATE PRODUCT IDs (CRITICAL FIX)
-    // We check which IDs actually exist in the Product table.
-    // Any ID sent by frontend that isn't in this list will be set to NULL.
+    // 🛡️ STEP 0: VALIDATE PRODUCT IDs
+    // Check which IDs sent from frontend actually exist in the Product table.
     // ==================================================================
     let validProductIds = new Set<string>();
 
     if (items && Array.isArray(items)) {
-      // 1. Extract all potential UUIDs from the request
       const potentialIds = items
         .map((i: any) => i.productId)
         .filter((pid: any) => 
@@ -930,54 +1191,66 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
         );
 
       if (potentialIds.length > 0) {
-        // 2. Query DB to see which ones are real Products
         const foundProducts = await prisma.product.findMany({
           where: { id: { in: potentialIds } },
           select: { id: true }
         });
-        
-        // 3. Create a Set for fast lookup
         foundProducts.forEach(p => validProductIds.add(p.id));
       }
     }
+
     // ==================================================================
-    
-    // STEP 1: Fetch existing items to preserve calculation types if needed
-    const existingSelection = await prisma.selection.findUnique({
+    // STEP 1: FETCH CURRENT SELECTION DATA
+    // ==================================================================
+    const currentSelection = await prisma.selection.findUnique({
       where: { id },
       include: { items: true }
     });
 
-    const calcTypeMap = new Map<string, string>();
-    if (existingSelection) {
-      existingSelection.items.forEach(item => {
-        const productKey = item.productId || 'manual';
-        const areaKey = item.details && typeof item.details === 'object' && 'areaName' in item.details 
-          ? String(item.details.areaName) 
-          : '';
-        const key = `${productKey}:${areaKey}`;
-        calcTypeMap.set(key, item.calculationType);
+    if (!currentSelection) {
+      return res.status(404).json({ error: "Selection not found" });
+    }
+
+    // Default to current version if field is null
+    const currentVersion = currentSelection.version || 1;
+    let versionToSave = currentVersion;
+
+    // ==================================================================
+    // STEP 2: DETERMINE VERSION LOGIC
+    // ==================================================================
+    if (createNewVersion) {
+      // ✅ CASE A: NEW VERSION (Add More)
+      // Increment version number
+      versionToSave = currentVersion + 1;
+      
+      // We do NOT delete existing items. We strictly APPEND the new items to history.
+      console.log(`✨ Creating New Version: v${versionToSave}`);
+    } else {
+      // ✅ CASE B: STANDARD EDIT
+      // We wipe items ONLY for the current active version to replace them.
+      // Older versions (history) remain untouched.
+      console.log(`✏️ Editing Current Version: v${versionToSave}`);
+      
+      await prisma.selectionItem.deleteMany({
+        where: { 
+          selectionId: id,
+          version: versionToSave 
+        }
       });
     }
 
-    // STEP 2: Delete ALL existing items
-    await prisma.selectionItem.deleteMany({
-      where: { selectionId: id }
-    });
-
-    // STEP 3: Recreate items with VALIDATED productId
-    if (items && Array.isArray(items)) {
+    // ==================================================================
+    // STEP 3: PREPARE ITEMS FOR SAVING
+    // ==================================================================
+    if (items && Array.isArray(items) && items.length > 0) {
       const itemsToCreate = items.map((item: any, index: number) => {
         
-        // Logic to restore calculation type
+        // Logic to preserve or default calculation type
         const rawProductId = (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : 'manual';
         const areaKey = item.details?.areaName || item.areaName || '';
-        const matchKey = `${rawProductId}:${areaKey}`;
-        const calculationType = item.calculationType || calcTypeMap.get(matchKey) || 'Local';
+        const calculationType = item.calculationType || 'Local';
         
-        const finalOrderIndex = item.orderIndex !== undefined ? item.orderIndex : index;
-
-        // 🔥 FINAL CHECK: Only use productId if it was found in the DB in Step 0
+        // Determine correct product ID (DB safe)
         const dbSafeProductId = (item.productId && validProductIds.has(item.productId)) 
           ? item.productId 
           : null;
@@ -985,10 +1258,11 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
         return {
           selectionId: id,
           
-          // ✅ SAFE: Only real Product IDs get passed. Everything else becomes null.
+          // ✅ Save with the calculated version
+          version: versionToSave, 
+
           productId: dbSafeProductId,
-            
-          productName: item.productName || 'Custom Item',
+          productName: item.productName || item.name || 'Custom Item',
           quantity: parseFloat(String(item.quantity)) || 1,
           price: parseFloat(String(item.price)) || 0,
           total: (parseFloat(String(item.quantity)) || 1) * (parseFloat(String(item.price)) || 0),
@@ -1004,44 +1278,60 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
           pelmet: item.pelmet ? parseFloat(String(item.pelmet)) : null,
           openingType: item.openingType || null,
           
-          orderIndex: finalOrderIndex,
+          orderIndex: item.orderIndex !== undefined ? item.orderIndex : index,
           
           details: {
             areaName: item.details?.areaName || item.areaName || 'Unknown Area',
             catalogName: item.details?.catalogName || item.catalogName || '',
             catalogType: item.details?.catalogType || item.catalogType || '',
-            companyId: item.details?.companyId || item.companyId || '', // Persist Company ID
+            companyId: item.details?.companyId || item.companyId || '', 
             ...(item.details || {})
           }
         };
       });
       
+      // Bulk insert the new items
       await prisma.selectionItem.createMany({
         data: itemsToCreate
       });
     }
 
-    // STEP 4: Update selection metadata
+    // ==================================================================
+    // STEP 4: UPDATE SELECTION METADATA
+    // ==================================================================
     await prisma.selection.update({
       where: { id },
       data: {
-        status: status || 'pending',
-        delivery_date: delivery_date ? new Date(delivery_date) : null,
-        notes: notes || null
+        status: status || currentSelection.status,
+        delivery_date: delivery_date ? new Date(delivery_date) : currentSelection.delivery_date,
+        notes: notes || currentSelection.notes,
+        version: versionToSave // Update the pointer to the latest version
       }
     });
 
-    // STEP 5: Return updated selection
+    // ==================================================================
+    // STEP 5: RETURN UPDATED DATA
+    // ==================================================================
     const updated = await prisma.selection.findUnique({
       where: { id },
       include: { 
+        // Order by Version then Index so they appear in correct history order
         items: {
-          orderBy: { orderIndex: 'asc' } 
+          orderBy: [
+             { version: 'asc' },
+             { orderIndex: 'asc' }
+          ] 
         }, 
         inquiry: true 
       }
     });
-    await logActivity(req.user.id, 'UPDATE', 'SELECTION', id, `Updated Selection Items and Status`);
+
+    // Log for Admin
+    const actionText = createNewVersion 
+        ? `Added items to create Version ${versionToSave}` 
+        : `Updated existing Version ${versionToSave}`;
+        
+    await logActivity(req.user.id, 'UPDATE', 'SELECTION', id, actionText);
 
     res.json(updated);
     
