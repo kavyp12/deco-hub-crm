@@ -590,31 +590,24 @@ app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'adm
     res.status(500).json({ error: 'Failed to update product' });
   }
 });
-// [IN server/index.ts]
-
 // ==========================================
 // ATTENDANCE & REPORTING ROUTES
 // ==========================================
 
-// 1. GET MY ATTENDANCE (For Everyone: Returns own history + today's status)
+// 1. GET MY ATTENDANCE (Dashboard & Timer State)
 app.get('/api/attendance/me', authenticateToken, async (req: any, res: Response) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Get today's record (for the Timer/Toggle)
     const todayRecord = await prisma.attendance.findFirst({
-      where: {
-        userId: req.user.id,
-        date: { gte: today }
-      }
+      where: { userId: req.user.id, date: { gte: today } }
     });
 
-    // Get recent history (for the Employee to see their own past reports)
     const history = await prisma.attendance.findMany({
       where: { userId: req.user.id },
       orderBy: { createdAt: 'desc' },
-      take: 30 // Last 30 days
+      take: 30
     });
 
     res.json({ today: todayRecord, history });
@@ -623,25 +616,49 @@ app.get('/api/attendance/me', authenticateToken, async (req: any, res: Response)
   }
 });
 
-// 2. GET ALL ATTENDANCE (Super Admin Only: Returns everyone's history)
-app.get('/api/attendance/all', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+// GET TEAM ATTENDANCE (Admin Only)
+app.get('/api/attendance/team', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
   try {
-    const allRecords = await prisma.attendance.findMany({
+    const { date, status } = req.query;
+    let whereClause: any = {};
+
+    // 1. Filter by Date
+    if (date) {
+      const filterDate = new Date(date as string);
+      const startOfDay = new Date(filterDate.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(filterDate.setHours(23, 59, 59, 999));
+      
+      whereClause.date = {
+        gte: startOfDay,
+        lte: endOfDay
+      };
+    }
+
+    // 2. Filter by Status
+    if (status && status !== 'ALL') {
+      whereClause.status = status;
+    }
+
+    // 3. Fetch Team Data
+    const teamAttendance = await prisma.attendance.findMany({
+      where: whereClause,
       include: {
-        // Include User details so Admin knows who submitted the report
-        user: { select: { id: true, name: true, role: true } }
+        user: { select: { name: true, role: true } }
       },
-      orderBy: { createdAt: 'desc' },
-      take: 100 // Fetch last 100 records (pagination can be added later)
+      orderBy: { createdAt: 'desc' }
     });
-    res.json(allRecords);
+
+    res.json(teamAttendance);
   } catch (error) {
+    console.error('Team Attendance Fetch Error:', error);
     res.status(500).json({ error: 'Failed to fetch team attendance' });
   }
 });
 
-// 3. CHECK IN
+// 2. CHECK IN (Handles Late Marks & Location)
 app.post('/api/attendance/check-in', authenticateToken, async (req: any, res: Response) => {
+  const { latitude, longitude, locationName } = req.body;
+  
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -650,31 +667,33 @@ app.post('/api/attendance/check-in', authenticateToken, async (req: any, res: Re
       where: { userId: req.user.id, date: { gte: today } }
     });
 
-    if (existing) {
-       return res.status(400).json({ error: 'Already checked in for today' });
-    }
+    if (existing) return res.status(400).json({ error: 'Already checked in for today' });
+
+    // Late Mark Logic (e.g., strictly after 9:45 AM)
+    const now = new Date();
+    const isLate = now.getHours() >= 9 && now.getMinutes() > 45;
 
     const newRecord = await prisma.attendance.create({
       data: {
         userId: req.user.id,
-        checkIn: new Date(),
+        checkIn: now,
+        isLate,
+        latitude,
+        longitude,
+        locationName,
         status: 'ACTIVE'
       }
     });
 
-    // Log for Admin Audit
     await logActivity(req.user.id, 'CREATE', 'ATTENDANCE', newRecord.id, 'Checked In');
-    
     res.json(newRecord);
   } catch (error) {
     res.status(500).json({ error: 'Check-in failed' });
   }
 });
 
-// 4. CHECK OUT (With Report)
-app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Response) => {
-  const { tasks, wip, issues, pending } = req.body;
-
+// 3. PAUSE SHIFT (Break Start)
+app.post('/api/attendance/pause', authenticateToken, async (req: any, res: Response) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -683,15 +702,114 @@ app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Re
       where: { userId: req.user.id, date: { gte: today }, status: 'ACTIVE' }
     });
 
-    if (!record) {
-      return res.status(404).json({ error: 'No active session found.' });
+    if (!record) return res.status(400).json({ error: 'No active session found.' });
+
+    const updated = await prisma.attendance.update({
+      where: { id: record.id },
+      data: { status: 'PAUSED', lastPauseTime: new Date() }
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to pause shift' });
+  }
+});
+
+// 4. RESUME SHIFT (Break End & Calculation)
+app.post('/api/attendance/resume', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const record = await prisma.attendance.findFirst({
+      where: { userId: req.user.id, date: { gte: today }, status: 'PAUSED' }
+    });
+
+    if (!record || !record.lastPauseTime) return res.status(400).json({ error: 'No paused session found.' });
+
+    // Calculate break duration
+    const breakDurationMs = new Date().getTime() - new Date(record.lastPauseTime).getTime();
+    const breakDurationHours = breakDurationMs / (1000 * 60 * 60);
+
+    const updated = await prisma.attendance.update({
+      where: { id: record.id },
+      data: { 
+        status: 'ACTIVE',
+        lastPauseTime: null,
+        totalBreakHours: { increment: breakDurationHours }
+      }
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to resume shift' });
+  }
+});
+
+// 5. SAVE DRAFT REPORT (Auto-save)
+app.put('/api/attendance/draft', authenticateToken, async (req: any, res: Response) => {
+  const { tasks, wip, issues, pending } = req.body;
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const record = await prisma.attendance.findFirst({
+      where: { userId: req.user.id, date: { gte: today }, status: { in: ['ACTIVE', 'PAUSED'] } }
+    });
+
+    if (!record) return res.status(404).json({ error: 'No active session found.' });
+
+    const updated = await prisma.attendance.update({
+      where: { id: record.id },
+      data: { draftTasks: tasks, draftWip: wip, draftIssues: issues, draftPending: pending }
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to save draft' });
+  }
+});
+
+// 6. CHECK OUT & SUBMIT REPORT (Calculates Final Net Hours)
+app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Response) => {
+  const { tasks, wip, issues, pending } = req.body;
+
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const record = await prisma.attendance.findFirst({
+      where: { userId: req.user.id, date: { gte: today }, status: { in: ['ACTIVE', 'PAUSED'] } }
+    });
+
+    if (!record) return res.status(404).json({ error: 'No active session found.' });
+
+    // Calculate Total Hours minus breaks
+    const checkOutTime = new Date();
+    const checkInTime = new Date(record.checkIn);
+    
+    // If checking out while paused, add the final paused segment to total break time
+    let finalBreakHours = record.totalBreakHours;
+    if (record.status === 'PAUSED' && record.lastPauseTime) {
+       const finalBreakMs = checkOutTime.getTime() - new Date(record.lastPauseTime).getTime();
+       finalBreakHours += (finalBreakMs / (1000 * 60 * 60));
     }
+
+    const diffInMs = checkOutTime.getTime() - checkInTime.getTime();
+    const grossHours = diffInMs / (1000 * 60 * 60);
+    const netWorkingHours = Math.max(0, grossHours - finalBreakHours);
+    
+    // Overtime calculation (Assuming 8 hours is standard)
+    const overtimeHours = netWorkingHours > 8 ? netWorkingHours - 8 : 0;
 
     const updated = await prisma.attendance.update({
       where: { id: record.id },
       data: {
-        checkOut: new Date(),
+        checkOut: checkOutTime,
         status: 'COMPLETED',
+        workingHours: netWorkingHours,
+        totalBreakHours: finalBreakHours,
+        overtimeHours,
         reportTasks: tasks,
         reportWip: wip,
         reportIssues: issues,
@@ -706,6 +824,137 @@ app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Re
   }
 });
 
+// 7. TIME CORRECTION REQUEST
+app.post('/api/attendance/correction', authenticateToken, async (req: any, res: Response) => {
+  const { date, requestedCheckIn, requestedCheckOut, reason } = req.body;
+  try {
+    const correction = await prisma.timeCorrection.create({
+      data: {
+        userId: req.user.id,
+        date: new Date(date),
+        requestedCheckIn: requestedCheckIn ? new Date(requestedCheckIn) : null,
+        requestedCheckOut: requestedCheckOut ? new Date(requestedCheckOut) : null,
+        reason
+      }
+    });
+    res.json(correction);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to submit time correction' });
+  }
+});
+
+// 8. ADMIN DASHBOARD ANALYTICS
+app.get('/api/attendance/analytics', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const todayRecords = await prisma.attendance.findMany({
+      where: { date: { gte: today } }
+    });
+
+    const totalUsers = await prisma.user.count({ where: { role: { not: 'super_admin' } } });
+    const presentCount = todayRecords.length;
+    const absentCount = Math.max(0, totalUsers - presentCount);
+    
+    const lateCount = todayRecords.filter(r => r.isLate).length;
+
+    const completed = todayRecords.filter(r => r.status === 'COMPLETED' && r.workingHours);
+    const avgHours = completed.length > 0 
+      ? completed.reduce((sum, r) => sum + (r.workingHours || 0), 0) / completed.length 
+      : 0;
+
+    res.json({ present: presentCount, absent: absentCount, late: lateCount, avgHours: avgHours.toFixed(1) });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
+});
+
+// ==========================================
+// LEAVE QUOTA & MANAGEMENT ROUTES
+// ==========================================
+
+app.get('/api/leaves/balances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const balances = await prisma.leaveBalance.upsert({
+      where: { userId: req.user.id },
+      update: {},
+      create: { userId: req.user.id }
+    });
+    res.json(balances);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch leave balances' });
+  }
+});
+
+app.get('/api/leaves', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
+    const whereClause = isAdmin ? {} : { userId: req.user.id };
+
+    const leaves = await prisma.leaveRequest.findMany({
+      where: whereClause,
+      include: { user: { select: { name: true, role: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    res.json(leaves);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch leaves' });
+  }
+});
+
+app.post('/api/leaves', authenticateToken, async (req: any, res: Response) => {
+  const { type, startDate, endDate, reason } = req.body;
+  try {
+    const leave = await prisma.leaveRequest.create({
+      data: {
+        userId: req.user.id,
+        type,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        reason
+      }
+    });
+    res.json(leave);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to apply for leave' });
+  }
+});
+
+app.put('/api/leaves/:id/status', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
+  const { status } = req.body;
+  try {
+    const leave = await prisma.leaveRequest.update({
+      where: { id: req.params.id },
+      data: { status, reviewedBy: req.user.id }
+    });
+    res.json(leave);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update leave status' });
+  }
+});
+
+// ==========================================
+// CRON JOB - AUTO CHECKOUT
+// Note: Requires running `npm install node-cron`
+// ==========================================
+/*
+import cron from 'node-cron';
+
+// Runs at 11:59 PM every night
+cron.schedule('59 23 * * *', async () => {
+  console.log('Running Auto-Checkout Cron Job...');
+  try {
+    await prisma.attendance.updateMany({
+      where: { status: { in: ['ACTIVE', 'PAUSED'] } },
+      data: { status: 'AUTO_CLOSED' }
+    });
+  } catch (err) {
+    console.error('Cron Error:', err);
+  }
+});
+*/
 
 // ==========================================
 // CATALOGUE TRACKING ROUTES (FINAL)

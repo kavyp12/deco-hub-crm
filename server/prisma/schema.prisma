@@ -54,6 +54,10 @@ model User {
 
   quotation_comments QuotationComment[]
   attendance         Attendance[]
+
+  leaveRequests LeaveRequest[] // <--- ADD THIS LINE
+  leaveBalance  LeaveBalance? // <--- ADD THIS
+  corrections   TimeCorrection[] // <--- ADD THIS
 }
 
 model Inquiry {
@@ -96,28 +100,96 @@ model Inquiry {
   labels      InquiryLabel[]
   catalogMovements CatalogMovement[]
 }
+// ==========================================
+// ATTENDANCE, HR & REPORTING MODELS
+// ==========================================
 
 model Attendance {
-  id          String    @id @default(uuid())
-  userId      String
-  user        User      @relation(fields: [userId], references: [id])
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
   
-  date        DateTime  @default(now()) // Used to filter "today's" record
+  date            DateTime  @default(now()) 
   
-  checkIn     DateTime  @default(now())
-  checkOut    DateTime?
+  // Time Tracking
+  checkIn         DateTime  @default(now())
+  checkOut        DateTime?
+  lastPauseTime   DateTime? 
+  totalBreakHours Float     @default(0)
+  workingHours    Float?
+  overtimeHours   Float     @default(0)
   
-  // Daily Report Data
-  reportTasks    String? @db.Text
-  reportWip      String? @db.Text
-  reportIssues   String? @db.Text
-  reportPending  String? @db.Text
+  // Compliance & Location
+  isLate          Boolean   @default(false)
+  latitude        Float?    // For field sales tracking
+  longitude       Float?
+  locationName    String?
   
-  status      String    @default("ACTIVE") // ACTIVE, COMPLETED, INCOMPLETE
+  // Status: ACTIVE, PAUSED, COMPLETED, AUTO_CLOSED
+  status          String    @default("ACTIVE") 
   
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  // Draft Reports (Auto-saves during the day)
+  draftTasks      String?   @db.Text
+  draftWip        String?   @db.Text
+  draftIssues     String?   @db.Text
+  draftPending    String?   @db.Text
+
+  // Final End-of-Day Reports
+  reportTasks     String?   @db.Text
+  reportWip       String?   @db.Text
+  reportIssues    String?   @db.Text
+  reportPending   String?   @db.Text
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
+
+
+model LeaveRequest {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  type        String   // "Sick", "Casual", "Paid", "Unpaid"
+  startDate   DateTime
+  endDate     DateTime
+  reason      String   @db.Text
+  
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewedBy  String?  // Admin ID who approved/rejected
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model LeaveBalance {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  casual    Float    @default(7)  // Yearly quotas
+  sick      Float    @default(7)
+  paid      Float    @default(15)
+  
+  updatedAt DateTime @updatedAt
+}
+
+model TimeCorrection {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  date              DateTime
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  reason            String    @db.Text
+  
+  status            String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
 // ==========================================
 // PIPELINE / KANBAN MODELS (NEW)
 // ==========================================
