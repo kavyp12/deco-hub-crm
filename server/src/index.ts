@@ -654,7 +654,6 @@ app.get('/api/attendance/team', authenticateToken, requireRole(['super_admin', '
     res.status(500).json({ error: 'Failed to fetch team attendance' });
   }
 });
-// EXPORT ATTENDANCE TO EXCEL
 app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response): Promise<void> => {
   try {
     const records = await prisma.attendance.findMany({
@@ -662,13 +661,26 @@ app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin',
       orderBy: { createdAt: 'desc' }
     });
 
+    // Helper function to format exact time for Excel
+    const formatExcelTime = (decimalHours: number | null | undefined) => {
+        if (!decimalHours) return '00:00:00';
+        const totalSecs = Math.floor(decimalHours * 3600);
+        const h = Math.floor(totalSecs / 3600);
+        const m = Math.floor((totalSecs % 3600) / 60);
+        const s = totalSecs % 60;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
     const excelData = records.map(rec => ({
       "Date": new Date(rec.createdAt).toLocaleDateString(),
       "Employee": rec.user?.name || 'Unknown',
       "Role": rec.user?.role || 'N/A',
       "Check In": new Date(rec.checkIn).toLocaleTimeString(),
       "Check Out": rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString() : 'Active',
-      "Breaks (Hrs)": rec.totalBreakHours ? rec.totalBreakHours.toFixed(2) : '0',
+      
+      // Updated to use the HH:MM:SS formatter
+      "Breaks (HH:MM:SS)": formatExcelTime(rec.totalBreakHours),
+      
       "Net Hours": rec.workingHours ? rec.workingHours.toFixed(2) : '0',
       "Status": rec.status,
       "Late": rec.isLate ? 'Yes' : 'No',

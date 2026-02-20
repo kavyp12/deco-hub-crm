@@ -94,6 +94,20 @@ export default function Attendance() {
     timeOffsetRef.current = timeOffset;
   }, [timeOffset]);
 
+  const formatBreakTime = (decimalHours: number | undefined | null) => {
+    if (!decimalHours) return '00:00:00';
+    
+    // Convert the decimal hours into total exact seconds
+    const totalSeconds = Math.floor(decimalHours * 3600);
+    
+    // Break it down into Hours, Minutes, and Seconds
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -412,36 +426,41 @@ export default function Attendance() {
                          <th className="px-6 py-3 text-right">Report</th>
                        </tr>
                      </thead>
-                     <tbody className="divide-y divide-border">
-                       {history.length === 0 ? (
-                         <tr><td colSpan={6} className="px-6 py-8 text-center text-muted-foreground">No records found.</td></tr>
-                       ) : history.map((rec) => (
-                         <tr key={rec.id} className="hover:bg-muted/30">
-                           <td className="px-6 py-4 font-medium whitespace-nowrap">
-                               {format(new Date(rec.createdAt), 'MMM dd, yyyy')}
-                               {rec.isLate && <Badge variant="destructive" className="ml-2 text-[10px]">Late</Badge>}
-                           </td>
-                           <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="flex flex-col text-xs">
-                                    <span className="text-green-600 font-medium">IN: {format(new Date(rec.checkIn), 'h:mm a')}</span>
-                                    {rec.checkOut && <span className="text-red-600 font-medium">OUT: {format(new Date(rec.checkOut), 'h:mm a')}</span>}
-                                </div>
-                           </td>
-                           <td className="px-6 py-4 text-xs text-muted-foreground">{rec.totalBreakHours ? `${rec.totalBreakHours.toFixed(1)} hrs` : '-'}</td>
-                           <td className="px-6 py-4 font-mono font-medium">{rec.workingHours ? `${rec.workingHours.toFixed(1)}h` : '-'}</td>
-                           <td className="px-6 py-4 text-center">
-                               <Badge variant={rec.status === 'AUTO_CLOSED' ? 'destructive' : 'outline'}>{rec.status}</Badge>
-                            </td>
-                           <td className="px-6 py-4 text-right">
-                               {rec.reportTasks && (
-                                   <Button variant="ghost" size="sm" onClick={() => openReportView(rec)} className="h-8 w-8 p-0">
-                                       <Eye className="h-4 w-4 text-primary" />
-                                   </Button>
-                               )}
-                           </td>
-                         </tr>
-                       ))}
-                     </tbody>
+                    <tbody className="divide-y divide-border">
+  {history.length === 0 ? (
+    <tr><td colSpan={6} className="px-6 py-8 text-center text-muted-foreground">No records found.</td></tr>
+  ) : history.map((rec) => (
+    <tr key={rec.id} className="hover:bg-muted/30">
+      <td className="px-6 py-4 font-medium whitespace-nowrap">
+          {format(new Date(rec.createdAt), 'MMM dd, yyyy')}
+          {rec.isLate && <Badge variant="destructive" className="ml-2 text-[10px]">Late</Badge>}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+           <div className="flex flex-col text-xs">
+               <span className="text-green-600 font-medium">IN: {format(new Date(rec.checkIn), 'h:mm a')}</span>
+               {rec.checkOut && <span className="text-red-600 font-medium">OUT: {format(new Date(rec.checkOut), 'h:mm a')}</span>}
+           </div>
+      </td>
+      
+      {/* THIS IS THE UPDATED BREAK TIME CELL */}
+      <td className="px-6 py-4 text-xs font-mono text-amber-600 font-medium">
+          {rec.totalBreakHours ? formatBreakTime(rec.totalBreakHours) : '-'}
+      </td>
+      
+      <td className="px-6 py-4 font-mono font-medium">{rec.workingHours ? `${rec.workingHours.toFixed(2)}h` : '-'}</td>
+      <td className="px-6 py-4 text-center">
+          <Badge variant={rec.status === 'AUTO_CLOSED' ? 'destructive' : 'outline'}>{rec.status}</Badge>
+       </td>
+      <td className="px-6 py-4 text-right">
+          {rec.reportTasks && (
+              <Button variant="ghost" size="sm" onClick={() => openReportView(rec)} className="h-8 w-8 p-0">
+                  <Eye className="h-4 w-4 text-primary" />
+              </Button>
+          )}
+      </td>
+    </tr>
+  ))}
+</tbody>
                    </table>
                  </div>
                </Card>
