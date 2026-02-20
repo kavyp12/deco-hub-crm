@@ -654,6 +654,42 @@ app.get('/api/attendance/team', authenticateToken, requireRole(['super_admin', '
     res.status(500).json({ error: 'Failed to fetch team attendance' });
   }
 });
+// EXPORT ATTENDANCE TO EXCEL
+app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response): Promise<void> => {
+  try {
+    const records = await prisma.attendance.findMany({
+      include: { user: { select: { name: true, role: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const excelData = records.map(rec => ({
+      "Date": new Date(rec.createdAt).toLocaleDateString(),
+      "Employee": rec.user?.name || 'Unknown',
+      "Role": rec.user?.role || 'N/A',
+      "Check In": new Date(rec.checkIn).toLocaleTimeString(),
+      "Check Out": rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString() : 'Active',
+      "Breaks (Hrs)": rec.totalBreakHours ? rec.totalBreakHours.toFixed(2) : '0',
+      "Net Hours": rec.workingHours ? rec.workingHours.toFixed(2) : '0',
+      "Status": rec.status,
+      "Late": rec.isLate ? 'Yes' : 'No',
+      "Tasks": rec.reportTasks || '',
+      "WIP": rec.reportWip || '',
+      "Issues": rec.reportIssues || '',
+      "Plan for Tomorrow": rec.reportPending || ''
+    }));
+
+    const wb = xlsx.utils.book_new();
+    const ws = xlsx.utils.json_to_sheet(excelData);
+    xlsx.utils.book_append_sheet(wb, ws, "Attendance Report");
+
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="Attendance_Report.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
 
 // 2. CHECK IN (Handles Late Marks & Location)
 app.post('/api/attendance/check-in', authenticateToken, async (req: any, res: Response) => {

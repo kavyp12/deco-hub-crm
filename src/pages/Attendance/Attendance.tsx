@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   Clock, CheckCircle, FileText, CalendarCheck, History, 
   Coffee, Briefcase, Eye, User, FileSpreadsheet, PauseCircle, PlayCircle, Save, AlertTriangle, TrendingUp, Users 
@@ -59,8 +59,9 @@ export default function Attendance() {
   const [balances, setBalances] = useState<LeaveBalance>({ casual: 0, sick: 0, paid: 0 });
   const [analytics, setAnalytics] = useState({ present: 0, absent: 0, late: 0, avgHours: 0 });
   
-  // Timer State
+  // Timer State & Server Sync
   const [elapsedTime, setElapsedTime] = useState<string>('00:00:00');
+  const [timeOffset, setTimeOffset] = useState<number>(0);
 
   // Modals
   const [isCheckOutOpen, setIsCheckOutOpen] = useState(false);
@@ -81,6 +82,18 @@ export default function Attendance() {
   const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [filterStatus, setFilterStatus] = useState('ALL');
 
+  // Use refs to get latest values inside setInterval without re-triggering it constantly
+  const todayRecordRef = useRef(todayRecord);
+  const timeOffsetRef = useRef(timeOffset);
+
+  useEffect(() => {
+    todayRecordRef.current = todayRecord;
+  }, [todayRecord]);
+
+  useEffect(() => {
+    timeOffsetRef.current = timeOffset;
+  }, [timeOffset]);
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -88,6 +101,13 @@ export default function Attendance() {
       const myDataResponse = await api.get('/attendance/me');
       const today = myDataResponse.data.today;
       setTodayRecord(today);
+      
+      // Calculate server clock drift to prevent negative timer
+      if (myDataResponse.data.serverTime) {
+         const serverNow = new Date(myDataResponse.data.serverTime).getTime();
+         const localNow = new Date().getTime();
+         setTimeOffset(serverNow - localNow);
+      }
       
       // Load Drafts into form if they exist
       if (today && (today.status === 'ACTIVE' || today.status === 'PAUSED')) {
@@ -127,20 +147,23 @@ export default function Attendance() {
     fetchData();
   }, [role, filterDate, filterStatus]);
 
-  // Timer Logic (Accounts for Breaks)
+  // Timer Logic (Accounts for Breaks & Server Sync)
   useEffect(() => {
     let interval: NodeJS.Timeout;
     
     const updateTime = () => {
-        if (!todayRecord) return;
-        const start = new Date(todayRecord.checkIn).getTime();
-        const now = new Date().getTime();
+        const record = todayRecordRef.current;
+        if (!record) return;
+        
+        const start = new Date(record.checkIn).getTime();
+        // Sync local time with server time
+        const syncedNow = new Date().getTime() + timeOffsetRef.current;
         
         // Subtract total break hours from elapsed time
-        const breakMs = (todayRecord.totalBreakHours || 0) * 60 * 60 * 1000;
-        const diff = now - start - breakMs;
-
-        if (diff < 0) return; // Prevent negative time
+        const breakMs = (record.totalBreakHours || 0) * 60 * 60 * 1000;
+        
+        // Prevent negative time display
+        const diff = Math.max(0, syncedNow - start - breakMs);
         
         const hours = Math.floor(diff / (1000 * 60 * 60));
         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -148,16 +171,16 @@ export default function Attendance() {
         setElapsedTime(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
     };
 
-    if (todayRecord && todayRecord.status === 'ACTIVE') {
+    if (todayRecord?.status === 'ACTIVE') {
       updateTime(); // initial call
       interval = setInterval(updateTime, 1000);
-    } else if (todayRecord && todayRecord.status === 'PAUSED') {
+    } else if (todayRecord?.status === 'PAUSED') {
        // Stop ticking but show exact time up to the pause
        updateTime();
     }
     
     return () => clearInterval(interval);
-  }, [todayRecord]);
+  }, [todayRecord?.status]); // Only re-run interval setup if status changes
 
   // --- ACTIONS ---
 
