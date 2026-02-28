@@ -1,7 +1,7 @@
 
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import * as dotenv from 'dotenv'; 
+import * as dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -39,7 +39,7 @@ const uploadDocs = multer({ storage: storage });
 
 app.use(cors({
   origin: true, // Allow connections
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
 
@@ -52,15 +52,15 @@ const calculateRow = (item: any) => {
   const qty = parseFloat(item.quantity) || 0;
   const rate = parseFloat(item.unitPrice) || 0;
   const baseTotal = qty * rate;
-  
+
   const discPct = parseFloat(item.discountPercent) || 0;
   const discAmt = baseTotal * (discPct / 100);
-  
+
   const taxable = baseTotal - discAmt;
-  
+
   const gstPct = parseFloat(item.gstPercent) || 0;
   const gstAmt = taxable * (gstPct / 100);
-  
+
   return {
     discountAmount: discAmt,
     gstAmount: gstAmt,
@@ -90,7 +90,7 @@ const logActivity = async (userId: string, action: string, entity: string, entit
 app.post('/api/companies', authenticateToken, async (req: any, res) => {
   try {
     const { name } = req.body;
-    
+
     // 1. Create Item
     const newCompany = await prisma.company.create({
       data: { name }
@@ -148,68 +148,68 @@ app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
 
 // 2. EXCEL EXPORT ENDPOINT (NEW)
 app.get('/api/logs/export', authenticateToken, async (req: any, res: Response): Promise<void> => {
-    try {
-      if (req.user.role !== 'super_admin') {
-         res.status(403).json({ error: 'Access Denied' });
-         return;
-      }
-  
-      // 1. Fetch ALL logs (No limit for export)
-      const logs = await prisma.activityLog.findMany({
-        orderBy: { createdAt: 'desc' }
-      });
-  
-      // 2. Fetch Users for Name Mapping
-      const users = await prisma.user.findMany({ select: { id: true, name: true, role: true } });
-      const userMap = new Map(users.map(u => [u.id, u]));
-  
-      // 3. Format Data for Excel
-      const excelData = logs.map(log => {
-        const user = userMap.get(log.userId);
-        return {
-          "Date": new Date(log.createdAt).toLocaleDateString(),
-          "Time": new Date(log.createdAt).toLocaleTimeString(),
-          "Action": log.action,
-          "Entity": log.entity,
-          "Description": log.details,
-          "User Name": user ? user.name : 'Unknown',
-          "User Role": user ? user.role : 'Unknown',
-          "Related ID": log.entityId || 'N/A'
-        };
-      });
-  
-      // 4. Create Workbook
-      const wb = xlsx.utils.book_new();
-      const ws = xlsx.utils.json_to_sheet(excelData);
-      
-      // Auto-width for columns (Optional helper)
-      const wscols = [
-        { wch: 12 }, // Date
-        { wch: 12 }, // Time
-        { wch: 10 }, // Action
-        { wch: 15 }, // Entity
-        { wch: 50 }, // Description
-        { wch: 20 }, // User Name
-        { wch: 15 }, // Role
-        { wch: 30 }, // ID
-      ];
-      ws['!cols'] = wscols;
-  
-      xlsx.utils.book_append_sheet(wb, ws, "Activity Logs");
-  
-      // 5. Send Buffer
-      const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
-      
-      res.setHeader('Content-Disposition', 'attachment; filename="ActivityLogs.xlsx"');
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.send(buffer);
-  
-    } catch (error) {
-      console.error("Export Error:", error);
-      res.status(500).json({ error: "Failed to generate export" });
+  try {
+    if (req.user.role !== 'super_admin') {
+      res.status(403).json({ error: 'Access Denied' });
+      return;
     }
-  });
-  
+
+    // 1. Fetch ALL logs (No limit for export)
+    const logs = await prisma.activityLog.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // 2. Fetch Users for Name Mapping
+    const users = await prisma.user.findMany({ select: { id: true, name: true, role: true } });
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    // 3. Format Data for Excel
+    const excelData = logs.map(log => {
+      const user = userMap.get(log.userId);
+      return {
+        "Date": new Date(log.createdAt).toLocaleDateString(),
+        "Time": new Date(log.createdAt).toLocaleTimeString(),
+        "Action": log.action,
+        "Entity": log.entity,
+        "Description": log.details,
+        "User Name": user ? user.name : 'Unknown',
+        "User Role": user ? user.role : 'Unknown',
+        "Related ID": log.entityId || 'N/A'
+      };
+    });
+
+    // 4. Create Workbook
+    const wb = xlsx.utils.book_new();
+    const ws = xlsx.utils.json_to_sheet(excelData);
+
+    // Auto-width for columns (Optional helper)
+    const wscols = [
+      { wch: 12 }, // Date
+      { wch: 12 }, // Time
+      { wch: 10 }, // Action
+      { wch: 15 }, // Entity
+      { wch: 50 }, // Description
+      { wch: 20 }, // User Name
+      { wch: 15 }, // Role
+      { wch: 30 }, // ID
+    ];
+    ws['!cols'] = wscols;
+
+    xlsx.utils.book_append_sheet(wb, ws, "Activity Logs");
+
+    // 5. Send Buffer
+    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="ActivityLogs.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+
+  } catch (error) {
+    console.error("Export Error:", error);
+    res.status(500).json({ error: "Failed to generate export" });
+  }
+});
+
 // ==========================================
 // 1. AUTH ROUTES
 // ==========================================
@@ -217,27 +217,27 @@ app.get('/api/logs/export', authenticateToken, async (req: any, res: Response): 
 app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
   console.log('🔵 Login attempt:', { email }); // Add logging
-  
+
   try {
     const user = await prisma.user.findUnique({ where: { email } });
     console.log('🔵 User found:', !!user); // Add logging
-    
+
     if (!user) {
       res.status(400).json({ error: 'User not found' });
       return;
     }
-    
+
     const validPassword = await bcrypt.compare(password, user.password);
     console.log('🔵 Password valid:', validPassword); // Add logging
-    
+
     if (!validPassword) {
       res.status(400).json({ error: 'Invalid password' });
       return;
     }
-    
+
     const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
     const { password: _, ...userInfo } = user;
-    
+
     console.log('✅ Login successful'); // Add logging
     res.json({ token, user: userInfo });
   } catch (error) {
@@ -272,10 +272,10 @@ app.post('/api/employees', authenticateToken, requireRole(['super_admin']), asyn
     const newUser = await prisma.user.create({
       data: { name, email, password: hashedPassword, mobile_number, role },
     });
-    
+
     // [LOG]
     await logActivity(req.user.id, 'CREATE', 'EMPLOYEE', newUser.id, `Created employee: ${name} (${role})`);
-    
+
     const { password: _, ...userInfo } = newUser;
     res.json(userInfo);
   } catch (error) {
@@ -363,10 +363,10 @@ app.get('/api/companies', authenticateToken, async (req: Request, res: Response)
 app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
   try {
     const company = await prisma.company.create({ data: { name: req.body.name } });
-    
+
     // [LOG]
     await logActivity(req.user.id, 'CREATE', 'COMPANY', company.id, `Created Company: ${company.name}`);
-    
+
     res.json(company);
   } catch (error) {
     res.status(400).json({ error: 'Company likely already exists' });
@@ -376,7 +376,7 @@ app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin
 app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
   try {
     await prisma.company.delete({ where: { id: req.params.id } });
-    
+
     // [LOG]
     await logActivity(req.user.id, 'DELETE', 'COMPANY', req.params.id, `Deleted Company ID: ${req.params.id}`);
 
@@ -384,32 +384,32 @@ app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin'])
   } catch { res.status(500).json({ error: 'Failed to delete company' }); }
 });
 app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', 'admin_hr']), upload.single('file'), async (req: any, res: Response): Promise<void> => {
-  if (!req.file) { 
-    res.status(400).json({ error: 'No file uploaded' }); 
-    return; 
+  if (!req.file) {
+    res.status(400).json({ error: 'No file uploaded' });
+    return;
   }
-  
+
   const { companyId, defaultType } = req.body;
 
   try {
-    const workbook = xlsx.read(req.file.buffer, { 
+    const workbook = xlsx.read(req.file.buffer, {
       type: 'buffer',
       cellText: true,
       raw: false
     });
-    
+
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    
-    const data: any[] = xlsx.utils.sheet_to_json(worksheet, { 
+
+    const data: any[] = xlsx.utils.sheet_to_json(worksheet, {
       raw: false,
       defval: '',
       blankrows: false
     });
 
-    if (data.length === 0) { 
-      res.status(400).json({ error: 'Excel sheet is empty' }); 
-      return; 
+    if (data.length === 0) {
+      res.status(400).json({ error: 'Excel sheet is empty' });
+      return;
     }
 
     let productsCreated = 0;
@@ -421,8 +421,8 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
 
       const collection = row['Collection']?.toString().trim();
       const designCode = row['Design Name']?.toString().trim() || row['Design']?.toString().trim();
-      const rrPriceRaw = row['RR Price after GST (Cut Rate)']?.toString().trim() || 
-                         row[' RR Price after GST (Cut Rate) ']?.toString().trim();
+      const rrPriceRaw = row['RR Price after GST (Cut Rate)']?.toString().trim() ||
+        row[' RR Price after GST (Cut Rate) ']?.toString().trim();
 
       if (!collection) {
         errors.push(`Row ${rowNumber}: Missing Collection`);
@@ -447,25 +447,25 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
         continue;
       }
 
-      let catalog = await prisma.catalog.findFirst({ 
-        where: { 
-          name: collection, 
-          companyId 
-        } 
+      let catalog = await prisma.catalog.findFirst({
+        where: {
+          name: collection,
+          companyId
+        }
       });
-      
+
       if (!catalog) {
         catalog = await prisma.catalog.create({
-          data: { 
-            name: collection, 
-            companyId, 
+          data: {
+            name: collection,
+            companyId,
             type: defaultType || 'Curtains'
           }
         });
       }
 
       const attributes: any = {};
-      
+
       for (const columnName in row) {
         if (
           columnName === 'Collection' ||
@@ -476,7 +476,7 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
         ) {
           continue;
         }
-        
+
         const value = row[columnName];
         if (value !== undefined && value !== null && value !== '') {
           attributes[columnName.trim()] = String(value).trim();
@@ -512,10 +512,10 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
     await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company ID ${companyId}. Processed ${productsCreated} products.`);
 
     res.json(response);
-    
+
   } catch (error) {
     console.error('Excel processing error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process Excel file',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
@@ -527,15 +527,15 @@ app.get('/api/catalogs/:id/products', authenticateToken, async (req: Request, re
   try {
     const products = await prisma.product.findMany({
       where: { catalogId: req.params.id },
-      include: { 
-        catalog: { 
-          select: { 
-            id: true, 
-            name: true, 
+      include: {
+        catalog: {
+          select: {
+            id: true,
+            name: true,
             type: true, // Included so frontend knows if it's Curtains/Rugs
-            companyId: true 
-          } 
-        } 
+            companyId: true
+          }
+        }
       },
       orderBy: { name: 'asc' }
     });
@@ -547,21 +547,21 @@ app.get('/api/catalogs/:id/products', authenticateToken, async (req: Request, re
 app.get('/api/products/all', authenticateToken, async (req: Request, res: Response) => {
   try {
     const products = await prisma.product.findMany({
-      include: { 
-        catalog: { 
-          select: { 
+      include: {
+        catalog: {
+          select: {
             id: true,          // <--- ADDED THIS
-            name: true, 
+            name: true,
             type: true,
             companyId: true,   // <--- ADDED THIS
-            company: { 
-              select: { 
+            company: {
+              select: {
                 id: true,      // <--- ADDED THIS
-                name: true 
-              } 
+                name: true
+              }
             }
-          } 
-        } 
+          }
+        }
       },
       orderBy: [
         { catalog: { company: { name: 'asc' } } },
@@ -579,10 +579,10 @@ app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'adm
   try {
     const product = await prisma.product.update({
       where: { id: req.params.id },
-      data: { 
-        price: price, 
-        imageUrl, 
-        name 
+      data: {
+        price: price,
+        imageUrl,
+        name
       }
     });
     res.json(product);
@@ -627,7 +627,7 @@ app.get('/api/attendance/team', authenticateToken, requireRole(['super_admin', '
       const filterDate = new Date(date as string);
       const startOfDay = new Date(filterDate.setHours(0, 0, 0, 0));
       const endOfDay = new Date(filterDate.setHours(23, 59, 59, 999));
-      
+
       whereClause.date = {
         gte: startOfDay,
         lte: endOfDay
@@ -663,12 +663,12 @@ app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin',
 
     // Helper function to format exact time for Excel
     const formatExcelTime = (decimalHours: number | null | undefined) => {
-        if (!decimalHours) return '00:00:00';
-        const totalSecs = Math.floor(decimalHours * 3600);
-        const h = Math.floor(totalSecs / 3600);
-        const m = Math.floor((totalSecs % 3600) / 60);
-        const s = totalSecs % 60;
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      if (!decimalHours) return '00:00:00';
+      const totalSecs = Math.floor(decimalHours * 3600);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
     const excelData = records.map(rec => ({
@@ -677,10 +677,10 @@ app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin',
       "Role": rec.user?.role || 'N/A',
       "Check In": new Date(rec.checkIn).toLocaleTimeString(),
       "Check Out": rec.checkOut ? new Date(rec.checkOut).toLocaleTimeString() : 'Active',
-      
+
       // Updated to use the HH:MM:SS formatter
       "Breaks (HH:MM:SS)": formatExcelTime(rec.totalBreakHours),
-      
+
       "Net Hours": rec.workingHours ? rec.workingHours.toFixed(2) : '0',
       "Status": rec.status,
       "Late": rec.isLate ? 'Yes' : 'No',
@@ -706,7 +706,7 @@ app.get('/api/attendance/export', authenticateToken, requireRole(['super_admin',
 // 2. CHECK IN (Handles Late Marks & Location)
 app.post('/api/attendance/check-in', authenticateToken, async (req: any, res: Response) => {
   const { latitude, longitude, locationName } = req.body;
-  
+
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -781,7 +781,7 @@ app.post('/api/attendance/resume', authenticateToken, async (req: any, res: Resp
 
     const updated = await prisma.attendance.update({
       where: { id: record.id },
-      data: { 
+      data: {
         status: 'ACTIVE',
         lastPauseTime: null,
         totalBreakHours: { increment: breakDurationHours }
@@ -835,18 +835,18 @@ app.put('/api/attendance/check-out', authenticateToken, async (req: any, res: Re
     // Calculate Total Hours minus breaks
     const checkOutTime = new Date();
     const checkInTime = new Date(record.checkIn);
-    
+
     // If checking out while paused, add the final paused segment to total break time
     let finalBreakHours = record.totalBreakHours;
     if (record.status === 'PAUSED' && record.lastPauseTime) {
-       const finalBreakMs = checkOutTime.getTime() - new Date(record.lastPauseTime).getTime();
-       finalBreakHours += (finalBreakMs / (1000 * 60 * 60));
+      const finalBreakMs = checkOutTime.getTime() - new Date(record.lastPauseTime).getTime();
+      finalBreakHours += (finalBreakMs / (1000 * 60 * 60));
     }
 
     const diffInMs = checkOutTime.getTime() - checkInTime.getTime();
     const grossHours = diffInMs / (1000 * 60 * 60);
     const netWorkingHours = Math.max(0, grossHours - finalBreakHours);
-    
+
     // Overtime calculation (Assuming 8 hours is standard)
     const overtimeHours = netWorkingHours > 8 ? netWorkingHours - 8 : 0;
 
@@ -904,12 +904,12 @@ app.get('/api/attendance/analytics', authenticateToken, requireRole(['super_admi
     const totalUsers = await prisma.user.count({ where: { role: { not: 'super_admin' } } });
     const presentCount = todayRecords.length;
     const absentCount = Math.max(0, totalUsers - presentCount);
-    
+
     const lateCount = todayRecords.filter(r => r.isLate).length;
 
     const completed = todayRecords.filter(r => r.status === 'COMPLETED' && r.workingHours);
-    const avgHours = completed.length > 0 
-      ? completed.reduce((sum, r) => sum + (r.workingHours || 0), 0) / completed.length 
+    const avgHours = completed.length > 0
+      ? completed.reduce((sum, r) => sum + (r.workingHours || 0), 0) / completed.length
       : 0;
 
     res.json({ present: presentCount, absent: absentCount, late: lateCount, avgHours: avgHours.toFixed(1) });
@@ -945,7 +945,7 @@ app.get('/api/leaves', authenticateToken, async (req: any, res: Response) => {
       include: { user: { select: { name: true, role: true } } },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     res.json(leaves);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch leaves' });
@@ -1013,10 +1013,10 @@ app.get('/api/catalogs/tracking', authenticateToken, async (req: Request, res: R
   try {
     const movements = await prisma.catalogMovement.findMany({
       include: {
-        copy: { 
-          include: { 
-            catalog: { include: { company: true } } 
-          } 
+        copy: {
+          include: {
+            catalog: { include: { company: true } }
+          }
         },
         inquiry: { select: { inquiry_number: true, client_name: true } },
         architect: { select: { name: true } },
@@ -1038,7 +1038,7 @@ app.get('/api/catalogs/copies', authenticateToken, async (req: Request, res: Res
         catalog: { include: { company: true } },
         movements: {
           where: { status: 'ISSUED' },
-          take: 1, 
+          take: 1,
           include: {
             inquiry: true,
             issuedByUser: { select: { name: true } }
@@ -1056,7 +1056,7 @@ app.get('/api/catalogs/copies', authenticateToken, async (req: Request, res: Res
 // 3. CREATE COPIES (Batch Generate)
 app.post('/api/catalogs/:id/copies', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { quantity } = req.body; 
+  const { quantity } = req.body;
 
   try {
     const lastCopy = await prisma.catalogCopy.findFirst({
@@ -1077,7 +1077,7 @@ app.post('/api/catalogs/:id/copies', authenticateToken, async (req: any, res: Re
     }
 
     await prisma.catalogCopy.createMany({ data: newCopiesData });
-    
+
     await logActivity(req.user.id, 'CREATE', 'CATALOG_COPY', id, `Added ${quantity} copies`);
     res.json({ message: 'Copies added successfully' });
   } catch (error) {
@@ -1087,8 +1087,8 @@ app.post('/api/catalogs/:id/copies', authenticateToken, async (req: any, res: Re
 
 // 4. ISSUE CATALOGUE (With Admin Override & Manual Date)
 app.post('/api/catalogs/issue', authenticateToken, async (req: any, res: Response) => {
-  const { 
-    copyId, inquiryId, architectId, clientName, remarks, 
+  const {
+    copyId, inquiryId, architectId, clientName, remarks,
     issueDate,       // <--- Manual Date
     issuedByUserId   // <--- Admin Override
   } = req.body;
@@ -1177,31 +1177,31 @@ app.put('/api/catalogs/return/:movementId', authenticateToken, async (req: any, 
 // [EDITED] GET ALL INQUIRIES (With Role Filtering)
 app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => { // <--- Change Request to any
 
-try {
+  try {
     // 1. Role Check: Admin sees all, Sales sees only theirs
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
     const whereClause = isAdmin ? {} : { sales_person_id: req.user.id };
 
     const inquiries = await prisma.inquiry.findMany({
       where: whereClause, // <--- Added Filter
-      include: { 
+      include: {
         sales_person: { select: { name: true } },
         architect: { select: { id: true, name: true } },
         selections: { select: { id: true, selection_number: true, status: true } },
         // Includes badges for list view
-        _count: { select: { comments: true } } 
+        _count: { select: { comments: true } }
       },
       orderBy: { created_at: 'desc' }
     });
-    
-    const formatted = inquiries.map((i: any) => ({ 
-      ...i, 
+
+    const formatted = inquiries.map((i: any) => ({
+      ...i,
       profiles: i.sales_person,
       // Ensure stage/priority are passed (they are by default, but good to be explicit mentally)
-      stage: i.stage, 
-      priority: i.priority 
+      stage: i.stage,
+      priority: i.priority
     }));
-    
+
     res.json(formatted);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch inquiries' });
@@ -1210,22 +1210,22 @@ try {
 
 // UPDATE POST /api/inquiries
 app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) => {
-  const { 
-    client_name, architect_id_name, architectId, mobile_number, inquiry_date, address, 
+  const {
+    client_name, architect_id_name, architectId, mobile_number, inquiry_date, address,
     sales_person_id, expected_final_date,
     client_birth_date, client_anniversary_date // <--- New Fields
   } = req.body;
-  
+
   try {
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-    
+
     const counterRecord = await prisma.inquiryCounter.upsert({
       where: { year_month: yearMonth },
       update: { counter: { increment: 1 } },
       create: { year_month: yearMonth, counter: 1 },
     });
-    
+
     const inquiryNumber = `INQ-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
     const newInquiry = await prisma.inquiry.create({
@@ -1246,7 +1246,7 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
     });
 
     await logActivity(req.user.id, 'CREATE', 'INQUIRY', newInquiry.id, `Created Inquiry #${newInquiry.inquiry_number}`);
-    
+
     res.json(newInquiry);
   } catch (error) {
     console.error(error);
@@ -1270,7 +1270,7 @@ app.put('/api/inquiries/:id', authenticateToken, async (req: any, res: Response)
 
   if (data.client_anniversary_date) data.client_anniversary_date = new Date(data.client_anniversary_date);
   else if (data.client_anniversary_date === '') data.client_anniversary_date = null;
-  
+
   delete data.product_category;
 
   try {
@@ -1290,7 +1290,7 @@ app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res: Respon
 
     await prisma.selection.deleteMany({ where: { inquiryId: id } });
     await prisma.inquiry.delete({ where: { id } });
-    
+
     // [LOG]
     await logActivity(req.user.id, 'DELETE', 'INQUIRY', id, `Deleted Inquiry #${inquiry?.inquiry_number || 'Unknown'} and all associated records`);
 
@@ -1370,67 +1370,67 @@ app.get('/api/selections/by-inquiry/:inquiryId', authenticateToken, async (req: 
 
 app.post('/api/selections', authenticateToken, async (req: any, res: Response) => {
   const { inquiryId, delivery_date, notes, items, status } = req.body;
-  
+
   try {
-    console.log('📥 Creating New Selection:', { 
-      inquiryId, 
+    console.log('📥 Creating New Selection:', {
+      inquiryId,
       itemsCount: items?.length,
-      items: items?.map((i: any) => ({ 
-        productName: i.productName || i.name, 
-        calculationType: i.calculationType 
+      items: items?.map((i: any) => ({
+        productName: i.productName || i.name,
+        calculationType: i.calculationType
       }))
     });
-    
+
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-    
+
     const counterRecord = await prisma.selectionCounter.upsert({
       where: { year_month: yearMonth },
       update: { counter: { increment: 1 } },
       create: { year_month: yearMonth, counter: 1 },
     });
-    
+
     const selectionNumber = `SEL-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
     const mapItem = (item: any, index: number) => {
-  // ✅ Ensure calculationType is always set and supports all types
-  const calculationType = item.calculationType || 'Local';
-  
-  console.log(`✅ Mapping Item ${index + 1}:`, {
-    productName: item.name || item.productName,
-    calculationType: calculationType
-  });
-  
-  return {
-    productId: item.id || item.productId || null,
-    productName: item.name || item.productName || 'Custom Item',
-    quantity: parseFloat(item.quantity) || 1,
-    price: parseFloat(item.price) || 0,
-    total: (parseFloat(item.quantity) || 1) * (parseFloat(item.price) || 0),
-    
-    // ✅ Accept new calculation types including "Forest (Manual)" and "Forest (Auto)"
-    calculationType: calculationType,
+      // ✅ Ensure calculationType is always set and supports all types
+      const calculationType = item.calculationType || 'Local';
 
-    unit: item.unit || 'mm',
-    width: item.width ? parseFloat(item.width) : null,
-    height: item.height ? parseFloat(item.height) : null,
-    type: item.type || null,
-    motorizationMode: item.motorizationMode || null,
-    opsType: item.opsType || null,
-    pelmet: item.pelmet ? parseFloat(item.pelmet) : null,
-    openingType: item.openingType || null,
-    
-    orderIndex: index,
-    
-    details: {
-      ...(item.attributes || {}),
-      ...(item.details || {}),
-      areaName: item.areaName || item.details?.areaName || '',
-      catalogName: item.catalogName || item.details?.catalogName || '',
-      catalogType: item.catalogType || item.details?.catalogType || ''
-    }
-  };
-};
+      console.log(`✅ Mapping Item ${index + 1}:`, {
+        productName: item.name || item.productName,
+        calculationType: calculationType
+      });
+
+      return {
+        productId: item.id || item.productId || null,
+        productName: item.name || item.productName || 'Custom Item',
+        quantity: parseFloat(item.quantity) || 1,
+        price: parseFloat(item.price) || 0,
+        total: (parseFloat(item.quantity) || 1) * (parseFloat(item.price) || 0),
+
+        // ✅ Accept new calculation types including "Forest (Manual)" and "Forest (Auto)"
+        calculationType: calculationType,
+
+        unit: item.unit || 'mm',
+        width: item.width ? parseFloat(item.width) : null,
+        height: item.height ? parseFloat(item.height) : null,
+        type: item.type || null,
+        motorizationMode: item.motorizationMode || null,
+        opsType: item.opsType || null,
+        pelmet: item.pelmet ? parseFloat(item.pelmet) : null,
+        openingType: item.openingType || null,
+
+        orderIndex: index,
+
+        details: {
+          ...(item.attributes || {}),
+          ...(item.details || {}),
+          areaName: item.areaName || item.details?.areaName || '',
+          catalogName: item.catalogName || item.details?.catalogName || '',
+          catalogType: item.catalogType || item.details?.catalogType || ''
+        }
+      };
+    };
 
     const newSelection = await prisma.selection.create({
       data: {
@@ -1446,13 +1446,13 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
       },
       include: { items: true, inquiry: true }
     });
-    
+
     console.log('✅ Selection Created Successfully:', {
       selectionNumber: newSelection.selection_number,
       itemsCount: newSelection.items.length,
       calculationTypes: newSelection.items.map(i => i.calculationType)
     });
-    
+
     await logActivity(req.user.id, 'CREATE', 'SELECTION', newSelection.id, `Created Selection #${newSelection.selection_number}`);
 
     res.json(newSelection);
@@ -1465,9 +1465,9 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
 
 app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  // ✅ Extract the createNewVersion flag from the request body
-  const { status, delivery_date, notes, items, createNewVersion } = req.body;
-  
+  // ✅ Extract the createNewVersion flag AND editVersion from the request body
+  const { status, delivery_date, notes, items, createNewVersion, editVersion } = req.body;
+
   try {
     console.log(`🔥 Update Request for Selection ${id} | New Version Mode: ${!!createNewVersion}`);
 
@@ -1480,10 +1480,10 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
     if (items && Array.isArray(items)) {
       const potentialIds = items
         .map((i: any) => i.productId)
-        .filter((pid: any) => 
-          pid && 
-          typeof pid === 'string' && 
-          !pid.startsWith('temp-') && 
+        .filter((pid: any) =>
+          pid &&
+          typeof pid === 'string' &&
+          !pid.startsWith('temp-') &&
           pid !== 'manual'
         );
 
@@ -1519,19 +1519,30 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
       // ✅ CASE A: NEW VERSION (Add More)
       // Increment version number
       versionToSave = currentVersion + 1;
-      
+
       // We do NOT delete existing items. We strictly APPEND the new items to history.
       console.log(`✨ Creating New Version: v${versionToSave}`);
+    } else if (editVersion && typeof editVersion === 'number') {
+      // ✅ CASE B: EDITING A SPECIFIC HISTORICAL VERSION
+      versionToSave = editVersion;
+      console.log(`✏️ Editing Historical Version: v${versionToSave}`);
+
+      await prisma.selectionItem.deleteMany({
+        where: {
+          selectionId: id,
+          version: versionToSave
+        }
+      });
     } else {
-      // ✅ CASE B: STANDARD EDIT
+      // ✅ CASE C: STANDARD EDIT (current version)
       // We wipe items ONLY for the current active version to replace them.
       // Older versions (history) remain untouched.
       console.log(`✏️ Editing Current Version: v${versionToSave}`);
-      
+
       await prisma.selectionItem.deleteMany({
-        where: { 
+        where: {
           selectionId: id,
-          version: versionToSave 
+          version: versionToSave
         }
       });
     }
@@ -1541,31 +1552,31 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
     // ==================================================================
     if (items && Array.isArray(items) && items.length > 0) {
       const itemsToCreate = items.map((item: any, index: number) => {
-        
+
         // Logic to preserve or default calculation type
         const rawProductId = (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : 'manual';
         const areaKey = item.details?.areaName || item.areaName || '';
         const calculationType = item.calculationType || 'Local';
-        
+
         // Determine correct product ID (DB safe)
-        const dbSafeProductId = (item.productId && validProductIds.has(item.productId)) 
-          ? item.productId 
+        const dbSafeProductId = (item.productId && validProductIds.has(item.productId))
+          ? item.productId
           : null;
 
         return {
           selectionId: id,
-          
+
           // ✅ Save with the calculated version
-          version: versionToSave, 
+          version: versionToSave,
 
           productId: dbSafeProductId,
           productName: item.productName || item.name || 'Custom Item',
           quantity: parseFloat(String(item.quantity)) || 1,
           price: parseFloat(String(item.price)) || 0,
           total: (parseFloat(String(item.quantity)) || 1) * (parseFloat(String(item.price)) || 0),
-          
+
           calculationType: calculationType,
-          
+
           unit: item.unit || 'mm',
           width: item.width ? parseFloat(String(item.width)) : null,
           height: item.height ? parseFloat(String(item.height)) : null,
@@ -1574,19 +1585,19 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
           opsType: item.opsType || null,
           pelmet: item.pelmet ? parseFloat(String(item.pelmet)) : null,
           openingType: item.openingType || null,
-          
+
           orderIndex: item.orderIndex !== undefined ? item.orderIndex : index,
-          
+
           details: {
             areaName: item.details?.areaName || item.areaName || 'Unknown Area',
             catalogName: item.details?.catalogName || item.catalogName || '',
             catalogType: item.details?.catalogType || item.catalogType || '',
-            companyId: item.details?.companyId || item.companyId || '', 
+            companyId: item.details?.companyId || item.companyId || '',
             ...(item.details || {})
           }
         };
       });
-      
+
       // Bulk insert the new items
       await prisma.selectionItem.createMany({
         data: itemsToCreate
@@ -1602,7 +1613,8 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
         status: status || currentSelection.status,
         delivery_date: delivery_date ? new Date(delivery_date) : currentSelection.delivery_date,
         notes: notes || currentSelection.notes,
-        version: versionToSave // Update the pointer to the latest version
+        // Only update version pointer when creating a NEW version, not when editing historical ones
+        version: createNewVersion ? versionToSave : (currentSelection.version || 1)
       }
     });
 
@@ -1611,27 +1623,29 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
     // ==================================================================
     const updated = await prisma.selection.findUnique({
       where: { id },
-      include: { 
+      include: {
         // Order by Version then Index so they appear in correct history order
         items: {
           orderBy: [
-             { version: 'asc' },
-             { orderIndex: 'asc' }
-          ] 
-        }, 
-        inquiry: true 
+            { version: 'asc' },
+            { orderIndex: 'asc' }
+          ]
+        },
+        inquiry: true
       }
     });
 
     // Log for Admin
-    const actionText = createNewVersion 
-        ? `Added items to create Version ${versionToSave}` 
+    const actionText = createNewVersion
+      ? `Added items to create Version ${versionToSave}`
+      : editVersion
+        ? `Edited historical Version ${versionToSave}`
         : `Updated existing Version ${versionToSave}`;
-        
+
     await logActivity(req.user.id, 'UPDATE', 'SELECTION', id, actionText);
 
     res.json(updated);
-    
+
   } catch (error) {
     console.error('❌ Selection update error:', error);
     res.status(500).json({ error: 'Failed to update selection' });
@@ -1676,7 +1690,7 @@ app.get('/api/calculations/by-selection/:selectionId', authenticateToken, async 
   try {
     const existing = await prisma.calculation.findFirst({
       where: { selectionId },
-      include: { 
+      include: {
         items: {
           include: {
             selectionItem: {
@@ -1686,7 +1700,7 @@ app.get('/api/calculations/by-selection/:selectionId', authenticateToken, async 
           orderBy: {
             selectionItem: { orderIndex: 'asc' }  // ← ADD THIS
           }
-        } 
+        }
       }
     });
 
@@ -1706,13 +1720,13 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: Response)
   const targetCategory = category || (items.length > 0 ? items[0].category : null);
 
   if (!targetCategory) {
-     res.status(400).json({ error: "Category is required to save calculation" });
-     return;
+    res.status(400).json({ error: "Category is required to save calculation" });
+    return;
   }
 
   try {
     // 1. Sync Measurements
-    const updatePromises = items.map((item: any) => 
+    const updatePromises = items.map((item: any) =>
       prisma.selectionItem.update({
         where: { id: item.selectionItemId },
         data: {
@@ -1729,19 +1743,19 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: Response)
       where: { selectionId },
       update: {
         items: {
-          deleteMany: { category: targetCategory }, 
+          deleteMany: { category: targetCategory },
           create: items.map((item: any) => ({
             selectionItemId: item.selectionItemId,
             category: item.category || 'Standard',
             type: item.type || 'Local',
-            
+
             // Dimensions / Quantities
             part: parseFloat(item.part || 0),
             panna: parseFloat(item.panna || 0),
             fabric: parseFloat(item.fabric || 0),
             channel: parseFloat(item.channel || 0),
             sqft: parseFloat(item.sqft || 0),
-            
+
             // ✅ FIX: ADDED MISSING RATE FIELDS HERE
             sqftRate: parseFloat(item.sqftRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
@@ -1764,20 +1778,20 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: Response)
             selectionItemId: item.selectionItemId,
             category: item.category || 'Standard',
             type: item.type || 'Local',
-            
+
             part: parseFloat(item.part || 0),
             panna: parseFloat(item.panna || 0),
             fabric: parseFloat(item.fabric || 0),
             channel: parseFloat(item.channel || 0),
             sqft: parseFloat(item.sqft || 0),
 
-             // ✅ FIX: ADDED MISSING RATE FIELDS HERE TOO
+            // ✅ FIX: ADDED MISSING RATE FIELDS HERE TOO
             sqftRate: parseFloat(item.sqftRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
             fabricRate: parseFloat(item.fabricRate || 0),
             channelRate: parseFloat(item.channelRate || 0),
-            
+
             hasBlackout: Boolean(item.hasBlackout),
             blackout: parseFloat(item.blackout || 0),
             hasSheer: Boolean(item.hasSheer),
@@ -1856,18 +1870,18 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
       // UPDATE BLOCK
       update: {
         items: {
-          deleteMany: {}, 
+          deleteMany: {},
           create: items.map((item: any) => ({
             selectionItemId: item.selectionItemId,
             category: item.category || 'Local',
-            
+
             // 🔥 ADD VARIANT FIELD
             variant: item.variant || 'Normal',
-            
+
             width: parseFloat(item.width || 0),
             height: parseFloat(item.height || 0),
             unit: item.unit || 'mm',
-            
+
             panna: parseFloat(item.panna || 0),
             part: parseFloat(item.part || 1),
             channel: parseFloat(item.channel || 0),
@@ -1877,14 +1891,14 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
             labour: parseFloat(item.labour || 0),
             fitting: parseFloat(item.fitting || 0),
             weightChain: parseFloat(item.weightChain || 0),
-            
+
             fabricRate: parseFloat(item.fabricRate || 0),
             blackoutRate: parseFloat(item.blackoutRate || 0),
             sheerRate: parseFloat(item.sheerRate || 0),
             channelRate: parseFloat(item.channelRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
-            
+
             hasFabric: Boolean(item.hasFabric),
             hasBlackout: Boolean(item.hasBlackout),
             hasSheer: Boolean(item.hasSheer),
@@ -1901,14 +1915,14 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
           create: items.map((item: any) => ({
             selectionItemId: item.selectionItemId,
             category: item.category || 'Local',
-            
+
             // 🔥 ADD VARIANT FIELD
             variant: item.variant || 'Normal',
-            
+
             width: parseFloat(item.width || 0),
             height: parseFloat(item.height || 0),
             unit: item.unit || 'mm',
-            
+
             panna: parseFloat(item.panna || 0),
             part: parseFloat(item.part || 1),
             channel: parseFloat(item.channel || 0),
@@ -1918,14 +1932,14 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
             labour: parseFloat(item.labour || 0),
             fitting: parseFloat(item.fitting || 0),
             weightChain: parseFloat(item.weightChain || 0),
-            
+
             fabricRate: parseFloat(item.fabricRate || 0),
             blackoutRate: parseFloat(item.blackoutRate || 0),
             sheerRate: parseFloat(item.sheerRate || 0),
             channelRate: parseFloat(item.channelRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
-            
+
             hasFabric: Boolean(item.hasFabric),
             hasBlackout: Boolean(item.hasBlackout),
             hasSheer: Boolean(item.hasSheer),
@@ -1936,7 +1950,7 @@ app.post('/api/calculations/deep/:selectionId', authenticateToken, async (req: a
         }
       }
     });
-    
+
     await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved DEEP calculation for Selection`);
     res.json(deepCalc);
   } catch (error) {
@@ -1953,17 +1967,17 @@ app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: R
     // 1. Fetch the "Source of Truth": The Selection and all its items
     const selection = await prisma.selection.findUnique({
       where: { id: selectionId },
-      include: { 
-        items: { 
+      include: {
+        items: {
           include: { product: true },
           orderBy: { orderIndex: 'asc' }
-        } 
+        }
       }
     });
 
     if (!selection) {
       res.status(404).json({ error: 'Selection not found' });
-      return; 
+      return;
     }
 
     // 2. Fetch the "Saved State": The Somfy Calculation record (if it exists)
@@ -1975,7 +1989,7 @@ app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: R
     });
 
     // 3. Filter Selection Items: Only get items assigned to "Somfy"
-    const relevantSelectionItems = selection.items.filter(item => 
+    const relevantSelectionItems = selection.items.filter(item =>
       item.calculationType && item.calculationType.split(',').includes('Somfy')
     );
 
@@ -2010,7 +2024,7 @@ app.get('/api/calculations/somfy/:selectionId', authenticateToken, async (req: R
     });
 
     // 5. Respond
-    res.json({ 
+    res.json({
       id: somfyCalc?.id || null,
       selectionId,
       items: mergedItems
@@ -2055,7 +2069,7 @@ app.post('/api/calculations/somfy/:selectionId', authenticateToken, async (req: 
             remotePrice: parseFloat(item.remotePrice || 0),
             rippleTapePrice: parseFloat(item.rippleTapePrice || 0),
             totalPrice: parseFloat(item.totalPrice || 0),
-            
+
             // ✅ Save the new fields
             trackFinal: parseFloat(item.trackFinal || 0),
             motorFinal: parseFloat(item.motorFinal || 0),
@@ -2102,7 +2116,7 @@ app.get('/api/calculations/local/:selectionId', authenticateToken, async (req: R
       include: {
         items: {
           include: {
-            selectionItem: { 
+            selectionItem: {
               include: { product: true }
             }
           },
@@ -2127,11 +2141,11 @@ app.get('/api/calculations/local/:selectionId', authenticateToken, async (req: R
 
     const selection = await prisma.selection.findUnique({
       where: { id: selectionId },
-      include: { 
-        items: { 
+      include: {
+        items: {
           include: { product: true },
           orderBy: { orderIndex: 'asc' }
-        } 
+        }
       }
     });
 
@@ -2140,11 +2154,11 @@ app.get('/api/calculations/local/:selectionId', authenticateToken, async (req: R
     }
 
     // ✅ Filter for Local items
-const localItems = selection.items.filter(item => item.calculationType.includes('Local'));
-    return res.json({ 
+    const localItems = selection.items.filter(item => item.calculationType.includes('Local'));
+    return res.json({
       id: null,
       selectionId,
-      isNew: true, 
+      isNew: true,
       items: localItems.map(item => ({
         selectionItemId: item.id,
         selectionItem: item,
@@ -2204,14 +2218,14 @@ app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: 
             fabric: parseFloat(item.fabric || 0),
             labour: parseFloat(item.labour || 0),
             fitting: parseFloat(item.fitting || 0),
-            
+
             fabricRate: parseFloat(item.fabricRate || 0),
             blackoutRate: parseFloat(item.blackoutRate || 0),
             sheerRate: parseFloat(item.sheerRate || 0),
             channelRate: parseFloat(item.channelRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
-            
+
             hasBlackout: Boolean(item.hasBlackout),
             blackout: parseFloat(item.blackout || 0),
             hasSheer: Boolean(item.hasSheer),
@@ -2230,14 +2244,14 @@ app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: 
             fabric: parseFloat(item.fabric || 0),
             labour: parseFloat(item.labour || 0),
             fitting: parseFloat(item.fitting || 0),
-            
+
             fabricRate: parseFloat(item.fabricRate || 0),
             blackoutRate: parseFloat(item.blackoutRate || 0),
             sheerRate: parseFloat(item.sheerRate || 0),
             channelRate: parseFloat(item.channelRate || 0),
             labourRate: parseFloat(item.labourRate || 0),
             fittingRate: parseFloat(item.fittingRate || 0),
-            
+
             hasBlackout: Boolean(item.hasBlackout),
             blackout: parseFloat(item.blackout || 0),
             hasSheer: Boolean(item.hasSheer),
@@ -2271,7 +2285,7 @@ app.get('/api/calculations/forest/:selectionId', authenticateToken, async (req: 
       }
     });
 
-if (forestCalc) {
+    if (forestCalc) {
       // 🔥 FIX: Use includes()
       const filteredItems = forestCalc.items.filter(
         item => item.selectionItem.calculationType.includes('Forest')
@@ -2286,11 +2300,11 @@ if (forestCalc) {
 
     const selection = await prisma.selection.findUnique({
       where: { id: selectionId },
-      include: { 
-        items: { 
+      include: {
+        items: {
           include: { product: true },
           orderBy: { orderIndex: 'asc' }
-        } 
+        }
       }
     });
 
@@ -2300,9 +2314,9 @@ if (forestCalc) {
     }
 
     // ✅ Filter for Forest items
-const forestItems = selection.items.filter(item => item.calculationType.includes('Forest'));
+    const forestItems = selection.items.filter(item => item.calculationType.includes('Forest'));
 
-    res.json({ 
+    res.json({
       id: null,
       selectionId,
       items: forestItems.map(item => ({
@@ -2364,7 +2378,7 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
             remotePrice: parseFloat(item.remotePrice || 0),
             totalBeforeGst: parseFloat(item.totalBeforeGst || 0),
             gst: parseFloat(item.gst || 0),
-            
+
             // ✅ Save the new fields
             trackFinal: parseFloat(item.trackFinal || 0),
             motorFinal: parseFloat(item.motorFinal || 0),
@@ -2430,24 +2444,24 @@ app.get('/api/calculations/gpw/:selectionId', authenticateToken, async (req: Req
     // 2. Fetch Selection items to check for new assignments
     const selection = await prisma.selection.findUnique({
       where: { id: selectionId },
-      include: { 
-        items: { 
+      include: {
+        items: {
           orderBy: { orderIndex: 'asc' }
-        } 
+        }
       }
     });
 
     if (!selection) return res.status(404).json({ error: 'Selection not found' });
 
     // 3. Filter items assigned to 'GPW'
-    const relevantItems = selection.items.filter(item => 
+    const relevantItems = selection.items.filter(item =>
       item.calculationType && item.calculationType.includes('GPW')
     );
 
     // 4. Merge Logic
     const mergedItems = relevantItems.map(item => {
       const savedItem = gpwCalc?.items.find(si => si.selectionItemId === item.id);
-      
+
       if (savedItem) {
         return { ...savedItem, selectionItem: item };
       }
@@ -2464,7 +2478,7 @@ app.get('/api/calculations/gpw/:selectionId', authenticateToken, async (req: Req
       };
     });
 
-    res.json({ 
+    res.json({
       id: gpwCalc?.id || null,
       selectionId,
       items: mergedItems
@@ -2486,10 +2500,10 @@ app.post('/api/calculations/gpw/:selectionId', authenticateToken, async (req: an
       if (item.selectionItemId && item.width !== undefined) {
         await prisma.selectionItem.update({
           where: { id: item.selectionItemId },
-          data: { 
-             width: parseFloat(item.width || 0),
-             height: parseFloat(item.height || 0), 
-             unit: item.unit 
+          data: {
+            width: parseFloat(item.width || 0),
+            height: parseFloat(item.height || 0),
+            unit: item.unit
           }
         });
       }
@@ -2504,15 +2518,15 @@ app.post('/api/calculations/gpw/:selectionId', authenticateToken, async (req: an
             selectionItemId: item.selectionItemId,
             type: item.type || 'Gravel',
             rft: parseFloat(item.rft || 0),
-            
+
             trackPrice: parseFloat(item.trackPrice || 0),
             trackGst: parseFloat(item.trackGst || 0),
             trackFinal: parseFloat(item.trackFinal || 0),
-            
+
             motorPrice: parseFloat(item.motorPrice || 0),
             motorGst: parseFloat(item.motorGst || 0),
             motorFinal: parseFloat(item.motorFinal || 0),
-            
+
             remotePrice: parseFloat(item.remotePrice || 0),
             remoteGst: parseFloat(item.remoteGst || 0),
             remoteFinal: parseFloat(item.remoteFinal || 0),
@@ -2526,15 +2540,15 @@ app.post('/api/calculations/gpw/:selectionId', authenticateToken, async (req: an
             selectionItemId: item.selectionItemId,
             type: item.type || 'Gravel',
             rft: parseFloat(item.rft || 0),
-            
+
             trackPrice: parseFloat(item.trackPrice || 0),
             trackGst: parseFloat(item.trackGst || 0),
             trackFinal: parseFloat(item.trackFinal || 0),
-            
+
             motorPrice: parseFloat(item.motorPrice || 0),
             motorGst: parseFloat(item.motorGst || 0),
             motorFinal: parseFloat(item.motorFinal || 0),
-            
+
             remotePrice: parseFloat(item.remotePrice || 0),
             remoteGst: parseFloat(item.remoteGst || 0),
             remoteFinal: parseFloat(item.remoteFinal || 0),
@@ -2590,17 +2604,17 @@ const getConsolidatedQuoteData = async (selectionId: string) => {
     // Prefer DeepCalc, fallback to 0 (assuming Local Calc is migrated to Deep)
     const deepItem = deepCalc?.items.find(i => i.selectionItemId === item.id);
     if (deepItem) {
-       const fabric = (deepItem.fabric || 0) * (deepItem.fabricRate || 0);
-       const blackout = (deepItem.blackout || 0) * (deepItem.blackoutRate || 0);
-       const sheer = (deepItem.sheer || 0) * (deepItem.sheerRate || 0);
-       
-       const labour = (deepItem.labour || 0) * (deepItem.labourRate || 0);
-       const fitting = (deepItem.fitting || 0) * (deepItem.fittingRate || 0);
-       const channel = (deepItem.channel || 0) * (deepItem.channelRate || 0);
+      const fabric = (deepItem.fabric || 0) * (deepItem.fabricRate || 0);
+      const blackout = (deepItem.blackout || 0) * (deepItem.blackoutRate || 0);
+      const sheer = (deepItem.sheer || 0) * (deepItem.sheerRate || 0);
 
-       materialCost += fabric + blackout + sheer;
-       laborCost += labour + fitting;
-       hardwareCost += channel;
+      const labour = (deepItem.labour || 0) * (deepItem.labourRate || 0);
+      const fitting = (deepItem.fitting || 0) * (deepItem.fittingRate || 0);
+      const channel = (deepItem.channel || 0) * (deepItem.channelRate || 0);
+
+      materialCost += fabric + blackout + sheer;
+      laborCost += labour + fitting;
+      hardwareCost += channel;
     }
 
     // --- B. Forest Calculation (Tracks & Motors) ---
@@ -2615,34 +2629,34 @@ const getConsolidatedQuoteData = async (selectionId: string) => {
     // --- C. Somfy Calculation (Automation) ---
     const somfyItem = somfyCalc?.items.find(i => i.selectionItemId === item.id);
     if (somfyItem) {
-       hardwareCost += (somfyItem.trackFinal || 0) + (somfyItem.motorFinal || 0) + (somfyItem.remoteFinal || 0);
+      hardwareCost += (somfyItem.trackFinal || 0) + (somfyItem.motorFinal || 0) + (somfyItem.remoteFinal || 0);
     }
 
     // --- D. Roman / Blinds (Generic) ---
     const genericItem = genericCalc?.items.find(i => i.selectionItemId === item.id);
     if (genericItem) {
-       if (genericItem.category === 'Blinds') {
-          materialCost += (genericItem.sqft * genericItem.sqftRate);
-          laborCost += (genericItem.sqft * genericItem.labourRate);
-          hardwareCost += genericItem.fittingRate;
-       } else if (genericItem.category === 'Roman') {
-          materialCost += (genericItem.fabric * genericItem.fabricRate);
-          laborCost += (genericItem.panna * genericItem.labourRate);
-          hardwareCost += genericItem.fittingRate;
-       }
+      if (genericItem.category === 'Blinds') {
+        materialCost += (genericItem.sqft * genericItem.sqftRate);
+        laborCost += (genericItem.sqft * genericItem.labourRate);
+        hardwareCost += genericItem.fittingRate;
+      } else if (genericItem.category === 'Roman') {
+        materialCost += (genericItem.fabric * genericItem.fabricRate);
+        laborCost += (genericItem.panna * genericItem.labourRate);
+        hardwareCost += genericItem.fittingRate;
+      }
     }
 
     // --- E. Summary ---
     // Note: This logic assumes the 'Final' values from modules (like Forest/Somfy) 
     // already include their specific taxes. For Local, we might need to add GST.
     // For simplicity in this preview, we sum them up. 
-    
- if (materialCost + laborCost + hardwareCost === 0) {
-       materialCost = (item.quantity * item.price);
+
+    if (materialCost + laborCost + hardwareCost === 0) {
+      materialCost = (item.quantity * item.price);
     }
 
     const total = materialCost + laborCost + hardwareCost;
-    
+
     // ✅ FIX: Cast details to 'any' to avoid TS error
     const areaName = (item.details as any)?.areaName || 'Area';
 
@@ -2652,11 +2666,11 @@ const getConsolidatedQuoteData = async (selectionId: string) => {
       area: areaName, // Use the fixed variable
       qty: item.quantity,
       unit: item.unit,
-      
+
       material: materialCost,
       labor: laborCost,
       hardware: hardwareCost,
-      
+
       total: total
     };
   });
@@ -2665,7 +2679,7 @@ const getConsolidatedQuoteData = async (selectionId: string) => {
   // Assuming 12% standard GST on the final aggregate if not already calculated inside modules
   // Since Forest/Somfy stored "Final" (with GST), and Local usually doesn't, 
   // you might need a more complex tax flag. For now, we will treat 'total' as Final.
-  const grandTotal = subTotal; 
+  const grandTotal = subTotal;
 
   return {
     selection,
@@ -2693,18 +2707,18 @@ app.get('/api/quotations/preview/:selectionId', authenticateToken, async (req: R
 // 2. CREATE / FREEZE QUOTATION
 app.post('/api/quotations', authenticateToken, async (req: any, res: Response) => {
   const { selectionId } = req.body;
-  
+
   try {
     // 1. Generate Quote Number
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-    
+
     const counterRecord = await prisma.quotationCounter.upsert({
       where: { year_month: yearMonth },
       update: { counter: { increment: 1 } },
       create: { year_month: yearMonth, counter: 1 },
     });
-    
+
     const quoteNumber = `QT-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
     // 2. Get Data
@@ -2712,21 +2726,21 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
 
     // 3. Save
     const quotation = await prisma.quotation.create({
-  data: {
-    quotation_number: quoteNumber,
-    selectionId,
-    clientName: data.selection.inquiry?.client_name || 'Valued Client',
-    clientAddress: data.selection.inquiry?.address || '',
-    subTotal: data.financials.subTotal,
-    discountTotal: 0,  // Add this
-    taxableValue: data.financials.subTotal,  // Add this
-    gstTotal: data.financials.tax,  // ✅ Changed from taxAmount
-    transportationCharge: 0,  // Add this
-    installationCharge: 0,  // Add this
-    grandTotal: data.financials.grandTotal,
-    created_by_id: req.user.id
-  }
-});
+      data: {
+        quotation_number: quoteNumber,
+        selectionId,
+        clientName: data.selection.inquiry?.client_name || 'Valued Client',
+        clientAddress: data.selection.inquiry?.address || '',
+        subTotal: data.financials.subTotal,
+        discountTotal: 0,  // Add this
+        taxableValue: data.financials.subTotal,  // Add this
+        gstTotal: data.financials.tax,  // ✅ Changed from taxAmount
+        transportationCharge: 0,  // Add this
+        installationCharge: 0,  // Add this
+        grandTotal: data.financials.grandTotal,
+        created_by_id: req.user.id
+      }
+    });
 
     res.json(quotation);
   } catch (error) {
@@ -2743,22 +2757,22 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
 app.get('/api/quotations', authenticateToken, async (req: any, res: Response) => {
   try {
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
-    
+
     // ✅ FIX: Allow agents to see quotes if they are assigned to the Inquiry
     const whereClause = isAdmin ? {} : {
       OR: [
         // 1. I created the quotation
         { created_by_id: req.user.id },
-        
+
         // 2. OR: The quotation belongs to an inquiry I OWN (Main Sales Person)
-        { 
-          selection: { 
-            inquiry: { 
-              sales_person_id: req.user.id 
-            } 
-          } 
+        {
+          selection: {
+            inquiry: {
+              sales_person_id: req.user.id
+            }
+          }
         },
-        
+
         // 3. OR: The quotation belongs to an inquiry where I am a COLLABORATOR
         {
           selection: {
@@ -2775,20 +2789,20 @@ app.get('/api/quotations', authenticateToken, async (req: any, res: Response) =>
     const quotes = await prisma.quotation.findMany({
       where: whereClause, // Apply the smart filter
       include: {
-        selection: { 
-          include: { 
-            inquiry: { 
-              include: { sales_person: { select: { name: true } } } 
-            } 
-          } 
+        selection: {
+          include: {
+            inquiry: {
+              include: { sales_person: { select: { name: true } } }
+            }
+          }
         },
         created_by: { select: { name: true } },
         labels: true,
-        _count: { select: { comments: true } } 
+        _count: { select: { comments: true } }
       },
       orderBy: { created_at: 'desc' }
     });
-    
+
     res.json(quotes);
   } catch (error) {
     console.error("Error fetching quotations:", error);
@@ -2839,26 +2853,26 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
     // 2. GENERATE QUOTE NUMBER
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-    
+
     const counterRecord = await prisma.quotationCounter.upsert({
       where: { year_month: yearMonth },
       update: { counter: { increment: 1 } },
       create: { year_month: yearMonth, counter: 1 },
     });
-    
+
     const quoteNumber = `QT-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
     // 3. AGGREGATE ITEMS
     const deepCalcItems = selection.deepCalculation?.items || [];
     const mainItemsMap = new Map<string, any>(); // Stores Fabric & Sheer items
-    
+
     let totalBlackoutQty = 0;
     let blackoutRate = 0;
-    
+
     let totalChannelCost = 0;
     let totalLabourCost = 0;
     let totalFittingCost = 0;
-    
+
     const specializedHardwareItems: any[] = [];
 
     // --- LOOP THROUGH ALL DEEP CALC ITEMS ---
@@ -2866,7 +2880,7 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       const selItem = deepItem.selectionItem;
       const product = selItem?.product;
       const rawDetails = selItem?.details as any;
-      
+
       // ✅ 1. DYNAMIC AREA NAME (Handles M+S Split)
       let areaName = rawDetails?.areaName || (selItem as any)?.areaName || 'Area';
       if (deepItem.variant === 'Main') {
@@ -2882,7 +2896,7 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       // ✅ 2. HANDLE FABRIC (The "Main" material)
       if (Number(deepItem.fabric) > 0) {
         const key = `${productIdOrName}_${areaName}_Fabric`; // Unique key
-        
+
         if (mainItemsMap.has(key)) {
           mainItemsMap.get(key).quantity += Number(deepItem.fabric);
         } else {
@@ -2902,12 +2916,12 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       // This ensures "Living Room (Sheer)" gets added even if fabric is 0
       if (Number(deepItem.sheer) > 0) {
         const key = `${productIdOrName}_${areaName}_Sheer`; // Distinct key so it doesn't merge with fabric
-        
+
         // Determine label: If the row is explicitly "Sheer" variant, call it Fabric/Product Name
         // If it's a Normal row with sheer added, call it "Sheer"
         let label = prodName === 'Custom Item' ? 'Sheer' : prodName;
         if (deepItem.variant === 'Sheer') {
-           label = prodName === 'Custom Item' ? 'Fabric' : prodName;
+          label = prodName === 'Custom Item' ? 'Fabric' : prodName;
         }
 
         if (mainItemsMap.has(key)) {
@@ -2993,9 +3007,9 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
     if (totalCLF > 0) {
       finalItems.push({
         description: 'All Curtain Channel, Labour and Fitting Charges',
-        quantity: windowCount, 
+        quantity: windowCount,
         unit: 'Nos',
-        unitPrice: totalCLF / windowCount, 
+        unitPrice: totalCLF / windowCount,
         discountPercent: 0,
         gstPercent: 18
       });
@@ -3023,7 +3037,7 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
             const rate = Number(item.unitPrice);
             const subtotal = qty * rate;
             const gstAmt = (subtotal * (item.gstPercent || 0)) / 100;
-            
+
             return {
               srNo: idx + 1,
               description: item.description,
@@ -3054,19 +3068,19 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
     });
 
     if (selection.inquiryId) {
-        await prisma.inquiry.update({
-            where: { id: selection.inquiryId },
-            data: { stage: 'Quotation Submitted' }
-        });
-        
-        // Log the stage change
-        await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', selection.inquiryId, `Auto-moved to Quotation Submitted`);
+      await prisma.inquiry.update({
+        where: { id: selection.inquiryId },
+        data: { stage: 'Quotation Submitted' }
+      });
+
+      // Log the stage change
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', selection.inquiryId, `Auto-moved to Quotation Submitted`);
     }
 
     console.log(`✅ Quotation ${quoteNumber} generated.`);
     res.json({ ...newQuote, subTotal, gstTotal, grandTotal });
 
- } catch (error: any) {
+  } catch (error: any) {
     console.error('❌ Quotation Generation Error:', error);
     res.status(500).json({ error: 'Failed to generate quotation', details: error.message });
   }
@@ -3078,24 +3092,24 @@ app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Resp
   try {
     const quote = await prisma.quotation.findUnique({
       where: { id: req.params.id },
-      include: { 
+      include: {
         items: { orderBy: { srNo: 'asc' } },
-        selection: { 
-          include: { 
-            inquiry: { 
-              include: { 
-                sales_person: { select: { name: true } } 
-              } 
-            } 
-          } 
+        selection: {
+          include: {
+            inquiry: {
+              include: {
+                sales_person: { select: { name: true } }
+              }
+            }
+          }
         },
         // === NEW FIELDS ===
-        comments: { 
+        comments: {
           include: { user: { select: { name: true } } },
           orderBy: { createdAt: 'desc' }
         },
-        checklists: { 
-          include: { items: { orderBy: { id: 'asc' } } } 
+        checklists: {
+          include: { items: { orderBy: { id: 'asc' } } }
         },
         labels: true,
         created_by: { select: { id: true, name: true } }
@@ -3127,7 +3141,7 @@ app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response
     const discountTotal = processedItems.reduce((sum: number, i: any) => sum + i.discountAmount, 0);
     const gstTotal = processedItems.reduce((sum: number, i: any) => sum + i.gstAmount, 0);
     const itemsTotal = processedItems.reduce((sum: number, i: any) => sum + i.total, 0);
-    
+
     const trans = parseFloat(transportationCharge) || 0;
     const install = parseFloat(installationCharge) || 0;
     const grandTotal = itemsTotal + trans + install;
@@ -3170,13 +3184,13 @@ app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response
 
     // ✅ FIX: Added 'updated?.' and '||' fallback to satisfy TypeScript
     await logActivity(
-      req.user.id, 
-      'UPDATE', 
-      'QUOTATION', 
-      id, 
+      req.user.id,
+      'UPDATE',
+      'QUOTATION',
+      id,
       `Updated Quotation #${updated?.quotation_number || 'Unknown'}`
     );
-    
+
     res.json(updated);
 
   } catch (error) {
@@ -3192,9 +3206,9 @@ app.delete('/api/quotations/:id', authenticateToken, async (req: any, res: Respo
     // Prisma cascade delete will automatically remove QuotationItems if configured in schema.
     // If not, we explicitly delete items first:
     await prisma.quotationItem.deleteMany({ where: { quotationId: id } });
-    
-    await prisma.quotation.delete({ 
-      where: { id } 
+
+    await prisma.quotation.delete({
+      where: { id }
     });
 
     await logActivity(req.user.id, 'DELETE', 'QUOTATION', id, `Deleted Quotation #${id}`);
@@ -3286,9 +3300,9 @@ app.delete('/api/architects/:id', authenticateToken, async (req: any, res: Respo
 app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
   try {
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
-    
+
     // Filter: Agents see Inquiries they own OR are assigned to
-    const whereClause = isAdmin ? {} : { 
+    const whereClause = isAdmin ? {} : {
       OR: [
         { sales_person_id: req.user.id },
         { sales_persons: { some: { id: req.user.id } } }
@@ -3300,12 +3314,12 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
       include: {
         sales_person: { select: { id: true, name: true } },
         sales_persons: { select: { id: true, name: true } },
-        comments: { 
+        comments: {
           include: { user: { select: { name: true } } },
           orderBy: { createdAt: 'desc' }
         },
-        checklists: { 
-          include: { items: { orderBy: { id: 'asc' } } } 
+        checklists: {
+          include: { items: { orderBy: { id: 'asc' } } }
         },
         labels: true,
         // ✅ FETCH LINKED QUOTATIONS (Removing 'select' to fetch full object)
@@ -3338,10 +3352,10 @@ app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Res
       where: { id },
       data: { stage }
     });
-    
+
     // Log the movement for Admin visibility
     await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Moved to ${stage}`);
-    
+
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to move card' });
@@ -3389,8 +3403,8 @@ app.post('/api/inquiries/:id/checklists', authenticateToken, async (req: any, re
 app.delete('/api/checklists/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     // Items cascade delete usually, but we can delete explicitly to be safe if schema doesn't cascade
-    await prisma.inquiryChecklistItem.deleteMany({ where: { checklistId: req.params.id }});
-    
+    await prisma.inquiryChecklistItem.deleteMany({ where: { checklistId: req.params.id } });
+
     await prisma.inquiryChecklist.delete({
       where: { id: req.params.id }
     });
@@ -3456,17 +3470,17 @@ app.get('/api/quotations/pipeline/board', authenticateToken, async (req: any, re
     const quotes = await prisma.quotation.findMany({
       include: {
         selection: {
-          include: { 
-            inquiry: { include: { sales_person: { select: { id: true, name: true } } } } 
+          include: {
+            inquiry: { include: { sales_person: { select: { id: true, name: true } } } }
           }
         },
         created_by: { select: { id: true, name: true } },
-        comments: { 
+        comments: {
           include: { user: { select: { name: true } } },
           orderBy: { createdAt: 'desc' }
         },
-        checklists: { 
-          include: { items: { orderBy: { id: 'asc' } } } 
+        checklists: {
+          include: { items: { orderBy: { id: 'asc' } } }
         },
         labels: true,
         items: { select: { id: true } } // Optimization: only fetch IDs
@@ -3484,17 +3498,17 @@ app.get('/api/quotations/pipeline/board', authenticateToken, async (req: any, re
 // 2. MOVE CARD (Update Stage)
 app.put('/api/quotations/:id/stage', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { stage } = req.body; 
+  const { stage } = req.body;
 
   try {
     const updated = await prisma.quotation.update({
       where: { id },
       data: { stage }
     });
-    
+
     // Log the movement
     await logActivity(req.user.id, 'UPDATE', 'QUOTATION_STAGE', id, `Moved Quotation to ${stage}`);
-    
+
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to move card' });
@@ -3563,8 +3577,8 @@ app.post('/api/quotations/:id/checklists', authenticateToken, async (req: any, r
 app.delete('/api/quotation-checklists/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     // Explicitly delete items first to ensure cleanliness
-    await prisma.quotationChecklistItem.deleteMany({ where: { checklistId: req.params.id }});
-    
+    await prisma.quotationChecklistItem.deleteMany({ where: { checklistId: req.params.id } });
+
     await prisma.quotationChecklist.delete({
       where: { id: req.params.id }
     });
@@ -3635,32 +3649,32 @@ app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Re
 
     // SCENARIO 1: Frontend sends a list of members (Collaborators)
     if (userIds && Array.isArray(userIds)) {
-       const updated = await prisma.inquiry.update({
-          where: { id: req.params.id },
-          data: { 
-            // This 'set' command replaces the current list with the new list
-            sales_persons: {
-               set: userIds.map((uid: string) => ({ id: uid })) 
-            }
-          },
-          // Return the updated data so frontend updates immediately
-          include: {
-             sales_person: { select: { id: true, name: true } },
-             sales_persons: { select: { id: true, name: true } }
+      const updated = await prisma.inquiry.update({
+        where: { id: req.params.id },
+        data: {
+          // This 'set' command replaces the current list with the new list
+          sales_persons: {
+            set: userIds.map((uid: string) => ({ id: uid }))
           }
-       });
-       await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Updated assigned members`);
-       return res.json(updated);
-    } 
-    
+        },
+        // Return the updated data so frontend updates immediately
+        include: {
+          sales_person: { select: { id: true, name: true } },
+          sales_persons: { select: { id: true, name: true } }
+        }
+      });
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Updated assigned members`);
+      return res.json(updated);
+    }
+
     // SCENARIO 2: Frontend sends a single user (Owner change)
     if (userId) {
-       const updated = await prisma.inquiry.update({
-          where: { id: req.params.id },
-          data: { sales_person_id: userId }
-       });
-       await logActivity(req.user.id, 'UPDATE', 'INQUIRY_OWNER', req.params.id, `Reassigned inquiry owner`);
-       return res.json(updated);
+      const updated = await prisma.inquiry.update({
+        where: { id: req.params.id },
+        data: { sales_person_id: userId }
+      });
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_OWNER', req.params.id, `Reassigned inquiry owner`);
+      return res.json(updated);
     }
 
     res.status(400).json({ error: "Invalid assignment data" });

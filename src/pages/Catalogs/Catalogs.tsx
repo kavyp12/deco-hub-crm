@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  Plus, Upload, Search, BookOpen, ChevronDown, ChevronRight, Loader2, 
+import {
+  Plus, Upload, Search, BookOpen, ChevronDown, ChevronRight, Loader2,
   QrCode, ArrowRightLeft, History, Printer, User, Clock, Check, Calendar, Trash2, Filter, Edit2, Save, X
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -43,13 +43,14 @@ interface CatalogMovement {
   status: string;
   issuedByUser: { id: string; name: string };
   inquiry?: { inquiry_number: string; client_name: string };
+  architect?: { name: string };
   copy?: CatalogCopy;
 }
 interface Employee { id: string; name: string; }
 
 // --- SMART MAPPING CONFIGURATION ---
 const SMART_MAPPINGS: Record<string, string[]> = {
-  'RR Price after GST (Cut Rate)': ['RRP With Gst', 'RRP + with gst', 'RRP with GST', 'RRP + GST', 'RRP With GST', 'RRP_With_GST'], 
+  'RR Price after GST (Cut Rate)': ['RRP With Gst', 'RRP + with gst', 'RRP with GST', 'RRP + GST', 'RRP With GST', 'RRP_With_GST'],
   'Serial No': ['Serial No', 'Series no', 'SKU', 'Design No'],
   'CL + GST': ['CL + gst rate', 'CL + GST', 'CL Rate'],
   'Price Code': ['PRICE CODE', 'Price code', 'Code', 'Collection Code'],
@@ -63,9 +64,20 @@ const SMART_MAPPINGS: Record<string, string[]> = {
 const Catalogs: React.FC = () => {
   const { toast } = useToast();
   const { profile, role } = useAuth();
-  
+
   // --- STATE ---
   const [activeTab, setActiveTab] = useState('library');
+
+  // Popover States for Filters
+  const [isHistoryFilterOpen, setIsHistoryFilterOpen] = useState(false);
+  const [isInventoryFilterOpen, setIsInventoryFilterOpen] = useState(false);
+  const [isTrackingFilterOpen, setIsTrackingFilterOpen] = useState(false);
+
+  // Tracking Filters
+  const [trackingCompanyId, setTrackingCompanyId] = useState('ALL');
+  const [trackingCatalogId, setTrackingCatalogId] = useState('ALL');
+  const [trackingIssuedBy, setTrackingIssuedBy] = useState('ALL');
+
   const [companies, setCompanies] = useState<Company[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [copies, setCopies] = useState<CatalogCopy[]>([]);
@@ -80,28 +92,36 @@ const Catalogs: React.FC = () => {
   const [isAddCompanyOpen, setIsAddCompanyOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isAddCopyOpen, setIsAddCopyOpen] = useState(false);
-  
+
   // Combo Box Open States
   const [openCompanyCombo, setOpenCompanyCombo] = useState(false);
   const [openCatalogCombo, setOpenCatalogCombo] = useState(false);
-  
+
   const [selectedMovementToReturn, setSelectedMovementToReturn] = useState<string | null>(null);
-  
+
   // Filters for dropdowns
   const [issueCompanyId, setIssueCompanyId] = useState('');
   const [issueCatalogId, setIssueCatalogId] = useState('');
-  
+
   // Inventory Filters
   const [inventoryCompanyId, setInventoryCompanyId] = useState('');
   const [inventoryCatalogId, setInventoryCatalogId] = useState('');
-  
+
+  // History Filters
+  const [historyArchitect, setHistoryArchitect] = useState('ALL');
+  const [historyInquiry, setHistoryInquiry] = useState('ALL');
+  const [historyCatalogId, setHistoryCatalogId] = useState('ALL');
+  const [historyCompanyId, setHistoryCompanyId] = useState('ALL');
+  const [historyIssuedBy, setHistoryIssuedBy] = useState('ALL');
+  const [historyDate, setHistoryDate] = useState('');
+
   // Library UI
   const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
   const [selectedCatalog, setSelectedCatalog] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  
+
   // Forms
   const [newCompanyName, setNewCompanyName] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -110,12 +130,12 @@ const Catalogs: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [addCopyForm, setAddCopyForm] = useState({ catalogId: '', quantity: 1 });
-  
+
   const [issueForm, setIssueForm] = useState({
     copyId: '', inquiryId: '', architectId: '', clientName: '', remarks: '',
     issuedByUserId: '', issueDate: '', issueTime: ''
   });
-  
+
   const [returnForm, setReturnForm] = useState({
     returnDate: '', returnTime: '', type: 'now'
   });
@@ -125,12 +145,53 @@ const Catalogs: React.FC = () => {
   const [editForm, setEditForm] = useState({ name: '', price: '' });
 
   // --- INITIAL LOAD ---
-  useEffect(() => { 
+  useEffect(() => {
     fetchCompanies();
     fetchInquiries();
     fetchArchitects();
     if (role === 'super_admin') fetchEmployees();
-  }, []);
+  }, [role]);
+
+  // --- FILTER COUNTERS & RESETS ---
+  const activeHistoryFilterCount = [
+    historyCompanyId !== 'ALL',
+    historyCatalogId !== 'ALL',
+    historyArchitect !== 'ALL',
+    historyInquiry !== 'ALL',
+    historyIssuedBy !== 'ALL',
+    historyDate !== ''
+  ].filter(Boolean).length;
+
+  const handleResetHistoryFilters = () => {
+    setHistoryCompanyId('ALL');
+    setHistoryCatalogId('ALL');
+    setHistoryArchitect('ALL');
+    setHistoryInquiry('ALL');
+    setHistoryIssuedBy('ALL');
+    setHistoryDate('');
+  };
+
+  const activeTrackingFilterCount = [
+    trackingCompanyId !== 'ALL',
+    trackingCatalogId !== 'ALL',
+    trackingIssuedBy !== 'ALL'
+  ].filter(Boolean).length;
+
+  const handleResetTrackingFilters = () => {
+    setTrackingCompanyId('ALL');
+    setTrackingCatalogId('ALL');
+    setTrackingIssuedBy('ALL');
+  };
+
+  const activeInventoryFilterCount = [
+    inventoryCompanyId && inventoryCompanyId !== 'ALL',
+    inventoryCatalogId && inventoryCatalogId !== 'ALL'
+  ].filter(Boolean).length;
+
+  const handleResetInventoryFilters = () => {
+    setInventoryCompanyId('');
+    setInventoryCatalogId('');
+  };
 
   useEffect(() => {
     if (activeTab === 'tracking' || activeTab === 'history' || activeTab === 'inventory') {
@@ -138,7 +199,7 @@ const Catalogs: React.FC = () => {
     }
   }, [activeTab]);
 
-  useEffect(() => { 
+  useEffect(() => {
     if (selectedCatalog) {
       setProductSearchQuery('');
       fetchProducts(selectedCatalog);
@@ -148,35 +209,41 @@ const Catalogs: React.FC = () => {
   }, [selectedCatalog]);
 
   // --- API CALLS ---
-  const fetchCompanies = async () => { 
-    try { 
-      const { data } = await api.get('/companies'); 
-      setCompanies(data); 
+  const fetchCompanies = async () => {
+    try {
+      const { data } = await api.get('/companies');
+      setCompanies(data);
     } catch (e) {
-      console.error(e);
       toast({ title: 'Error', description: 'Failed to load companies', variant: 'destructive' });
     }
   };
-  
-  const fetchEmployees = async () => { try { const { data } = await api.get('/users/sales-people'); setEmployees(data); } catch (e) {} };
-  const fetchCopies = async () => { try { const { data } = await api.get('/catalogs/copies'); setCopies(data); } catch (e) {} };
-  const fetchMovements = async () => { try { const { data } = await api.get('/catalogs/tracking'); setMovements(data); } catch (e) {} };
-  const fetchInquiries = async () => { try { const { data } = await api.get('/inquiries'); setInquiries(data); } catch (e) {} };
-  const fetchArchitects = async () => { try { const { data } = await api.get('/architects'); setArchitects(data); } catch (e) {} };
-  
-  const fetchProducts = async (catalogId: string) => { 
+
+  const fetchEmployees = async () => {
+    try {
+      const { data } = await api.get('/users/sales-people');
+      setEmployees(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchCopies = async () => { try { const { data } = await api.get('/catalogs/copies'); setCopies(data); } catch (e) { } };
+  const fetchMovements = async () => { try { const { data } = await api.get('/catalogs/tracking'); setMovements(data); } catch (e) { } };
+  const fetchInquiries = async () => { try { const { data } = await api.get('/inquiries'); setInquiries(data); } catch (e) { } };
+  const fetchArchitects = async () => { try { const { data } = await api.get('/architects'); setArchitects(data); } catch (e) { } };
+
+  const fetchProducts = async (catalogId: string) => {
     setLoading(true);
-    try { 
+    try {
       const { data } = await api.get(`/catalogs/${catalogId}/products`);
       const uniqueProducts = data.filter((product: Product, index: number, self: Product[]) =>
         index === self.findIndex((p) => p.id === product.id)
       );
-      setProducts(uniqueProducts); 
-    } catch (e) { 
-      console.error(e);
+      setProducts(uniqueProducts);
+    } catch (e) {
       toast({ title: 'Error', description: 'Failed to load products', variant: 'destructive' });
-    } finally { 
-      setLoading(false); 
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -190,7 +257,7 @@ const Catalogs: React.FC = () => {
     return '-';
   };
 
-  // --- FILTERED INVENTORY LOGIC ---
+  // --- FILTER LOGIC ---
   const getFilteredInventory = () => {
     return copies.filter(copy => {
       if (inventoryCompanyId && inventoryCompanyId !== 'ALL' && copy.catalog.companyId !== inventoryCompanyId) return false;
@@ -199,12 +266,56 @@ const Catalogs: React.FC = () => {
     });
   };
 
+  const getFilteredHistory = () => {
+    return movements.filter(m => {
+      if (historyCompanyId !== 'ALL' && m.copy?.catalog?.companyId !== historyCompanyId) return false;
+      if (historyCatalogId !== 'ALL' && m.copy?.catalogId !== historyCatalogId) return false;
+      if (historyArchitect !== 'ALL' && m.architect?.name !== historyArchitect) return false;
+      if (historyInquiry !== 'ALL') {
+        const inqStr = `${m.inquiry?.client_name || ''} ${m.inquiry?.inquiry_number || ''}`.trim();
+        if (inqStr !== historyInquiry) return false;
+      }
+      if (historyIssuedBy !== 'ALL') {
+        if (m.issuedByUser?.name !== historyIssuedBy) return false;
+      }
+      if (historyDate) {
+        const issueD = format(new Date(m.issueDate), 'yyyy-MM-dd');
+        if (issueD !== historyDate) return false;
+      }
+      return true;
+    });
+  };
+
+  const getFilteredTracking = () => {
+    return movements.filter(m => m.status === 'ISSUED').filter(m => {
+      if (trackingCompanyId !== 'ALL' && m.copy?.catalog?.companyId !== trackingCompanyId) return false;
+      if (trackingCatalogId !== 'ALL' && m.copy?.catalogId !== trackingCatalogId) return false;
+      if (trackingIssuedBy !== 'ALL' && m.issuedByUser?.name !== trackingIssuedBy) return false;
+      return true;
+    });
+  };
+
   const filteredInventoryList = getFilteredInventory();
+  const filteredHistoryList = getFilteredHistory();
+  const filteredTrackingList = getFilteredTracking();
+
+  // --- DROPDOWN DATA EXTRACTION ---
+  const uniqueHistoryArchitects = Array.from(new Set(movements.map(m => m.architect?.name).filter(Boolean)));
+  const uniqueHistoryInquiries = Array.from(new Set(movements.map(m => `${m.inquiry?.client_name || ''} ${m.inquiry?.inquiry_number || ''}`.trim()).filter(Boolean)));
+
+  // Combines all fetched employees with anyone who currently exists in movements history
+
+  const uniqueIssuedByUsers = Array.from(
+    new Map<string, { id: string; name: string }>([
+      ...employees.map(e => [e.name, { id: String(e.id), name: e.name }] as [string, { id: string; name: string }]),
+      ...movements.filter(m => m.issuedByUser).map(m => [m.issuedByUser.name, { id: String(m.issuedByUser.id), name: m.issuedByUser.name }] as [string, { id: string; name: string }])
+    ]).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
 
   const filteredCompanies = companies.filter(company => {
     const searchLower = searchQuery.toLowerCase();
-    return company.name.toLowerCase().includes(searchLower) || 
-           company.catalogs.some(cat => cat.name.toLowerCase().includes(searchLower));
+    return company.name.toLowerCase().includes(searchLower) ||
+      company.catalogs.some(cat => cat.name.toLowerCase().includes(searchLower));
   });
 
   const filteredProducts = products.filter(product => {
@@ -219,41 +330,40 @@ const Catalogs: React.FC = () => {
   const processFile = (originalFile: File): Promise<File> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      
+
       reader.onload = (e) => {
         try {
           const data = e.target?.result;
           const workbook = XLSX.read(data, { type: 'binary' });
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
-          
+
           const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-          
+
           if (jsonData.length > 0) {
             const currentHeaders = jsonData[0] as string[];
-            const newHeaders = [...currentHeaders]; 
+            const newHeaders = [...currentHeaders];
             let changesMade = false;
 
             Object.entries(SMART_MAPPINGS).forEach(([targetHeader, variations]) => {
               if (currentHeaders.includes(targetHeader)) return;
 
-              const foundIndex = currentHeaders.findIndex(h => 
+              const foundIndex = currentHeaders.findIndex(h =>
                 h && variations.some(v => h.trim().toLowerCase() === v.toLowerCase())
               );
 
               if (foundIndex !== -1) {
-                console.log(`Auto-Mapping: Renaming "${currentHeaders[foundIndex]}" to "${targetHeader}"`);
                 newHeaders[foundIndex] = targetHeader;
                 changesMade = true;
               }
             });
-            
+
             if (changesMade) {
               jsonData[0] = newHeaders;
               const newWorksheet = XLSX.utils.aoa_to_sheet(jsonData);
               const newWorkbook = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(newWorkbook, newWorksheet, "Sheet1");
-              
+
               const excelBuffer = XLSX.write(newWorkbook, { bookType: 'xlsx', type: 'array' });
               const newFile = new File([excelBuffer], originalFile.name, { type: originalFile.type });
               resolve(newFile);
@@ -262,11 +372,10 @@ const Catalogs: React.FC = () => {
           }
           resolve(originalFile);
         } catch (error) {
-          console.error("Error processing file:", error);
           resolve(originalFile);
         }
       };
-      
+
       reader.onerror = (error) => reject(error);
       reader.readAsBinaryString(originalFile);
     });
@@ -278,29 +387,29 @@ const Catalogs: React.FC = () => {
       toast({ title: 'Error', description: 'Company name required', variant: 'destructive' });
       return;
     }
-    try { 
-      await api.post('/companies', { name: newCompanyName }); 
-      toast({ title: 'Success', description: 'Company created successfully' }); 
-      setIsAddCompanyOpen(false); 
-      setNewCompanyName(''); 
-      fetchCompanies(); 
-    } catch (error: any) { 
-      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to create company', variant: 'destructive' }); 
+    try {
+      await api.post('/companies', { name: newCompanyName });
+      toast({ title: 'Success', description: 'Company created successfully' });
+      setIsAddCompanyOpen(false);
+      setNewCompanyName('');
+      fetchCompanies();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to create company', variant: 'destructive' });
     }
   };
 
   const handleDeleteCompany = async (id: string, name: string) => {
-    if(!confirm(`Delete "${name}" and all its catalogs/products? This cannot be undone.`)) return;
-    try { 
-      await api.delete(`/companies/${id}`); 
-      toast({ title: 'Deleted', description: `${name} has been deleted` }); 
+    if (!confirm(`Delete "${name}" and all its catalogs/products? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/companies/${id}`);
+      toast({ title: 'Deleted', description: `${name} has been deleted` });
       if (expandedCompany === id) {
         setExpandedCompany(null);
         setSelectedCatalog('');
       }
-      fetchCompanies(); 
-    } catch (error: any) { 
-      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to delete company', variant: 'destructive' }); 
+      fetchCompanies();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to delete company', variant: 'destructive' });
     }
   };
 
@@ -315,27 +424,27 @@ const Catalogs: React.FC = () => {
 
     try {
       const processedFile = await processFile(file);
-      
+
       setUploadStatus('Uploading...');
-      const formData = new FormData(); 
-      formData.append('file', processedFile); 
-      formData.append('companyId', selectedCompanyUpload); 
-      formData.append('defaultType', uploadType); 
-      
+      const formData = new FormData();
+      formData.append('file', processedFile);
+      formData.append('companyId', selectedCompanyUpload);
+      formData.append('defaultType', uploadType);
+
       const mapping = {
-         name: 'Material Description',
-         price: 'RR Price after GST (Cut Rate)',
-         sku: 'Serial No',
-         description: 'Collection'
+        name: 'Material Description',
+        price: 'RR Price after GST (Cut Rate)',
+        sku: 'Serial No',
+        description: 'Collection'
       };
       formData.append('mapping', JSON.stringify(mapping));
 
-      const response = await api.post('/upload-catalog', formData, { 
-        headers: { 'Content-Type': 'multipart/form-data' } 
-      }); 
-      
+      const response = await api.post('/upload-catalog', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
       const { data } = response;
-      
+
       if (data.errors && data.errors.length > 0) {
         const firstError = typeof data.errors[0] === 'string' ? data.errors[0] : JSON.stringify(data.errors[0]);
         toast({
@@ -344,22 +453,21 @@ const Catalogs: React.FC = () => {
           variant: 'destructive'
         });
       } else {
-        toast({ title: 'Success', description: data.message || `Catalog uploaded successfully.` }); 
+        toast({ title: 'Success', description: data.message || `Catalog uploaded successfully.` });
       }
 
-      setIsUploadOpen(false); 
-      setFile(null); 
+      setIsUploadOpen(false);
+      setFile(null);
       setSelectedCompanyUpload('');
-      fetchCompanies(); 
+      fetchCompanies();
       if (selectedCatalog) fetchProducts(selectedCatalog);
 
-    } catch (error: any) { 
-      console.error("Upload failed:", error);
-      toast({ 
-        title: 'Upload Failed', 
-        description: error.response?.data?.message || 'Failed to upload.', 
-        variant: 'destructive' 
-      }); 
+    } catch (error: any) {
+      toast({
+        title: 'Upload Failed',
+        description: error.response?.data?.message || 'Failed to upload.',
+        variant: 'destructive'
+      });
     } finally {
       setIsUploading(false);
       setUploadStatus('');
@@ -369,7 +477,7 @@ const Catalogs: React.FC = () => {
   const handleIssueCatalog = async () => {
     try {
       const combinedDate = new Date(`${issueForm.issueDate}T${issueForm.issueTime}`);
-      
+
       await api.post('/catalogs/issue', {
         copyId: issueForm.copyId,
         inquiryId: issueForm.inquiryId,
@@ -379,7 +487,7 @@ const Catalogs: React.FC = () => {
         issueDate: combinedDate.toISOString(),
         issuedByUserId: issueForm.issuedByUserId || undefined
       });
-      
+
       toast({ title: 'Success', description: 'Catalogue Issued Successfully' });
       setIsIssueOpen(false);
       fetchMovements(); fetchCopies();
@@ -407,11 +515,11 @@ const Catalogs: React.FC = () => {
   };
 
   const handleAddCopies = async () => {
-    try { 
-      await api.post(`/catalogs/${addCopyForm.catalogId}/copies`, { quantity: addCopyForm.quantity }); 
+    try {
+      await api.post(`/catalogs/${addCopyForm.catalogId}/copies`, { quantity: addCopyForm.quantity });
       toast({ title: 'Success', description: 'Copies generated successfully' });
-      setIsAddCopyOpen(false); 
-      fetchCopies(); 
+      setIsAddCopyOpen(false);
+      fetchCopies();
     } catch (e) {
       toast({ title: 'Error', description: 'Failed to generate copies', variant: 'destructive' });
     }
@@ -423,17 +531,17 @@ const Catalogs: React.FC = () => {
   };
 
   const handleUpdateProduct = async () => {
-    if(!editingProduct) return;
-    try { 
-      await api.put(`/products/${editingProduct.id}`, { 
-        price: editForm.price, 
-        name: editForm.name 
-      }); 
-      toast({ title: 'Updated', description: 'Product updated successfully' }); 
-      setEditingProduct(null); 
-      fetchProducts(selectedCatalog); 
-    } catch (error: any) { 
-      toast({ title: 'Error', description: 'Failed to update', variant: 'destructive' }); 
+    if (!editingProduct) return;
+    try {
+      await api.put(`/products/${editingProduct.id}`, {
+        price: editForm.price,
+        name: editForm.name
+      });
+      toast({ title: 'Updated', description: 'Product updated successfully' });
+      setEditingProduct(null);
+      fetchProducts(selectedCatalog);
+    } catch (error: any) {
+      toast({ title: 'Error', description: 'Failed to update', variant: 'destructive' });
     }
   };
 
@@ -478,16 +586,16 @@ const Catalogs: React.FC = () => {
             <p className="text-sm md:text-base text-muted-foreground mt-1">Manage companies, catalogs and products</p>
           </div>
           <Button onClick={openIssueDialog} variant="accent" className="flex gap-2">
-            <ArrowRightLeft className="h-4 w-4"/> Issue Catalogue
+            <ArrowRightLeft className="h-4 w-4" /> Issue Catalogue
           </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="library" className="gap-2"><BookOpen className="h-4 w-4"/> Library</TabsTrigger>
-            <TabsTrigger value="tracking" className="gap-2"><ArrowRightLeft className="h-4 w-4"/> Active</TabsTrigger>
-            <TabsTrigger value="inventory" className="gap-2"><QrCode className="h-4 w-4"/> Inventory</TabsTrigger>
-            <TabsTrigger value="history" className="gap-2"><History className="h-4 w-4"/> History</TabsTrigger>
+            <TabsTrigger value="library" className="gap-2"><BookOpen className="h-4 w-4" /> Library</TabsTrigger>
+            <TabsTrigger value="tracking" className="gap-2"><ArrowRightLeft className="h-4 w-4" /> Active</TabsTrigger>
+            <TabsTrigger value="inventory" className="gap-2"><QrCode className="h-4 w-4" /> Inventory</TabsTrigger>
+            <TabsTrigger value="history" className="gap-2"><History className="h-4 w-4" /> History</TabsTrigger>
           </TabsList>
 
           {/* === LIBRARY TAB === */}
@@ -497,7 +605,7 @@ const Catalogs: React.FC = () => {
                 <Dialog open={isAddCompanyOpen} onOpenChange={setIsAddCompanyOpen}>
                   <DialogTrigger asChild>
                     <Button variant="outline" className="flex-1 md:flex-none">
-                      <Plus className="mr-2 h-4 w-4"/> Add Company
+                      <Plus className="mr-2 h-4 w-4" /> Add Company
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-[90vw] md:max-w-lg">
@@ -505,7 +613,7 @@ const Catalogs: React.FC = () => {
                     <div className="pt-4 space-y-4">
                       <div className="space-y-2">
                         <Label>Company Name</Label>
-                        <Input value={newCompanyName} onChange={e=>setNewCompanyName(e.target.value)} placeholder="Enter company name" />
+                        <Input value={newCompanyName} onChange={e => setNewCompanyName(e.target.value)} placeholder="Enter company name" />
                       </div>
                       <Button onClick={handleAddCompany} className="w-full">Create Company</Button>
                     </div>
@@ -515,7 +623,7 @@ const Catalogs: React.FC = () => {
                 <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
                   <DialogTrigger asChild>
                     <Button variant="accent" className="flex-1 md:flex-none">
-                      <Upload className="mr-2 h-4 w-4"/> Upload Excel
+                      <Upload className="mr-2 h-4 w-4" /> Upload Excel
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-[90vw] md:max-w-lg">
@@ -524,9 +632,9 @@ const Catalogs: React.FC = () => {
                       <div className="space-y-2">
                         <Label>Select Company</Label>
                         <Select value={selectedCompanyUpload} onValueChange={setSelectedCompanyUpload}>
-                          <SelectTrigger><SelectValue placeholder="Choose company"/></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Choose company" /></SelectTrigger>
                           <SelectContent>
-                            {companies.map(c=><SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                            {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
@@ -534,7 +642,7 @@ const Catalogs: React.FC = () => {
                       <div className="space-y-2">
                         <Label>Product Category</Label>
                         <Select value={uploadType} onValueChange={setUploadType}>
-                          <SelectTrigger><SelectValue/></SelectTrigger>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="Curtains">Curtains</SelectItem>
                             <SelectItem value="blinds">Blinds</SelectItem>
@@ -545,10 +653,10 @@ const Catalogs: React.FC = () => {
 
                       <div className="space-y-2">
                         <Label>Excel File</Label>
-                        <Input 
-                          type="file" 
+                        <Input
+                          type="file"
                           accept=".xlsx,.xls,.csv"
-                          onChange={e=>setFile(e.target.files?.[0] || null)} 
+                          onChange={e => setFile(e.target.files?.[0] || null)}
                         />
                         {file && <p className="text-xs text-muted-foreground mt-1">Selected: {file.name}</p>}
                       </div>
@@ -563,9 +671,9 @@ const Catalogs: React.FC = () => {
                         </div>
                       </div>
 
-                      <Button 
-                        onClick={handleUpload} 
-                        disabled={!file || !selectedCompanyUpload || isUploading} 
+                      <Button
+                        onClick={handleUpload}
+                        disabled={!file || !selectedCompanyUpload || isUploading}
                         className="w-full"
                       >
                         {isUploading ? (
@@ -591,7 +699,7 @@ const Catalogs: React.FC = () => {
                     <div key={company.id} className="border border-border rounded-lg overflow-hidden">
                       <div className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => toggleCompany(company.id)}>
                         <div className="font-medium flex items-center gap-2">
-                          {expandedCompany === company.id ? <ChevronDown className="h-4 w-4 text-primary"/> : <ChevronRight className="h-4 w-4 text-muted-foreground"/>}
+                          {expandedCompany === company.id ? <ChevronDown className="h-4 w-4 text-primary" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                           <span className="truncate">{company.name}</span>
                         </div>
                         <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company.id, company.name); }}>
@@ -604,20 +712,18 @@ const Catalogs: React.FC = () => {
                             <p className="text-xs text-muted-foreground p-2 text-center">No catalogs.</p>
                           ) : (
                             company.catalogs.map(catalog => (
-                              <button 
-                                key={catalog.id} 
-                                onClick={() => setSelectedCatalog(catalog.id)} 
-                                className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
-                                  selectedCatalog === catalog.id 
-                                    ? 'bg-accent/10 text-accent font-medium border border-accent/20' 
-                                    : 'text-muted-foreground hover:bg-muted'
-                                }`}
+                              <button
+                                key={catalog.id}
+                                onClick={() => setSelectedCatalog(catalog.id)}
+                                className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${selectedCatalog === catalog.id
+                                  ? 'bg-accent/10 text-accent font-medium border border-accent/20'
+                                  : 'text-muted-foreground hover:bg-muted'
+                                  }`}
                               >
                                 <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
                                 <span className="truncate">{catalog.name}</span>
-                                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded capitalize ${
-                                  catalog.type === 'Curtains' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                                }`}>
+                                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded capitalize ${catalog.type === 'Curtains' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                  }`}>
                                   {catalog.type}
                                 </span>
                               </button>
@@ -637,17 +743,17 @@ const Catalogs: React.FC = () => {
                     <div className="p-4 border-b border-border bg-muted/20 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-foreground whitespace-nowrap">Products ({filteredProducts.length})</h3>
-                        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground"/>}
+                        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                       </div>
                       <div className="relative w-full md:w-64">
                         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input placeholder="Search products..." className="pl-9 h-9 text-sm" value={productSearchQuery} onChange={(e) => setProductSearchQuery(e.target.value)} />
                       </div>
                     </div>
-                    
+
                     <div className="overflow-x-auto flex-1">
                       {loading ? (
-                        <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary"/></div>
+                        <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
                       ) : filteredProducts.length === 0 ? (
                         <div className="flex items-center justify-center h-full text-muted-foreground">No products found</div>
                       ) : (
@@ -677,13 +783,13 @@ const Catalogs: React.FC = () => {
                                 <td className="px-4 py-3 text-right">
                                   {editingProduct?.id === product.id ? (
                                     <div className="flex items-center gap-2 justify-end">
-                                      <Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="h-8 w-32 text-xs" />
-                                      <Input value={editForm.price} onChange={e => setEditForm({...editForm, price: e.target.value})} className="h-8 w-24 text-xs" />
-                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-success" onClick={handleUpdateProduct}><Save className="h-4 w-4"/></Button>
-                                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProduct(null)}><X className="h-4 w-4"/></Button>
+                                      <Input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className="h-8 w-32 text-xs" />
+                                      <Input value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} className="h-8 w-24 text-xs" />
+                                      <Button size="icon" variant="ghost" className="h-8 w-8 text-success" onClick={handleUpdateProduct}><Save className="h-4 w-4" /></Button>
+                                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingProduct(null)}><X className="h-4 w-4" /></Button>
                                     </div>
                                   ) : (
-                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleEditProduct(product)}><Edit2 className="h-4 w-4"/></Button>
+                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleEditProduct(product)}><Edit2 className="h-4 w-4" /></Button>
                                   )}
                                 </td>
                               </tr>
@@ -696,7 +802,7 @@ const Catalogs: React.FC = () => {
                 ) : (
                   <div className="h-full flex items-center justify-center text-muted-foreground border-2 border-dashed border-border m-4 rounded-lg">
                     <div className="text-center py-12 px-4">
-                      <Search className="h-16 w-16 mx-auto mb-4 opacity-20"/>
+                      <Search className="h-16 w-16 mx-auto mb-4 opacity-20" />
                       <p className="text-lg font-medium mb-2">No Catalog Selected</p>
                     </div>
                   </div>
@@ -707,8 +813,80 @@ const Catalogs: React.FC = () => {
 
           {/* === TRACKING TAB === */}
           <TabsContent value="tracking" className="space-y-4">
+            {/* Top Bar for Tracking Filters */}
+            <div className="flex justify-between items-center bg-card p-3 rounded-xl border border-border shadow-sm">
+              <h3 className="text-sm font-medium text-foreground ml-2">Active Issued Catalogs</h3>
+
+              <Popover open={isTrackingFilterOpen} onOpenChange={setIsTrackingFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 flex gap-2 bg-background border-border hover:bg-muted">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    Filters
+                    {activeTrackingFilterCount > 0 && (
+                      <span className="bg-primary text-primary-foreground text-[10px] font-bold h-4 w-4 flex items-center justify-center rounded-full">
+                        {activeTrackingFilterCount}
+                      </span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+
+                <PopoverContent className="w-[320px] p-0 shadow-xl rounded-xl border-border" align="end">
+                  <div className="px-4 py-3 border-b border-border bg-muted/30 flex justify-between items-center">
+                    <h4 className="font-semibold text-sm">Filter Active</h4>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIsTrackingFilterOpen(false)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+
+                  <div className="p-4 space-y-4 bg-background">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Catalog Company</Label>
+                      <Select value={trackingCompanyId} onValueChange={(v) => { setTrackingCompanyId(v); setTrackingCatalogId('ALL'); }}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Companies" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Companies</SelectItem>
+                          {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Catalog Name</Label>
+                      <Select value={trackingCatalogId} onValueChange={setTrackingCatalogId} disabled={trackingCompanyId === 'ALL' || !trackingCompanyId}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Catalogs" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Catalogs</SelectItem>
+                          {getCatalogsForCompany(trackingCompanyId).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Issued By</Label>
+                      <Select value={trackingIssuedBy} onValueChange={setTrackingIssuedBy}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Users" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Users</SelectItem>
+                          {uniqueIssuedByUsers.map((e: any) => <SelectItem key={e.name} value={e.name}>{e.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="p-4 border-t border-border bg-muted/10 flex flex-row-reverse justify-between items-center rounded-b-xl">
+                    <Button size="sm" onClick={() => setIsTrackingFilterOpen(false)} className="px-6">
+                      Apply filter
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleResetTrackingFilters}>
+                      Clear all
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {movements.filter(m => m.status === 'ISSUED').map(m => (
+              {filteredTrackingList.map(m => (
                 <div key={m.id} className="card-premium p-4 relative hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-3">
                     <div>
@@ -737,9 +915,9 @@ const Catalogs: React.FC = () => {
                   </div>
                 </div>
               ))}
-              {movements.filter(m => m.status === 'ISSUED').length === 0 && (
+              {filteredTrackingList.length === 0 && (
                 <div className="col-span-full py-12 text-center text-muted-foreground border-2 border-dashed rounded-lg card-premium">
-                  No catalogues are currently out.
+                  No active catalogues found matching your filters.
                 </div>
               )}
             </div>
@@ -747,50 +925,74 @@ const Catalogs: React.FC = () => {
 
           {/* === INVENTORY TAB === */}
           <TabsContent value="inventory" className="space-y-4">
-            <div className="flex flex-col md:flex-row gap-4 items-center card-premium p-4">
-              <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                    <Filter className="h-3 w-3"/> Filter by Company
-                  </Label>
-                  <Select 
-                    onValueChange={(v) => { 
-                      setInventoryCompanyId(v); 
-                      setInventoryCatalogId(''); 
-                    }} 
-                    value={inventoryCompanyId}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Show All Companies"/>
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px]">
-                      <SelectItem value="ALL">Show All Companies</SelectItem>
-                      {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                    <Filter className="h-3 w-3"/> Filter by Catalog
-                  </Label>
-                  <Select 
-                    disabled={!inventoryCompanyId || inventoryCompanyId === 'ALL'} 
-                    onValueChange={setInventoryCatalogId} 
-                    value={inventoryCatalogId}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Show All Catalogs"/>
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px]">
-                      <SelectItem value="ALL">Show All Catalogs</SelectItem>
-                      {getCatalogsForCompany(inventoryCompanyId).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4"/> Print</Button>
-                <Button onClick={() => setIsAddCopyOpen(true)}><Plus className="mr-2 h-4 w-4"/> Add Copies</Button>
+
+            {/* Top Bar for Inventory */}
+            <div className="flex justify-between items-center bg-card p-3 rounded-xl border border-border shadow-sm">
+              <h3 className="text-sm font-medium text-foreground ml-2">Inventory Records</h3>
+
+              <div className="flex items-center gap-2">
+                <Popover open={isInventoryFilterOpen} onOpenChange={setIsInventoryFilterOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 flex gap-2 bg-background border-border hover:bg-muted">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      Filters
+                      {activeInventoryFilterCount > 0 && (
+                        <span className="bg-primary text-primary-foreground text-[10px] font-bold h-4 w-4 flex items-center justify-center rounded-full">
+                          {activeInventoryFilterCount}
+                        </span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+
+                  <PopoverContent className="w-[320px] p-0 shadow-xl rounded-xl border-border" align="end">
+                    <div className="px-4 py-3 border-b border-border bg-muted/30 flex justify-between items-center">
+                      <h4 className="font-semibold text-sm">Filter Inventory</h4>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIsInventoryFilterOpen(false)}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="p-4 space-y-4 bg-background">
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs font-semibold text-foreground">Catalog Company</Label>
+                        <Select onValueChange={(v) => { setInventoryCompanyId(v); setInventoryCatalogId(''); }} value={inventoryCompanyId}>
+                          <SelectTrigger className="h-9"><SelectValue placeholder="Show All Companies" /></SelectTrigger>
+                          <SelectContent className="max-h-[200px]">
+                            <SelectItem value="ALL">Show All Companies</SelectItem>
+                            {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs font-semibold text-foreground">Catalog Name</Label>
+                        <Select disabled={!inventoryCompanyId || inventoryCompanyId === 'ALL'} onValueChange={setInventoryCatalogId} value={inventoryCatalogId}>
+                          <SelectTrigger className="h-9"><SelectValue placeholder="Show All Catalogs" /></SelectTrigger>
+                          <SelectContent className="max-h-[200px]">
+                            <SelectItem value="ALL">Show All Catalogs</SelectItem>
+                            {getCatalogsForCompany(inventoryCompanyId).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="p-4 border-t border-border bg-muted/10 flex flex-row-reverse justify-between items-center rounded-b-xl">
+                      <Button size="sm" onClick={() => setIsInventoryFilterOpen(false)} className="px-6">
+                        Apply filter
+                      </Button>
+                      <Button variant="ghost" size="sm" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleResetInventoryFilters}>
+                        Clear all
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Button variant="outline" size="sm" className="h-9" onClick={() => window.print()}>
+                  <Printer className="mr-2 h-4 w-4" /> Print
+                </Button>
+                <Button size="sm" className="h-9" onClick={() => setIsAddCopyOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Copies
+                </Button>
               </div>
             </div>
 
@@ -818,42 +1020,133 @@ const Catalogs: React.FC = () => {
           </TabsContent>
 
           {/* === HISTORY TAB === */}
-          <TabsContent value="history">
-            <div className="card-premium overflow-hidden">
+          <TabsContent value="history" className="space-y-4">
+
+            {/* Top Bar for History */}
+            <div className="flex justify-between items-center bg-card p-3 rounded-xl border border-border shadow-sm">
+              <h3 className="text-sm font-medium text-foreground ml-2">History Records</h3>
+
+              <Popover open={isHistoryFilterOpen} onOpenChange={setIsHistoryFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-9 flex gap-2 bg-background border-border hover:bg-muted">
+                    <Filter className="h-4 w-4 text-muted-foreground" />
+                    Filters
+                    {activeHistoryFilterCount > 0 && (
+                      <span className="bg-primary text-primary-foreground text-[10px] font-bold h-4 w-4 flex items-center justify-center rounded-full">
+                        {activeHistoryFilterCount}
+                      </span>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+
+                <PopoverContent className="w-[450px] p-0 shadow-xl rounded-xl border-border" align="end">
+                  <div className="px-4 py-3 border-b border-border bg-muted/30 flex justify-between items-center">
+                    <h4 className="font-semibold text-sm">Filter History</h4>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIsHistoryFilterOpen(false)}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+
+                  <div className="p-4 grid grid-cols-2 gap-x-4 gap-y-4 max-h-[60vh] overflow-y-auto bg-background">
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Catalog Company</Label>
+                      <Select value={historyCompanyId} onValueChange={(v) => { setHistoryCompanyId(v); setHistoryCatalogId('ALL'); }}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Companies" /></SelectTrigger>
+                        <SelectContent><SelectItem value="ALL">All Companies</SelectItem>{companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Catalog Name</Label>
+                      <Select value={historyCatalogId} onValueChange={setHistoryCatalogId} disabled={historyCompanyId === 'ALL' || !historyCompanyId}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Catalogs" /></SelectTrigger>
+                        <SelectContent><SelectItem value="ALL">All Catalogs</SelectItem>{getCatalogsForCompany(historyCompanyId).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Architect</Label>
+                      <Select value={historyArchitect} onValueChange={setHistoryArchitect}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Architects" /></SelectTrigger>
+                        <SelectContent><SelectItem value="ALL">All Architects</SelectItem>{uniqueHistoryArchitects.map(a => <SelectItem key={a as string} value={a as string}>{a as string}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Inquiry</Label>
+                      <Select value={historyInquiry} onValueChange={setHistoryInquiry}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Inquiries" /></SelectTrigger>
+                        <SelectContent><SelectItem value="ALL">All Inquiries</SelectItem>{uniqueHistoryInquiries.map(i => <SelectItem key={i as string} value={i as string}>{i as string}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Issued By</Label>
+                      <Select value={historyIssuedBy} onValueChange={setHistoryIssuedBy}>
+                        <SelectTrigger className="h-9"><SelectValue placeholder="All Users" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Users</SelectItem>
+                          {uniqueIssuedByUsers.map((e: any) => <SelectItem key={e.name} value={e.name}>{e.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <Label className="text-xs font-semibold text-foreground">Issue Date</Label>
+                      <Input type="date" value={historyDate} onChange={(e) => setHistoryDate(e.target.value)} className="h-9 text-sm" />
+                    </div>
+                  </div>
+
+                  <div className="p-4 border-t border-border bg-muted/10 flex flex-row-reverse justify-between items-center rounded-b-xl">
+                    <Button size="sm" onClick={() => setIsHistoryFilterOpen(false)} className="px-6">
+                      Apply filter
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-sm text-muted-foreground hover:text-foreground" onClick={handleResetHistoryFilters}>
+                      Clear all filters
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {/* Table Area */}
+            <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
               <table className="w-full text-sm text-left">
                 <thead className="bg-muted/50 border-b">
                   <tr>
-                    <th className="p-3 font-semibold text-muted-foreground">Issued Date</th>
-                    <th className="p-3 font-semibold text-muted-foreground">Returned Date</th>
-                    <th className="p-3 font-semibold text-muted-foreground">Catalog</th>
-                    <th className="p-3 font-semibold text-muted-foreground">Issued To</th>
-                    <th className="p-3 font-semibold text-muted-foreground">By</th>
-                    <th className="p-3 font-semibold text-muted-foreground">Status</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">Issued Date</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">Returned Date</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">Catalog</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">Issued To</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">By</th>
+                    <th className="p-4 font-semibold text-muted-foreground text-xs uppercase tracking-wider">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {movements.map(m => (
+                  {filteredHistoryList.length === 0 ? (
+                    <tr><td colSpan={6} className="p-12 text-center text-muted-foreground border-dashed">No history matches the current filters.</td></tr>
+                  ) : filteredHistoryList.map(m => (
                     <tr key={m.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="p-3">
-                        <div className="font-medium">{format(new Date(m.issueDate), 'dd MMM yy')}</div>
-                        <div className="text-xs text-muted-foreground">{format(new Date(m.issueDate), 'hh:mm a')}</div>
+                      <td className="p-4">
+                        <div className="font-medium text-foreground">{format(new Date(m.issueDate), 'dd MMM yy')}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{format(new Date(m.issueDate), 'hh:mm a')}</div>
                       </td>
-                      <td className="p-3">
+                      <td className="p-4">
                         {m.returnDate ? (
                           <>
-                            <div className="font-medium">{format(new Date(m.returnDate), 'dd MMM yy')}</div>
-                            <div className="text-xs text-muted-foreground">{format(new Date(m.returnDate), 'hh:mm a')}</div>
+                            <div className="font-medium text-foreground">{format(new Date(m.returnDate), 'dd MMM yy')}</div>
+                            <div className="text-xs text-muted-foreground mt-0.5">{format(new Date(m.returnDate), 'hh:mm a')}</div>
                           </>
                         ) : <span className="text-muted-foreground">-</span>}
                       </td>
-                      <td className="p-3">
-                        <div className="font-medium">{m.copy?.catalog.name}</div>
-                        <div className="text-xs text-muted-foreground">Copy #{m.copy?.copyNumber}</div>
+                      <td className="p-4">
+                        <div className="font-medium text-foreground">{m.copy?.catalog.name}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">Copy #{m.copy?.copyNumber}</div>
                       </td>
-                      <td className="p-3">{m.clientName}</td>
-                      <td className="p-3">{m.issuedByUser?.name}</td>
-                      <td className="p-3">
-                        <Badge variant="outline" className={m.status === 'ISSUED' ? 'text-orange-600 border-orange-200 bg-orange-50' : ''}>
+                      <td className="p-4 font-medium">{m.clientName}</td>
+                      <td className="p-4 text-muted-foreground">{m.issuedByUser?.name}</td>
+                      <td className="p-4">
+                        <Badge variant="outline" className={m.status === 'ISSUED' ? 'text-orange-600 border-orange-200 bg-orange-50' : 'text-green-600 border-green-200 bg-green-50'}>
                           {m.status}
                         </Badge>
                       </td>
@@ -866,14 +1159,14 @@ const Catalogs: React.FC = () => {
         </Tabs>
 
         {/* --- DIALOGS --- */}
-        
+
         {/* ISSUE DIALOG */}
         <Dialog open={isIssueOpen} onOpenChange={setIsIssueOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Issue Catalogue</DialogTitle>
             </DialogHeader>
-            
+
             <div className="grid grid-cols-2 gap-6 py-4">
               {/* LEFT: Selection */}
               <div className="space-y-4">
@@ -893,16 +1186,16 @@ const Catalogs: React.FC = () => {
                           <CommandEmpty>No company found.</CommandEmpty>
                           <CommandGroup>
                             {companies.map(c => (
-                              <CommandItem 
-                                key={c.id} 
+                              <CommandItem
+                                key={c.id}
                                 value={c.name}
-                                onSelect={() => { 
-                                  setIssueCompanyId(c.id); 
-                                  setIssueCatalogId(''); 
+                                onSelect={() => {
+                                  setIssueCompanyId(c.id);
+                                  setIssueCatalogId('');
                                   setOpenCompanyCombo(false);
                                 }}
                               >
-                                <Check className={cn("mr-2 h-4 w-4", issueCompanyId === c.id ? "opacity-100" : "opacity-0")}/>
+                                <Check className={cn("mr-2 h-4 w-4", issueCompanyId === c.id ? "opacity-100" : "opacity-0")} />
                                 {c.name}
                               </CommandItem>
                             ))}
@@ -929,16 +1222,16 @@ const Catalogs: React.FC = () => {
                           <CommandEmpty>No catalog found.</CommandEmpty>
                           <CommandGroup>
                             {getCatalogsForCompany(issueCompanyId).map(c => (
-                              <CommandItem 
-                                key={c.id} 
+                              <CommandItem
+                                key={c.id}
                                 value={c.name}
-                                onSelect={() => { 
-                                  setIssueCatalogId(c.id); 
-                                  setIssueForm(prev => ({...prev, copyId: ''})); 
+                                onSelect={() => {
+                                  setIssueCatalogId(c.id);
+                                  setIssueForm(prev => ({ ...prev, copyId: '' }));
                                   setOpenCatalogCombo(false);
                                 }}
                               >
-                                <Check className={cn("mr-2 h-4 w-4", issueCatalogId === c.id ? "opacity-100" : "opacity-0")}/>
+                                <Check className={cn("mr-2 h-4 w-4", issueCatalogId === c.id ? "opacity-100" : "opacity-0")} />
                                 {c.name}
                               </CommandItem>
                             ))}
@@ -951,10 +1244,10 @@ const Catalogs: React.FC = () => {
 
                 <div className="space-y-2">
                   <Label className="text-xs uppercase text-muted-foreground font-bold">3. Select Copy</Label>
-                  <Select 
-                    disabled={!issueCatalogId} 
-                    value={issueForm.copyId} 
-                    onValueChange={v => setIssueForm(prev => ({...prev, copyId: v}))}
+                  <Select
+                    disabled={!issueCatalogId}
+                    value={issueForm.copyId}
+                    onValueChange={v => setIssueForm(prev => ({ ...prev, copyId: v }))}
                   >
                     <SelectTrigger className="font-normal"><SelectValue placeholder="Choose Copy" /></SelectTrigger>
                     <SelectContent className="max-h-[200px]">
@@ -972,7 +1265,7 @@ const Catalogs: React.FC = () => {
                   <Label className="text-xs uppercase text-muted-foreground font-bold">Project / Inquiry</Label>
                   <Select onValueChange={v => {
                     const inq = inquiries.find(i => i.id === v);
-                    setIssueForm(prev => ({...prev, inquiryId: v, clientName: inq?.client_name || ''}));
+                    setIssueForm(prev => ({ ...prev, inquiryId: v, clientName: inq?.client_name || '' }));
                   }}>
                     <SelectTrigger><SelectValue placeholder="Optional Link" /></SelectTrigger>
                     <SelectContent className="max-h-[200px]">
@@ -985,7 +1278,7 @@ const Catalogs: React.FC = () => {
 
                 <div className="space-y-2">
                   <Label className="text-xs uppercase text-muted-foreground font-bold">Architect</Label>
-                  <Select onValueChange={v => setIssueForm(prev => ({...prev, architectId: v}))}>
+                  <Select onValueChange={v => setIssueForm(prev => ({ ...prev, architectId: v }))}>
                     <SelectTrigger><SelectValue placeholder="Select Architect" /></SelectTrigger>
                     <SelectContent className="max-h-[200px]">
                       {architects.map(a => (
@@ -997,13 +1290,13 @@ const Catalogs: React.FC = () => {
 
                 <div className="space-y-2">
                   <Label className="text-xs uppercase text-muted-foreground font-bold">Client Name</Label>
-                  <Input value={issueForm.clientName} onChange={e => setIssueForm(prev => ({...prev, clientName: e.target.value}))} placeholder="Enter Name"/>
+                  <Input value={issueForm.clientName} onChange={e => setIssueForm(prev => ({ ...prev, clientName: e.target.value }))} placeholder="Enter Name" />
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-xs uppercase text-muted-foreground font-bold">Handover By</Label>
                   {role === 'super_admin' ? (
-                    <Select onValueChange={v => setIssueForm(prev => ({...prev, issuedByUserId: v}))}>
+                    <Select onValueChange={v => setIssueForm(prev => ({ ...prev, issuedByUserId: v }))}>
                       <SelectTrigger>
                         <SelectValue placeholder={profile?.name || "Select Employee"} />
                       </SelectTrigger>
@@ -1012,18 +1305,18 @@ const Catalogs: React.FC = () => {
                       </SelectContent>
                     </Select>
                   ) : (
-                    <Input disabled value={profile?.name || 'Me'} className="bg-muted/50 text-muted-foreground"/>
+                    <Input disabled value={profile?.name || 'Me'} className="bg-muted/50 text-muted-foreground" />
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 bg-muted/30 p-3 rounded-lg border">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Date</Label>
-                    <Input type="date" value={issueForm.issueDate} onChange={e => setIssueForm(prev => ({...prev, issueDate: e.target.value}))} className="h-8 text-xs"/>
+                    <Input type="date" value={issueForm.issueDate} onChange={e => setIssueForm(prev => ({ ...prev, issueDate: e.target.value }))} className="h-8 text-xs" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Time</Label>
-                    <Input type="time" value={issueForm.issueTime} onChange={e => setIssueForm(prev => ({...prev, issueTime: e.target.value}))} className="h-8 text-xs"/>
+                    <Input type="time" value={issueForm.issueTime} onChange={e => setIssueForm(prev => ({ ...prev, issueTime: e.target.value }))} className="h-8 text-xs" />
                   </div>
                 </div>
               </div>
@@ -1040,21 +1333,19 @@ const Catalogs: React.FC = () => {
         <Dialog open={isReturnOpen} onOpenChange={setIsReturnOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>Return Catalogue</DialogTitle></DialogHeader>
-            
+
             <div className="space-y-4 py-4">
               <div className="flex flex-col gap-3">
                 <Label className="text-muted-foreground">When was it returned?</Label>
-                
-                <div 
-                  onClick={() => setReturnForm(prev => ({...prev, type: 'now'}))}
-                  className={`flex items-center space-x-3 border p-3 rounded-lg cursor-pointer transition-all ${
-                    returnForm.type === 'now' ? 'border-primary bg-muted/30' : 'hover:bg-muted/30'
-                  }`}
+
+                <div
+                  onClick={() => setReturnForm(prev => ({ ...prev, type: 'now' }))}
+                  className={`flex items-center space-x-3 border p-3 rounded-lg cursor-pointer transition-all ${returnForm.type === 'now' ? 'border-primary bg-muted/30' : 'hover:bg-muted/30'
+                    }`}
                 >
-                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                    returnForm.type === 'now' ? 'border-primary' : 'border-border'
-                  }`}>
-                    {returnForm.type === 'now' && <div className="w-2 h-2 rounded-full bg-primary"/>}
+                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${returnForm.type === 'now' ? 'border-primary' : 'border-border'
+                    }`}>
+                    {returnForm.type === 'now' && <div className="w-2 h-2 rounded-full bg-primary" />}
                   </div>
                   <div>
                     <span className="font-medium text-sm block">Right Now</span>
@@ -1062,16 +1353,14 @@ const Catalogs: React.FC = () => {
                   </div>
                 </div>
 
-                <div 
-                  onClick={() => setReturnForm(prev => ({...prev, type: 'manual'}))}
-                  className={`flex items-center space-x-3 border p-3 rounded-lg cursor-pointer transition-all ${
-                    returnForm.type === 'manual' ? 'border-primary bg-muted/30' : 'hover:bg-muted/30'
-                  }`}
+                <div
+                  onClick={() => setReturnForm(prev => ({ ...prev, type: 'manual' }))}
+                  className={`flex items-center space-x-3 border p-3 rounded-lg cursor-pointer transition-all ${returnForm.type === 'manual' ? 'border-primary bg-muted/30' : 'hover:bg-muted/30'
+                    }`}
                 >
-                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                    returnForm.type === 'manual' ? 'border-primary' : 'border-border'
-                  }`}>
-                    {returnForm.type === 'manual' && <div className="w-2 h-2 rounded-full bg-primary"/>}
+                  <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${returnForm.type === 'manual' ? 'border-primary' : 'border-border'
+                    }`}>
+                    {returnForm.type === 'manual' && <div className="w-2 h-2 rounded-full bg-primary" />}
                   </div>
                   <span className="font-medium text-sm">Custom Date & Time</span>
                 </div>
@@ -1081,11 +1370,11 @@ const Catalogs: React.FC = () => {
                 <div className="grid grid-cols-2 gap-2 bg-muted/30 p-3 rounded-lg">
                   <div className="space-y-1">
                     <Label className="text-xs">Date</Label>
-                    <Input type="date" value={returnForm.returnDate} onChange={e => setReturnForm(prev => ({...prev, returnDate: e.target.value}))} />
+                    <Input type="date" value={returnForm.returnDate} onChange={e => setReturnForm(prev => ({ ...prev, returnDate: e.target.value }))} />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Time</Label>
-                    <Input type="time" value={returnForm.returnTime} onChange={e => setReturnForm(prev => ({...prev, returnTime: e.target.value}))} />
+                    <Input type="time" value={returnForm.returnTime} onChange={e => setReturnForm(prev => ({ ...prev, returnTime: e.target.value }))} />
                   </div>
                 </div>
               )}
@@ -1106,28 +1395,28 @@ const Catalogs: React.FC = () => {
               <div className="space-y-2">
                 <Label>1. Company</Label>
                 <Select onValueChange={setInventoryCompanyId}>
-                  <SelectTrigger><SelectValue placeholder="Select Company"/></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select Company" /></SelectTrigger>
                   <SelectContent className="max-h-[200px]">
-                    {companies.map(c=><SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    {companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>2. Catalog</Label>
-                <Select disabled={!inventoryCompanyId} onValueChange={v => setAddCopyForm({...addCopyForm, catalogId: v})}>
-                  <SelectTrigger><SelectValue placeholder="Select Catalog"/></SelectTrigger>
+                <Select disabled={!inventoryCompanyId} onValueChange={v => setAddCopyForm({ ...addCopyForm, catalogId: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select Catalog" /></SelectTrigger>
                   <SelectContent className="max-h-[200px]">
-                    {getCatalogsForCompany(inventoryCompanyId).map(c=><SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    {getCatalogsForCompany(inventoryCompanyId).map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>3. Quantity</Label>
-                <Input 
-                  type="number" 
-                  min="1" 
-                  value={addCopyForm.quantity} 
-                  onChange={e => setAddCopyForm({...addCopyForm, quantity: parseInt(e.target.value)})}
+                <Input
+                  type="number"
+                  min="1"
+                  value={addCopyForm.quantity}
+                  onChange={e => setAddCopyForm({ ...addCopyForm, quantity: parseInt(e.target.value) })}
                 />
               </div>
               <Button onClick={handleAddCopies} className="w-full" disabled={!addCopyForm.catalogId}>Generate</Button>

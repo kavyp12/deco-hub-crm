@@ -1,20 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  ChevronLeft, 
-  ChevronRight, 
-  Eye, 
-  Pencil, 
-  Trash2, 
-  X, 
+import {
+  Plus,
+  Search,
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Pencil,
+  Trash2,
+  X,
   RefreshCw,
   Calculator,
-  PlusCircle, 
+  PlusCircle,
   History,
-  Clock
+  Clock,
+  ChevronDown
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -36,16 +37,10 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
 import api from '@/lib/api';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
-import { Badge } from '@/components/ui/badge'; 
+import { Badge } from '@/components/ui/badge';
 
 interface SelectionItem {
   id: string;
@@ -57,9 +52,9 @@ interface SelectionItem {
   details: any;
   areaName?: string;
   catalogName?: string;
-  catalogType?: string; 
+  catalogType?: string;
   version?: number; // ✅ Version is crucial here
-  
+
   // Measurement fields
   unit?: string;
   width?: number;
@@ -79,7 +74,7 @@ interface Selection {
     inquiry_number: string;
   };
   status: string;
-  version: number; 
+  version: number;
   selection_date: string;
   delivery_date: string | null;
   notes: string | null;
@@ -103,9 +98,18 @@ const Selections: React.FC = () => {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedSelection, setSelectedSelection] = useState<Selection | null>(null);
   const [formLoading, setFormLoading] = useState(false);
-  
+
+  // Ref for auto-scrolling to edit section
+  const editSectionRef = useRef<HTMLDivElement>(null);
+
   // New Version Mode Flag
   const [isNewVersionMode, setIsNewVersionMode] = useState(false);
+
+  // Track which specific version is being edited (null = current version or new version)
+  const [editingVersion, setEditingVersion] = useState<number | null>(null);
+
+  // Dropdown: which version is being previewed
+  const [previewVersion, setPreviewVersion] = useState<string>('');
 
   const [editForm, setEditForm] = useState({
     status: '',
@@ -118,16 +122,16 @@ const Selections: React.FC = () => {
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [catalogs, setCatalogs] = useState<any[]>([]);
   const [selectedCatalogId, setSelectedCatalogId] = useState('');
-  const [selectedCatalogType, setSelectedCatalogType] = useState<string>(''); 
+  const [selectedCatalogType, setSelectedCatalogType] = useState<string>('');
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
-  
+
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
-  const [currentItem, setCurrentItem] = useState({ 
-    productId: '', 
-    quantity: 1, 
-    price: 0, 
-    areaName: '' 
+  const [currentItem, setCurrentItem] = useState({
+    productId: '',
+    quantity: 1,
+    price: 0,
+    areaName: ''
   });
   const [editedItems, setEditedItems] = useState<any[]>([]);
 
@@ -145,7 +149,7 @@ const Selections: React.FC = () => {
       const comp = companies.find(c => c.id === selectedCompanyId);
       setCatalogs(comp ? comp.catalogs : []);
       setSelectedCatalogId('');
-      setSelectedCatalogType(''); 
+      setSelectedCatalogType('');
       setProducts([]);
       setSelectedProduct(null);
     }
@@ -178,74 +182,180 @@ const Selections: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-        const { data: allSelections } = await api.get('/selections');
-        let filtered = allSelections;
-        if (statusFilter && statusFilter !== 'all') {
-            filtered = filtered.filter((s: any) => s.status === statusFilter);
-        }
-        setTotalCount(filtered.length);
-        const from = (currentPage - 1) * ITEMS_PER_PAGE;
-        const to = from + ITEMS_PER_PAGE;
-        const paginatedData = filtered.slice(from, to);
-        setSelections(paginatedData);
+      const { data: allSelections } = await api.get('/selections');
+      let filtered = allSelections;
+      if (statusFilter && statusFilter !== 'all') {
+        filtered = filtered.filter((s: any) => s.status === statusFilter);
+      }
+      setTotalCount(filtered.length);
+      const from = (currentPage - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE;
+      const paginatedData = filtered.slice(from, to);
+      setSelections(paginatedData);
     } catch (error) {
-        toast({ title: 'Error', description: 'Failed to load selections', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to load selections', variant: 'destructive' });
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
   const handleEditOpen = (selection: Selection) => {
     setSelectedSelection(selection);
-    setIsNewVersionMode(false); 
+    setIsNewVersionMode(false);
+    setEditingVersion(null);
     setEditForm({
       status: selection.status,
       delivery_date: selection.delivery_date ? new Date(selection.delivery_date).toISOString().split('T')[0] : '',
       notes: selection.notes || '',
     });
-    mapItemsToTable(selection.items);
+    // Load CURRENT version items only for editing
+    const currentVer = selection.version || 1;
+    const currentVersionItems = (selection.items || []).filter(item => (item.version || 1) === currentVer);
+    mapItemsToTable(currentVersionItems);
     setEditingItemIndex(null);
     setIsEditOpen(true);
   };
 
   const handleNewVersionOpen = (selection: Selection) => {
     setSelectedSelection(selection);
-    setIsNewVersionMode(true); 
+    setIsNewVersionMode(true);
     setEditForm({
       status: selection.status,
       delivery_date: selection.delivery_date ? new Date(selection.delivery_date).toISOString().split('T')[0] : '',
       notes: selection.notes || '',
     });
-    setEditedItems([]); // Start empty for new version
+    // ✅ Carry over (clone) all items from the CURRENT version into the new version
+    const currentVer = selection.version || 1;
+    const currentVersionItems = (selection.items || []).filter(item => (item.version || 1) === currentVer);
+    // Map them to the editable format, same as mapItemsToTable
+    setEditedItems(currentVersionItems.map(item => {
+      const details = item.details || {};
+      return {
+        id: item.id,
+        productId: item.productId,
+        name: item.productName || 'Custom Item',
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+        areaName: details.areaName || item.areaName || '',
+        catalogName: details.catalogName || item.catalogName || '',
+        catalogType: details.catalogType || item.catalogType || '',
+        companyId: details.companyId || '',
+        unit: item.unit,
+        width: item.width,
+        height: item.height,
+        type: item.type,
+        motorizationMode: item.motorizationMode,
+        opsType: item.opsType,
+        pelmet: item.pelmet,
+        openingType: item.openingType,
+        attributes: details
+      };
+    }));
+    setEditingVersion(null);
     setEditingItemIndex(null);
+    setPreviewVersion('');
     setIsEditOpen(true);
+  };
+
+  // ✅ Edit a specific version from the history → creates a NEW version with those items pre-loaded
+  const handleEditVersionFromHistory = (version: number) => {
+    if (!selectedSelection) return;
+    // Switch to new version mode, pre-loading items from the selected old version
+    setIsNewVersionMode(true);
+    setEditingVersion(null);
+    const versionItems = (selectedSelection.items || []).filter(item => (item.version || 1) === version);
+    setEditedItems(versionItems.map(item => {
+      const details = item.details || {};
+      return {
+        id: item.id,
+        productId: item.productId,
+        name: item.productName || 'Custom Item',
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+        areaName: details.areaName || item.areaName || '',
+        catalogName: details.catalogName || item.catalogName || '',
+        catalogType: details.catalogType || item.catalogType || '',
+        companyId: details.companyId || '',
+        unit: item.unit,
+        width: item.width,
+        height: item.height,
+        type: item.type,
+        motorizationMode: item.motorizationMode,
+        opsType: item.opsType,
+        pelmet: item.pelmet,
+        openingType: item.openingType,
+        attributes: details
+      };
+    }));
+    setEditingItemIndex(null);
+    toast({ title: `Creating New Version from v${version}`, description: `${versionItems.length} items pre-loaded. Edit and save as new version.` });
+    // Auto-scroll to edit section
+    setTimeout(() => {
+      editSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  };
+
+  // ✅ Switch back to New Version mode from version editing
+  const handleBackToNewVersion = () => {
+    if (!selectedSelection) return;
+    setEditingVersion(null);
+    setIsNewVersionMode(true);
+    // Re-load items from the current version
+    const currentVer = selectedSelection.version || 1;
+    const currentVersionItems = (selectedSelection.items || []).filter(item => (item.version || 1) === currentVer);
+    setEditedItems(currentVersionItems.map(item => {
+      const details = item.details || {};
+      return {
+        id: item.id,
+        productId: item.productId,
+        name: item.productName || 'Custom Item',
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+        areaName: details.areaName || item.areaName || '',
+        catalogName: details.catalogName || item.catalogName || '',
+        catalogType: details.catalogType || item.catalogType || '',
+        companyId: details.companyId || '',
+        unit: item.unit,
+        width: item.width,
+        height: item.height,
+        type: item.type,
+        motorizationMode: item.motorizationMode,
+        opsType: item.opsType,
+        pelmet: item.pelmet,
+        openingType: item.openingType,
+        attributes: details
+      };
+    }));
   };
 
   const mapItemsToTable = (items: SelectionItem[]) => {
     setEditedItems(items.map(item => {
-        const details = item.details || {};
-        return {
-          id: item.id, 
-          productId: item.productId,
-          name: item.productName || 'Custom Item',
-          quantity: item.quantity,
-          price: item.price,
-          total: item.total,
-          areaName: details.areaName || item.areaName || '', 
-          catalogName: details.catalogName || item.catalogName || '',
-          catalogType: details.catalogType || item.catalogType || '',
-          companyId: details.companyId || '',
-          unit: item.unit,
-          width: item.width,
-          height: item.height,
-          type: item.type,
-          motorizationMode: item.motorizationMode,
-          opsType: item.opsType,
-          pelmet: item.pelmet,
-          openingType: item.openingType,
-          attributes: details
-        };
-      }));
+      const details = item.details || {};
+      return {
+        id: item.id,
+        productId: item.productId,
+        name: item.productName || 'Custom Item',
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+        areaName: details.areaName || item.areaName || '',
+        catalogName: details.catalogName || item.catalogName || '',
+        catalogType: details.catalogType || item.catalogType || '',
+        companyId: details.companyId || '',
+        unit: item.unit,
+        width: item.width,
+        height: item.height,
+        type: item.type,
+        motorizationMode: item.motorizationMode,
+        opsType: item.opsType,
+        pelmet: item.pelmet,
+        openingType: item.openingType,
+        attributes: details
+      };
+    }));
   }
 
   const handleProductSelect = (prodId: string) => {
@@ -261,49 +371,49 @@ const Selections: React.FC = () => {
     if (!selectedProduct) return;
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
     const newItemData = {
-        name: selectedProduct.name,
-        catalogName: catalog?.name || '',
-        catalogType: selectedCatalogType,
-        companyId: selectedCompanyId,
-        price: currentItem.price,
-        attributes: selectedProduct.attributes,
+      name: selectedProduct.name,
+      catalogName: catalog?.name || '',
+      catalogType: selectedCatalogType,
+      companyId: selectedCompanyId,
+      price: currentItem.price,
+      attributes: selectedProduct.attributes,
     };
 
     if (editingItemIndex !== null) {
-        const newItems = [...editedItems];
-        const existingItem = newItems[editingItemIndex];
-        newItems[editingItemIndex] = {
-            ...existingItem,
-            ...newItemData,
-            productId: selectedProduct.id,
-            total: existingItem.quantity * currentItem.price
-        };
-        setEditedItems(newItems);
-        setEditingItemIndex(null);
-        toast({ title: 'Updated', description: 'Product updated' });
+      const newItems = [...editedItems];
+      const existingItem = newItems[editingItemIndex];
+      newItems[editingItemIndex] = {
+        ...existingItem,
+        ...newItemData,
+        productId: selectedProduct.id,
+        total: existingItem.quantity * currentItem.price
+      };
+      setEditedItems(newItems);
+      setEditingItemIndex(null);
+      toast({ title: 'Updated', description: 'Product updated' });
     } else {
-        if (!currentItem.areaName.trim()) {
-            toast({ title: 'Error', description: 'Area Name is required', variant: 'destructive' });
-            return;
-        }
-        setEditedItems([...editedItems, {
-            id: selectedProduct.id, 
-            productId: selectedProduct.id,
-            ...newItemData,
-            quantity: currentItem.quantity,
-            total: currentItem.quantity * currentItem.price,
-            areaName: currentItem.areaName,
-            unit: 'mm',
-            width: null, height: null
-        }]);
+      if (!currentItem.areaName.trim()) {
+        toast({ title: 'Error', description: 'Area Name is required', variant: 'destructive' });
+        return;
+      }
+      setEditedItems([...editedItems, {
+        id: selectedProduct.id,
+        productId: selectedProduct.id,
+        ...newItemData,
+        quantity: currentItem.quantity,
+        total: currentItem.quantity * currentItem.price,
+        areaName: currentItem.areaName,
+        unit: 'mm',
+        width: null, height: null
+      }]);
     }
     setSelectedProduct(null);
     setCurrentItem({ productId: '', quantity: 1, price: 0, areaName: '' });
   };
 
   const handleEditRowProduct = (index: number) => {
-      setEditingItemIndex(index);
-      toast({ title: 'Edit Mode', description: 'Select product above to replace.' });
+    setEditingItemIndex(index);
+    toast({ title: 'Edit Mode', description: 'Select product above to replace.' });
   };
 
   const handleRemoveItem = (index: number) => {
@@ -345,13 +455,13 @@ const Selections: React.FC = () => {
         type: item.type, motorizationMode: item.motorizationMode, opsType: item.opsType, pelmet: item.pelmet, openingType: item.openingType,
         areaName: item.areaName,
         catalogName: item.catalogName,
-        catalogType: item.catalogType, 
+        catalogType: item.catalogType,
         details: {
-            ...(item.attributes || {}),
-            areaName: item.areaName,
-            catalogName: item.catalogName,
-            catalogType: item.catalogType, 
-            companyId: item.companyId      
+          ...(item.attributes || {}),
+          areaName: item.areaName,
+          catalogName: item.catalogName,
+          catalogType: item.catalogType,
+          companyId: item.companyId
         }
       }));
 
@@ -360,9 +470,24 @@ const Selections: React.FC = () => {
         items: itemsToSave,
         createNewVersion: isNewVersionMode
       });
-      
-      toast({ title: isNewVersionMode ? 'Version Created' : 'Updated', description: 'Success' });
+
+      const successMsg = isNewVersionMode
+        ? 'New Version Created'
+        : 'Updated';
+      toast({ title: successMsg, description: 'Success' });
+
+      // Fully reset all states for a clean close
       setIsEditOpen(false);
+      setIsNewVersionMode(false);
+      setEditingVersion(null);
+      setPreviewVersion('');
+      setEditedItems([]);
+      setSelectedProduct(null);
+      setSelectedCompanyId('');
+      setSelectedCatalogId('');
+      setSelectedCatalogType('');
+      setEditingItemIndex(null);
+      setSelectedSelection(null);
       fetchData();
     } catch (err: any) {
       toast({ title: 'Error', description: 'Failed to update', variant: 'destructive' });
@@ -399,7 +524,7 @@ const Selections: React.FC = () => {
       default: return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   };
-  
+
   const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
       pending: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
@@ -487,47 +612,47 @@ const Selections: React.FC = () => {
                     <tr key={i}><td colSpan={6} className="px-6 py-4"><div className="h-5 bg-muted rounded animate-pulse" /></td></tr>
                   ))
                 ) : filteredSelections.map((selection) => (
-                    <tr key={selection.id} className="border-b border-border hover:bg-muted/50 transition-colors">
-                      <td className="px-6 py-4"><span className="font-medium">{selection.selection_number}</span></td>
-                      <td className="px-6 py-4">
-                        <p className="font-medium">{selection.inquiry?.client_name}</p>
-                        <p className="text-xs text-muted-foreground">{selection.inquiry?.inquiry_number}</p>
-                      </td>
-                      <td className="px-6 py-4"><span className={`badge-category border ${getStatusBadge(selection.status)}`}>{selection.status.replace('_', ' ')}</span></td>
-                      <td className="px-6 py-4">
-                        <Badge variant="outline" className="flex w-fit items-center gap-1">
-                             <History className="h-3 w-3" /> v{selection.version || 1}
-                        </Badge>
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">{format(new Date(selection.selection_date), 'MMM d, yyyy')}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-2">
-                          <Link to={`/calculations/edit/${selection.id}`}>
-                             <Button variant="ghost" size="icon" title="Calculate Requirements" className="text-orange-600 hover:text-orange-700 hover:bg-orange-50">
-                               <Calculator className="h-4 w-4" />
-                             </Button>
-                          </Link>
-
-                          <Link to={`/selections/${selection.id}`}>
-                            <Button variant="ghost" size="icon" title="View Details"><Eye className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
-                          </Link>
-                          
-                          <Button variant="ghost" size="icon" onClick={() => handleEditOpen(selection)} title="Edit Existing Items"><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
-
-                          <Button 
-                             variant="ghost" 
-                             size="icon" 
-                             onClick={() => handleNewVersionOpen(selection)} 
-                             title="Add New Version"
-                             className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                          >
-                            <PlusCircle className="h-4 w-4" />
+                  <tr key={selection.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                    <td className="px-6 py-4"><span className="font-medium">{selection.selection_number}</span></td>
+                    <td className="px-6 py-4">
+                      <p className="font-medium">{selection.inquiry?.client_name}</p>
+                      <p className="text-xs text-muted-foreground">{selection.inquiry?.inquiry_number}</p>
+                    </td>
+                    <td className="px-6 py-4"><span className={`badge-category border ${getStatusBadge(selection.status)}`}>{selection.status.replace('_', ' ')}</span></td>
+                    <td className="px-6 py-4">
+                      <Badge variant="outline" className="flex w-fit items-center gap-1">
+                        <History className="h-3 w-3" /> v{selection.version || 1}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 text-muted-foreground">{format(new Date(selection.selection_date), 'MMM d, yyyy')}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex gap-2">
+                        <Link to={`/calculations/edit/${selection.id}`}>
+                          <Button variant="ghost" size="icon" title="Calculate Requirements" className="text-orange-600 hover:text-orange-700 hover:bg-orange-50">
+                            <Calculator className="h-4 w-4" />
                           </Button>
+                        </Link>
 
-                          <Button variant="ghost" size="icon" onClick={() => handleDeleteOpen(selection)} title="Delete Selection"><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
-                        </div>
-                      </td>
-                    </tr>
+                        <Link to={`/selections/${selection.id}`}>
+                          <Button variant="ghost" size="icon" title="View Details"><Eye className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
+                        </Link>
+
+                        <Button variant="ghost" size="icon" onClick={() => handleEditOpen(selection)} title="Edit Existing Items"><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleNewVersionOpen(selection)}
+                          title="Add New Version"
+                          className="text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                        >
+                          <PlusCircle className="h-4 w-4" />
+                        </Button>
+
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteOpen(selection)} title="Delete Selection"><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -548,86 +673,118 @@ const Selections: React.FC = () => {
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                 {isNewVersionMode ? (
-                    <>
-                      <PlusCircle className="h-5 w-5 text-blue-600" />
-                      <span>Create New Version (v{(selectedSelection?.version || 1) + 1})</span>
-                    </>
-                 ) : (
-                    <>
-                      <Pencil className="h-5 w-5" />
-                      <span>Edit Selection - {selectedSelection?.selection_number}</span>
-                    </>
-                 )}
+                {isNewVersionMode ? (
+                  <>
+                    <PlusCircle className="h-5 w-5 text-blue-600" />
+                    <span>Create New Version (v{(selectedSelection?.version || 1) + 1})</span>
+                  </>
+                ) : (
+                  <>
+                    <Pencil className="h-5 w-5" />
+                    <span>Edit Selection - {selectedSelection?.selection_number}</span>
+                  </>
+                )}
               </DialogTitle>
               <DialogDescription>
-                  {isNewVersionMode 
-                    ? "Adding new items below will create a new version. Old items are preserved."
-                    : "Update status, notes, or modify existing items in the current version."}
+                {isNewVersionMode
+                  ? "Items from the selected version are pre-loaded below. You can edit, add, or remove items. All changes will be saved as a new version."
+                  : "Update status, notes, or modify existing items in the current version."}
               </DialogDescription>
             </DialogHeader>
-            
-            <form onSubmit={handleUpdate} className="space-y-6">
-              
-              {/* ✅ SHOW HISTORY ONLY IN NEW VERSION MODE */}
-              {isNewVersionMode && selectedSelection && (
-                <div className="bg-slate-50 border rounded-lg p-4 mb-6">
-                  <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                    <Clock className="h-4 w-4" /> Previous Version History
-                  </h3>
-                  <Accordion type="single" collapsible className="w-full">
-                    {Object.entries(getGroupedHistory()).map(([version, items]) => (
-                      <AccordionItem key={version} value={`v-${version}`}>
-                        <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                          <div className="flex items-center justify-between w-full pr-4">
-                             <span>Version {version} ({items.length} items)</span>
-                             <span className="text-xs text-muted-foreground font-normal">
-                               Total: ₹{items.reduce((s, i) => s + i.total, 0).toLocaleString()}
-                             </span>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent>
-                          <div className="border rounded-md overflow-hidden bg-white">
-                            <table className="w-full text-xs">
-                              <thead className="bg-slate-100">
-                                <tr>
-                                  <th className="py-2 px-3 text-left">Area</th>
-                                  <th className="py-2 px-3 text-left">Product</th>
-                                  <th className="py-2 px-3 text-center">Qty</th>
-                                  <th className="py-2 px-3 text-right">Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {items.map((item, idx) => (
-                                  <tr key={idx} className="border-b last:border-0">
-                                    <td className="py-2 px-3 text-slate-600">{item.details?.areaName}</td>
-                                    <td className="py-2 px-3 font-medium">{item.productName}</td>
-                                    <td className="py-2 px-3 text-center">{item.quantity}</td>
-                                    <td className="py-2 px-3 text-right">₹{item.total}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
-                </div>
-              )}
 
-              {/* Banner for New Version Mode */}
-              {isNewVersionMode && (
-                  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-md text-sm flex items-center gap-2">
-                      <History className="h-4 w-4" />
-                      Current Version: <strong>{selectedSelection?.version}</strong>. You are creating <strong>Version {(selectedSelection?.version || 1) + 1}</strong>.
+            <form onSubmit={handleUpdate} className="space-y-6">
+
+              {/* ✅ COMPACT VERSION DROPDOWN + DETAILS BELOW */}
+              {(isNewVersionMode || editingVersion) && selectedSelection && (() => {
+                const groupedHistory = getGroupedHistory();
+                const versionKeys = Object.keys(groupedHistory).map(Number).sort((a, b) => a - b);
+                const selectedPreviewItems = previewVersion ? groupedHistory[parseInt(previewVersion)] || [] : [];
+                return (
+                  <div className="bg-slate-50 border rounded-lg p-4 mb-4">
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                      <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                        <Clock className="h-4 w-4" /> All Versions ({versionKeys.length})
+                      </h3>
+                      <div className="flex items-center gap-3">
+                        <Select value={previewVersion} onValueChange={setPreviewVersion}>
+                          <SelectTrigger className="w-[220px] h-9 text-sm">
+                            <SelectValue placeholder="Select a version to view" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {versionKeys.map(ver => {
+                              const verItems = groupedHistory[ver] || [];
+                              const verTotal = verItems.reduce((s: number, i: SelectionItem) => s + i.total, 0);
+                              return (
+                                <SelectItem key={ver} value={String(ver)}>
+                                  Version {ver} ({verItems.length} items) — ₹{verTotal.toLocaleString()}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                        {previewVersion && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-9 px-3 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 border-blue-200"
+                            onClick={() => handleEditVersionFromHistory(parseInt(previewVersion))}
+                          >
+                            <Pencil className="h-3 w-3 mr-1" /> Edit → New Version
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Show selected version items below the dropdown */}
+                    {previewVersion && selectedPreviewItems.length > 0 && (
+                      <div className="mt-3 border rounded-md overflow-hidden bg-white">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-100">
+                            <tr>
+                              <th className="py-2 px-3 text-left">Area</th>
+                              <th className="py-2 px-3 text-left">Product</th>
+                              <th className="py-2 px-3 text-center">Qty</th>
+                              <th className="py-2 px-3 text-right">Price</th>
+                              <th className="py-2 px-3 text-right">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedPreviewItems.map((item: SelectionItem, idx: number) => (
+                              <tr key={idx} className="border-b last:border-0">
+                                <td className="py-1.5 px-3 text-slate-600">{item.details?.areaName || '-'}</td>
+                                <td className="py-1.5 px-3 font-medium">{item.productName}</td>
+                                <td className="py-1.5 px-3 text-center">{item.quantity}</td>
+                                <td className="py-1.5 px-3 text-right">₹{item.price?.toLocaleString()}</td>
+                                <td className="py-1.5 px-3 text-right font-semibold">₹{item.total?.toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-slate-50 border-t">
+                            <tr>
+                              <td colSpan={4} className="py-1.5 px-3 text-right text-xs font-bold">Version {previewVersion} Total:</td>
+                              <td className="py-1.5 px-3 text-right text-xs font-bold text-blue-700">₹{selectedPreviewItems.reduce((s: number, i: SelectionItem) => s + i.total, 0).toLocaleString()}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    )}
                   </div>
-              )}
+                );
+              })()}
+
+              {/* Banner for new version mode */}
+              {isNewVersionMode ? (
+                <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-md text-sm flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  Current Version: <strong>v{selectedSelection?.version}</strong> → Creating <strong>Version {(selectedSelection?.version || 1) + 1}</strong>. Items are pre-loaded and editable below.
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Status</Label>
-                  <Select value={editForm.status} onValueChange={(v) => setEditForm({...editForm, status: v})}>
+                  <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pending">Pending</SelectItem>
@@ -640,26 +797,26 @@ const Selections: React.FC = () => {
                 </div>
                 <div className="space-y-2">
                   <Label>Delivery Date</Label>
-                  <Input type="date" value={editForm.delivery_date} onChange={(e) => setEditForm({...editForm, delivery_date: e.target.value})} />
+                  <Input type="date" value={editForm.delivery_date} onChange={(e) => setEditForm({ ...editForm, delivery_date: e.target.value })} />
                 </div>
                 <div className="col-span-3 space-y-2">
                   <Label>Notes</Label>
-                  <Textarea value={editForm.notes} onChange={(e) => setEditForm({...editForm, notes: e.target.value})} rows={2} />
+                  <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={2} />
                 </div>
               </div>
 
               {/* Product Selector */}
-              <div className={`border-t pt-4 ${editingItemIndex !== null ? 'bg-blue-50/50 p-4 rounded border-blue-200' : ''}`}>
+              <div ref={editSectionRef} className={`border-t pt-4 ${editingItemIndex !== null ? 'bg-blue-50/50 p-4 rounded border-blue-200' : ''}`}>
                 <h3 className="font-semibold mb-4 flex items-center gap-2">
                   {editingItemIndex !== null ? (
-                      <span className="text-blue-700 flex items-center gap-2">
-                          <RefreshCw className="h-4 w-4" /> Changing Product for Row {editingItemIndex + 1}
-                      </span>
+                    <span className="text-blue-700 flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4" /> Changing Product for Row {editingItemIndex + 1}
+                    </span>
                   ) : (
-                      <span className="flex items-center gap-2"><Plus className="h-5 w-5 text-accent" /> Add New Product</span>
+                    <span className="flex items-center gap-2"><Plus className="h-5 w-5 text-accent" /> Add New Product</span>
                   )}
                 </h3>
-                
+
                 <div className="bg-muted/30 p-4 rounded-lg space-y-4">
                   <div className="grid grid-cols-3 gap-4">
                     {/* COMPANY SELECTION */}
@@ -673,19 +830,19 @@ const Selections: React.FC = () => {
                     {/* CATALOG SELECTION */}
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
-                         <Label>Collection</Label>
-                         {selectedCatalogType && (
-                           <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
-                             Type: {selectedCatalogType}
-                           </span>
-                         )}
+                        <Label>Collection</Label>
+                        {selectedCatalogType && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
+                            Type: {selectedCatalogType}
+                          </span>
+                        )}
                       </div>
                       <Select value={selectedCatalogId} onValueChange={setSelectedCatalogId} disabled={!selectedCompanyId}>
                         <SelectTrigger><SelectValue placeholder={catalogs.length ? "Select" : "No collections"} /></SelectTrigger>
                         <SelectContent>
                           {catalogs.map(c => (
                             <SelectItem key={c.id} value={c.id}>
-                                {c.name} <span className="text-muted-foreground opacity-70">({c.type || 'Generic'})</span>
+                              {c.name} <span className="text-muted-foreground opacity-70">({c.type || 'Generic'})</span>
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -696,9 +853,9 @@ const Selections: React.FC = () => {
                       <Label>Product</Label>
                       <Select value={currentItem.productId} onValueChange={handleProductSelect} disabled={!selectedCatalogId}>
                         <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                       <SelectContent>
-                        {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name} - ₹{p.price}</SelectItem>)}
-                      </SelectContent>
+                        <SelectContent>
+                          {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name} - ₹{p.price}</SelectItem>)}
+                        </SelectContent>
                       </Select>
                     </div>
                   </div>
@@ -711,53 +868,53 @@ const Selections: React.FC = () => {
                           <p className="text-xs text-muted-foreground">Base Price: ₹{selectedProduct.price}</p>
                         </div>
                         <div className="flex gap-4 items-end">
-                            {editingItemIndex === null && (
-                                <div className="space-y-1 flex-1">
-                                  <Label className="text-xs">Area Name *</Label>
-                                  <Input 
-                                    list="selection-area-options"
-                                    placeholder="e.g. Master Bedroom" 
-                                    value={currentItem.areaName} 
-                                    onChange={(e) => setCurrentItem({...currentItem, areaName: e.target.value})} 
-                                    className="h-9" 
-                                  />
-                                  <datalist id="selection-area-options">
-                                     {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
-                                        <option key={area} value={area} />
-                                     ))}
-                                  </datalist>
-                                </div>
-                            )}
-                            <div className="space-y-1 w-28">
-                                <Label className="text-xs">Price</Label>
-                                <Input type="number" value={currentItem.price} onChange={(e) => setCurrentItem({...currentItem, price: parseFloat(e.target.value)})} className="h-9" />
+                          {editingItemIndex === null && (
+                            <div className="space-y-1 flex-1">
+                              <Label className="text-xs">Area Name *</Label>
+                              <Input
+                                list="selection-area-options"
+                                placeholder="e.g. Master Bedroom"
+                                value={currentItem.areaName}
+                                onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
+                                className="h-9"
+                              />
+                              <datalist id="selection-area-options">
+                                {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
+                                  <option key={area} value={area} />
+                                ))}
+                              </datalist>
                             </div>
-                            {editingItemIndex === null && (
-                                <div className="space-y-1 w-20">
-                                    <Label className="text-xs">Qty</Label>
-                                    <Input type="number" value={currentItem.quantity} onChange={(e) => setCurrentItem({...currentItem, quantity: parseFloat(e.target.value)})} className="h-9" />
-                                </div>
-                            )}
-                            <div className="flex gap-2">
-                                <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
-                                    {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
-                                </Button>
-                                {editingItemIndex !== null && (
-                                    <Button 
-                                        type="button" 
-                                        onClick={() => {
-                                            setEditingItemIndex(null);
-                                            setSelectedProduct(null);
-                                            setSelectedCompanyId('');
-                                            setSelectedCatalogId('');
-                                        }} 
-                                        size="sm" 
-                                        variant="outline" className="h-9"
-                                    >
-                                        Cancel Edit
-                                    </Button>
-                                )}
+                          )}
+                          <div className="space-y-1 w-28">
+                            <Label className="text-xs">Price</Label>
+                            <Input type="number" value={currentItem.price} onChange={(e) => setCurrentItem({ ...currentItem, price: parseFloat(e.target.value) })} className="h-9" />
+                          </div>
+                          {editingItemIndex === null && (
+                            <div className="space-y-1 w-20">
+                              <Label className="text-xs">Qty</Label>
+                              <Input type="number" value={currentItem.quantity} onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseFloat(e.target.value) })} className="h-9" />
                             </div>
+                          )}
+                          <div className="flex gap-2">
+                            <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
+                              {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
+                            </Button>
+                            {editingItemIndex !== null && (
+                              <Button
+                                type="button"
+                                onClick={() => {
+                                  setEditingItemIndex(null);
+                                  setSelectedProduct(null);
+                                  setSelectedCompanyId('');
+                                  setSelectedCatalogId('');
+                                }}
+                                size="sm"
+                                variant="outline" className="h-9"
+                              >
+                                Cancel Edit
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -768,13 +925,15 @@ const Selections: React.FC = () => {
               {/* Items List */}
               <div className="border-t pt-4">
                 <h3 className="font-semibold mb-4">
-                    {isNewVersionMode ? "New Items to Add" : "Selection Items"} ({editedItems.length})
+                  {isNewVersionMode
+                    ? `Version ${(selectedSelection?.version || 1) + 1} Items`
+                    : "Selection Items"} ({editedItems.length})
                 </h3>
                 {editedItems.length === 0 ? (
                   <div className="text-center py-8 border-2 border-dashed rounded-lg bg-muted/20">
-                     <p className="text-sm text-muted-foreground">
-                        {isNewVersionMode ? "No new items added yet." : "No items in selection."}
-                     </p>
+                    <p className="text-sm text-muted-foreground">
+                      {isNewVersionMode ? "No items yet. Add products above." : "No items in selection."}
+                    </p>
                   </div>
                 ) : (
                   <div className="border rounded-lg overflow-hidden">
@@ -794,7 +953,7 @@ const Selections: React.FC = () => {
                         {editedItems.map((item, idx) => (
                           <tr key={idx} className={editingItemIndex === idx ? 'bg-blue-50' : ''}>
                             <td className="py-2 px-3">
-                              <Input 
+                              <Input
                                 list={`edit-area-${idx}`}
                                 value={item.areaName || ''}
                                 onChange={(e) => {
@@ -807,41 +966,41 @@ const Selections: React.FC = () => {
                               />
                             </td>
                             <td className="py-2 px-3 text-xs">
-                                <div className="flex flex-col gap-1">
-                                   <span className="text-muted-foreground">{item.catalogName || '-'}</span>
-                                   {item.catalogType && (
-                                     <span className={`w-fit text-[9px] px-1.5 py-0.5 rounded border ${getTypeBadgeColor(item.catalogType)}`}>
-                                       {item.catalogType}
-                                     </span>
-                                   )}
-                                </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-muted-foreground">{item.catalogName || '-'}</span>
+                                {item.catalogType && (
+                                  <span className={`w-fit text-[9px] px-1.5 py-0.5 rounded border ${getTypeBadgeColor(item.catalogType)}`}>
+                                    {item.catalogType}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-2 px-3">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium truncate max-w-[120px]" title={item.name}>
-                                        {item.name}
-                                    </span>
-                                    <Button
-                                        type="button"
-                                        variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800"
-                                        title="Change Product"
-                                        onClick={() => handleEditRowProduct(idx)}
-                                    >
-                                        <Pencil className="h-3 w-3" />
-                                    </Button>
-                                </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium truncate max-w-[120px]" title={item.name}>
+                                  {item.name}
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800"
+                                  title="Change Product"
+                                  onClick={() => handleEditRowProduct(idx)}
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </td>
                             <td className="py-2 px-3">
-                              <Input 
-                                type="number" 
+                              <Input
+                                type="number"
                                 value={item.quantity}
                                 onChange={(e) => handleUpdateItemQuantity(idx, parseFloat(e.target.value))}
                                 className="h-8 w-16 mx-auto text-center"
                               />
                             </td>
                             <td className="py-2 px-3">
-                              <Input 
-                                type="number" 
+                              <Input
+                                type="number"
                                 value={item.price}
                                 onChange={(e) => handleUpdateItemPrice(idx, parseFloat(e.target.value))}
                                 className="h-8 w-24 ml-auto text-right"
@@ -871,9 +1030,13 @@ const Selections: React.FC = () => {
               </div>
 
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+                <Button type="button" variant="outline" onClick={() => { setIsEditOpen(false); setEditingVersion(null); setPreviewVersion(''); }}>Cancel</Button>
                 <Button type="submit" variant="accent" disabled={formLoading}>
-                    {formLoading ? 'Saving...' : (isNewVersionMode ? 'Save New Version' : 'Save Changes')}
+                  {formLoading
+                    ? 'Saving...'
+                    : isNewVersionMode
+                      ? 'Save New Version'
+                      : 'Save Changes'}
                 </Button>
               </DialogFooter>
             </form>
