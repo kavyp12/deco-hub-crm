@@ -26,20 +26,23 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const { profile, role, signOut } = useAuth();
   const location = useLocation();
 
-  const navigation = [
+  // Sales role only sees Pipeline, Inquiries, and Measurements
+  const SALES_ALLOWED_PAGES = ['/pipeline', '/inquiries', '/measurements'];
+
+  const allNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Attendance', href: '/attendance', icon: Clock }, // <--- ADD ATTENDANCE HERE
-    { name: 'Pipeline', href: '/pipeline', icon: Kanban }, // <--- ADD THIS (Import Kanban from lucide-react)
+    { name: 'Attendance', href: '/attendance', icon: Clock },
+    { name: 'Pipeline', href: '/pipeline', icon: Kanban },
     { name: 'Inquiries', href: '/inquiries', icon: FileText },
     { name: 'Selections', href: '/selections', icon: ShoppingCart },
     { name: 'Measurements', href: '/measurements', icon: Ruler },
     { name: 'Calculations', href: '/calculations', icon: Calculator },
     { name: 'Quotations', href: '/quotations', icon: FileText },
-    { name: 'Architects', href: '/architects', icon: Briefcase }, // <--- NEW ADDITION
+    { name: 'Architects', href: '/architects', icon: Briefcase },
   ];
 
   if (role === 'super_admin' || role === 'admin_hr') {
-    navigation.push({
+    allNavigation.push({
       name: 'Employees',
       href: '/employees',
       icon: Users,
@@ -48,18 +51,26 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
   // Activity Logs (Super Admin Only)
   if (role === 'super_admin') {
-    navigation.push({
+    allNavigation.push({
       name: 'Activity Logs',
       href: '/logs',
       icon: ShieldAlert,
     });
   }
 
-  navigation.push({
-    name: 'Catalogs',
-    href: '/catalogs',
-    icon: BookOpen,
-  });
+  // Catalogs - not for sales
+  if (role !== 'sales') {
+    allNavigation.push({
+      name: 'Catalogs',
+      href: '/catalogs',
+      icon: BookOpen,
+    });
+  }
+
+  // Filter navigation based on role
+  const navigation = role === 'sales'
+    ? allNavigation.filter(item => SALES_ALLOWED_PAGES.includes(item.href))
+    : allNavigation;
 
   const getRoleLabel = (role: string | null | undefined) => {
     switch (role) {
@@ -76,9 +87,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       {/* Logo Section */}
       <div className="flex h-20 items-center justify-center border-b border-sidebar-border bg-sidebar-accent/10 flex-shrink-0 px-6">
         <div className="flex items-center justify-center w-full">
-          <img 
-            src="/sulit-logo.svg" 
-            alt="Sulit Logo" 
+          <img
+            src="/sulit-logo.svg"
+            alt="Sulit Logo"
             className="h-12 w-auto object-contain"
           />
         </div>
@@ -87,7 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4 overflow-y-auto">
         {navigation.map((item) => {
-          const isActive = item.href === '/dashboard' 
+          const isActive = item.href === '/dashboard'
             ? location.pathname === '/dashboard'
             : location.pathname.startsWith(item.href);
 

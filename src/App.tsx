@@ -3,8 +3,15 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+
+// Redirect root based on user role
+const RoleBasedRedirect = () => {
+  const { role } = useAuth();
+  if (role === 'sales') return <Navigate to="/pipeline" replace />;
+  return <Navigate to="/dashboard" replace />;
+};
 
 // Pages
 import Auth from "./pages/Employe/Auth";
@@ -57,13 +64,13 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<ProtectedRoute><RoleBasedRedirect /></ProtectedRoute>} />
             <Route path="/auth" element={<Auth />} />
 
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -91,7 +98,7 @@ const App = () => (
             <Route
               path="/selections"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <Selections />
                 </ProtectedRoute>
               }
@@ -99,7 +106,7 @@ const App = () => (
             <Route
               path="/selections/new"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <NewSelection />
                 </ProtectedRoute>
               }
@@ -107,7 +114,7 @@ const App = () => (
             <Route
               path="/selections/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <SelectionDetails />
                 </ProtectedRoute>
               }
@@ -143,7 +150,7 @@ const App = () => (
             <Route
               path="/calculations"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <CalculationList />
                 </ProtectedRoute>
               }
@@ -151,7 +158,7 @@ const App = () => (
             <Route
               path="/calculations/edit/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <CalculationEditor />
                 </ProtectedRoute>
               }
@@ -161,7 +168,7 @@ const App = () => (
             <Route
               path="/calculations/deep/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <DeepCalculation />
                 </ProtectedRoute>
               }
@@ -171,7 +178,7 @@ const App = () => (
             <Route
               path="/calculations/local/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <LocalCalculation />
                 </ProtectedRoute>
               }
@@ -179,7 +186,7 @@ const App = () => (
             <Route
               path="/calculations/forest/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <ForestCalculation />
                 </ProtectedRoute>
               }
@@ -187,7 +194,7 @@ const App = () => (
             <Route
               path="/calculations/somfy/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <SomfyCalculation />
                 </ProtectedRoute>
               }
@@ -195,7 +202,7 @@ const App = () => (
             <Route
               path="/calculations/roman/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <RomanCalculation />
                 </ProtectedRoute>
               }
@@ -203,44 +210,44 @@ const App = () => (
             <Route
               path="/calculations/blinds/:selectionId"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <BlindsCalculation />
                 </ProtectedRoute>
               }
             />
             <Route
-            path="/calculations/gpw/:selectionId"
-            element={
-              <ProtectedRoute>
-                <GpwCalculation />
-              </ProtectedRoute>
-            }
-          />
+              path="/calculations/gpw/:selectionId"
+              element={
+                <ProtectedRoute deniedRoles={['sales']}>
+                  <GpwCalculation />
+                </ProtectedRoute>
+              }
+            />
 
             {/* Employees */}
             <Route
               path="/employees"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['super_admin', 'admin_hr']}>
                   <Employees />
                 </ProtectedRoute>
               }
             />
-             
-             {/* Attendance */}
-             <Route
-               path="/attendance"
-               element={
-                 <ProtectedRoute>
-                   <Attendance />
-                 </ProtectedRoute>
-               }
-             /> 
+
+            {/* Attendance */}
+            <Route
+              path="/attendance"
+              element={
+                <ProtectedRoute deniedRoles={['sales']}>
+                  <Attendance />
+                </ProtectedRoute>
+              }
+            />
             {/* Catalogs */}
             <Route
               path="/catalogs"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <Catalogs />
                 </ProtectedRoute>
               }
@@ -249,21 +256,21 @@ const App = () => (
             <Route
               path="/logs"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['super_admin']}>
                   <ActivityLogs />
                 </ProtectedRoute>
               }
             />
-            
+
             {/* Architecture */}
             <Route
               path="/architects"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <Architecture />
                 </ProtectedRoute>
               }
-            /> 
+            />
 
             {/* Pipeline */}
             <Route
@@ -273,30 +280,30 @@ const App = () => (
                   <Pipeline />
                 </ProtectedRoute>
               }
-            /> 
+            />
 
             {/* Quotation Routes - UPDATED */}
-            <Route 
-              path="/quotations" 
+            <Route
+              path="/quotations"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <QuotationList />
                 </ProtectedRoute>
-              } 
+              }
             />
 
 
-            <Route path="/quotations/preview/:id" element={<ProtectedRoute><QuotationPreview /></ProtectedRoute>} />
+            <Route path="/quotations/preview/:id" element={<ProtectedRoute deniedRoles={['sales']}><QuotationPreview /></ProtectedRoute>} />
 
-            <Route 
-              path="/quotations/edit/:id" 
+            <Route
+              path="/quotations/edit/:id"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute deniedRoles={['sales']}>
                   <QuotationEdit />
                 </ProtectedRoute>
-              } 
+              }
             />
-            
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

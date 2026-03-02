@@ -4,10 +4,18 @@ import { useAuth } from '@/contexts/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
+  allowedRoles?: string[];
+  deniedRoles?: string[];
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
+// Default landing page per role
+const getDefaultPageForRole = (role: string | null): string => {
+  if (role === 'sales') return '/pipeline';
+  return '/dashboard';
+};
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles, deniedRoles }) => {
+  const { isAuthenticated, loading, role } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -23,6 +31,16 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
+  }
+
+  // Role-based access check
+  if (role) {
+    if (deniedRoles && deniedRoles.includes(role)) {
+      return <Navigate to={getDefaultPageForRole(role)} replace />;
+    }
+    if (allowedRoles && !allowedRoles.includes(role)) {
+      return <Navigate to={getDefaultPageForRole(role)} replace />;
+    }
   }
 
   return <>{children}</>;
