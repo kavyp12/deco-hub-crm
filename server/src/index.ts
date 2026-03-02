@@ -20,10 +20,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
 const upload = multer({ storage: multer.memoryStorage() });
 
 
-const documentsDir = path.join(__dirname, '../documents');
+// Use UPLOAD_DIR from .env if it exists (Server), otherwise fallback to local relative path
+const documentsDir = process.env.UPLOAD_DIR || path.join(__dirname, '../documents');
+
 if (!fs.existsSync(documentsDir)) {
   fs.mkdirSync(documentsDir, { recursive: true });
 }
+
 app.use('/documents', express.static(documentsDir));
 
 const storage = multer.diskStorage({
