@@ -386,6 +386,7 @@ app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin'])
     res.json({ message: 'Company and all data deleted' });
   } catch { res.status(500).json({ error: 'Failed to delete company' }); }
 });
+
 app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', 'admin_hr']), upload.single('file'), async (req: any, res: Response): Promise<void> => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded' });
@@ -397,107 +398,102 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
   try {
     const workbook = xlsx.read(req.file.buffer, {
       type: 'buffer',
-      cellText: true,
+      cellFormula: false,
       raw: false
     });
 
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
+    // Row 1 = group headers (Delear Price / Customer Rate / Design Repeat)
+    // Row 2 = actual column headers
+    // Row 3+ = data
+    // So range:1 means "use row index 1 (row 2) as headers"
     const data: any[] = xlsx.utils.sheet_to_json(worksheet, {
       raw: false,
       defval: '',
-      blankrows: false
+      blankrows: false,
+      range: 1  // Skip row 1 group headers, treat row 2 as column headers
     });
 
     if (data.length === 0) {
-      res.status(400).json({ error: 'Excel sheet is empty' });
+      res.status(400).json({ error: 'Excel sheet is empty or has no data rows' });
       return;
     }
+
+    // Skip the first item if it's the group header row leaking through
+    // (safety check: if Sr. No is not a number, skip it)
+    const cleanData = data.filter(row => {
+      const srNo = row['Sr. No'];
+      return srNo !== undefined && srNo !== '' && !isNaN(parseFloat(String(srNo)));
+    });
 
     let productsCreated = 0;
     const errors: string[] = [];
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const rowNumber = i + 2;
+    const SKIP_COLUMNS = new Set([
+      'Sr. No', 'Collection', 'Design/ Quality',
+      'RRP', 'CL Landing Cost', 'RL Landing Cost',
+      'GST Amount', 'MRP'   // formula-derived, skip from attributes
+    ]);
 
+    for (let i = 0; i < cleanData.length; i++) {
+      const row = cleanData[i];
+      const rowNumber = i + 3; // actual Excel row number
+
+      const srNo      = row['Sr. No']?.toString().trim();
       const collection = row['Collection']?.toString().trim();
-      const designCode = row['Design Name']?.toString().trim() || row['Design']?.toString().trim();
-      const rrPriceRaw = row['RR Price after GST (Cut Rate)']?.toString().trim() ||
-        row[' RR Price after GST (Cut Rate) ']?.toString().trim();
+      const design    = row['Design/ Quality']?.toString().trim();
+      const rrpRaw    = row['RRP']?.toString().trim();
 
-      if (!collection) {
-        errors.push(`Row ${rowNumber}: Missing Collection`);
-        continue;
-      }
-      if (!designCode) {
-        errors.push(`Row ${rowNumber}: Missing Design Name/Code`);
-        continue;
-      }
-      if (!rrPriceRaw) {
-        errors.push(`Row ${rowNumber}: Missing RR Price after GST (Cut Rate)`);
-        continue;
-      }
+      if (!collection) { errors.push(`Row ${rowNumber}: Missing Collection`); continue; }
+      if (!design)     { errors.push(`Row ${rowNumber}: Missing Design/ Quality`); continue; }
+      if (!rrpRaw)     { errors.push(`Row ${rowNumber}: Missing RRP`); continue; }
 
-      const priceString = rrPriceRaw
+      const priceString = rrpRaw
         .replace(/₹/g, '')
+        .replace(/,/g, '')
         .replace(/\s+/g, '')
         .trim();
 
-      if (!priceString || priceString === '') {
-        errors.push(`Row ${rowNumber}: Invalid price "${rrPriceRaw}"`);
+      if (!priceString || isNaN(parseFloat(priceString))) {
+        errors.push(`Row ${rowNumber}: Invalid RRP price "${rrpRaw}"`);
         continue;
       }
 
-      let catalog = await prisma.catalog.findFirst({
-        where: {
-          name: collection,
-          companyId
-        }
-      });
-
+      // Find or create catalog grouped by Collection name
+      let catalog = await prisma.catalog.findFirst({ where: { name: collection, companyId } });
       if (!catalog) {
         catalog = await prisma.catalog.create({
-          data: {
-            name: collection,
-            companyId,
-            type: defaultType || 'Curtains'
-          }
+          data: { name: collection, companyId, type: defaultType || 'Curtains' }
         });
       }
 
+      // Save all extra columns as attributes
       const attributes: any = {};
-
-      for (const columnName in row) {
-        if (
-          columnName === 'Collection' ||
-          columnName === 'Design Name' ||
-          columnName === 'Design' ||
-          columnName === 'RR Price after GST (Cut Rate)' ||
-          columnName === ' RR Price after GST (Cut Rate) '
-        ) {
-          continue;
-        }
-
-        const value = row[columnName];
-        if (value !== undefined && value !== null && value !== '') {
-          attributes[columnName.trim()] = String(value).trim();
+      for (const col in row) {
+        if (SKIP_COLUMNS.has(col.trim())) continue;
+        const val = row[col];
+        if (val !== undefined && val !== null && val !== '') {
+          attributes[col.trim()] = String(val).trim();
         }
       }
+
+      // Store Sr. No explicitly
+      if (srNo) attributes['Sr. No'] = srNo;
 
       try {
         await prisma.product.create({
           data: {
-            name: designCode,
+            name: design,
             price: priceString,
             catalogId: catalog.id,
-            attributes: attributes,
+            attributes
           }
         });
         productsCreated++;
       } catch (err) {
-        errors.push(`Row ${rowNumber}: Failed to create product "${designCode}"`);
+        errors.push(`Row ${rowNumber}: Failed to save "${design}"`);
       }
     }
 
@@ -505,15 +501,14 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
       success: true,
       message: `Successfully processed ${productsCreated} products`,
       productsCreated,
-      totalRows: data.length
+      totalRows: cleanData.length
     };
-
     if (errors.length > 0) {
       response.errors = errors;
       response.message += ` (${errors.length} errors)`;
     }
-    await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company ID ${companyId}. Processed ${productsCreated} products.`);
 
+    await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company ID ${companyId}. Processed ${productsCreated} products.`);
     res.json(response);
 
   } catch (error) {

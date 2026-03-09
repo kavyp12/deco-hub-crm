@@ -373,4 +373,4 @@ export default function LocalCalculation() {
       </div>
     </DashboardLayout>
   );
-}
+} 

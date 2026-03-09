@@ -1,0 +1,962 @@
+# 🔍 DECO-HUB CRM — COMPLETE PROJECT AUDIT REPORT
+
+**Audit Date:** 2026-03-04  
+**Auditor Role:** Senior Software Architect & Security Auditor  
+**Project Stack:** React 18 + Vite (Frontend), Express 5 + Prisma 5 (Backend), PostgreSQL (Database)  
+**Environment:** Development/Staging → Production  
+
+---
+
+## 1. 📋 Executive Summary
+
+The Deco-Hub CRM is a reasonably functional internal business tool for a blinds/curtains company, covering inquiries, selections, calculations, quotations, catalogs, attendance, and a kanban pipeline. The application demonstrates solid functional breadth — however, it carries **several critical security and structural risks** that must be resolved before production deployment.
+
+**Overall Risk Score: `7.5 / 10` (HIGH)**  
+> This score reflects serious security gaps (plaintext credentials in .env, open CORS, weak JWT secret, no rate limiting, no input validation, Supabase dead code) and significant architectural flaws (monolithic 3700-line backend file, no error code consistency, no pagination on large endpoints). These are not hypothetical risks; in production with real users and real financial data, they are exploitable.
+
+---
+
+## 2. 🏛️ Project Architecture Overview
+
+```
+deco-hub-crm/
+├── src/                          ← React + Vite Frontend
+│   ├── App.tsx                   ← Root router (315 lines)
+│   ├── contexts/AuthContext.tsx  ← JWT Auth state
+│   ├── lib/api.ts                ← Axios instance
+│   ├── integrations/supabase/   ← ⚠️ DEAD CODE — Supabase not used
+│   ├── components/
+│   │   ├── ProtectedRoute.tsx    ← Role-based route guard
+│   │   └── layout/Sidebar.tsx   ← Navigation sidebar
+│   └── pages/                   ← 14 feature page modules
+│
+└── server/
+    ├── src/index.ts              ← ⚠️ MONOLITH: 3,713 lines, ALL routes
+    ├── src/middleware/
+    │   └── authMiddleware.ts     ← JWT verify + role check
+    └── prisma/
+        ├── schema.prisma         ← 866 lines, 30+ models
+        └── seed.ts               ← Default superadmin seeder
+```
+
+**Architecture Verdict:** The backend is a **"God File" monolith**. All 80+ API routes live in a single 3,713-line [index.ts](file:///d:/deco-hub-crm/server/src/index.ts). This is an architectural anti-pattern that makes maintenance, testing, and debugging extremely difficult at scale.
+
+---
+
+## 3. 🌐 API Audit Report
+
+### 3.1 Complete API Endpoint Inventory
+
+| Method | Endpoint | Auth | Role Guard | Notes |
+|--------|----------|------|------------|-------|
+| POST | `/api/auth/login` | No | None | ✅ Public |
+| GET | `/api/auth/me` | Yes | None | ✅ |
+| POST | `/api/employees` | Yes | super_admin | ✅ |
+| GET | `/api/employees` | Yes | super_admin, admin_hr | ✅ |
+| PUT | `/api/employees/:id` | Yes | super_admin | ✅ |
+| DELETE | `/api/employees/:id` | Yes | super_admin | ✅ |
+| GET | `/api/users/sales-people` | Yes | None | ⚠️ No role restriction |
+| GET | `/api/users/all` | Yes | None | ⚠️ No role restriction |
+| GET | `/api/companies` | Yes | None | ⚠️ No role restriction |
+| POST | `/api/companies` | Yes | super_admin, admin_hr | Duplicate route — see issue #1 |
+| DELETE | `/api/companies/:id` | Yes | super_admin | ✅ |
+| POST | `/api/upload-catalog` | Yes | super_admin, admin_hr | ✅ |
+| GET | `/api/catalogs/:id/products` | Yes | None | ✅ |
+| GET | `/api/products/all` | Yes | None | ✅ |
+| PUT | `/api/products/:id` | Yes | super_admin, admin_hr | ✅ |
+| GET | `/api/attendance/me` | Yes | None | ✅ |
+| GET | `/api/attendance/team` | Yes | super_admin, admin_hr | ✅ |
+| GET | `/api/attendance/export` | Yes | super_admin, admin_hr | ✅ |
+| GET | `/api/attendance/analytics` | Yes | super_admin, admin_hr | ✅ |
+| POST | `/api/attendance/check-in` | Yes | None | ✅ |
+| POST | `/api/attendance/pause` | Yes | None | ✅ |
+| POST | `/api/attendance/resume` | Yes | None | ✅ |
+| PUT | `/api/attendance/draft` | Yes | None | ✅ |
+| PUT | `/api/attendance/check-out` | Yes | None | ✅ |
+| POST | `/api/attendance/correction` | Yes | None | ⚠️ No admin approval guard |
+| GET | `/api/leaves/balances` | Yes | None | ✅ |
+| GET | `/api/leaves` | Yes | None | ✅ Role filtered in handler |
+| POST | `/api/leaves` | Yes | None | ✅ |
+| PUT | `/api/leaves/:id/status` | Yes | super_admin, admin_hr | ✅ |
+| GET | `/api/catalogs/tracking` | Yes | None | ⚠️ No role restriction |
+| GET | `/api/catalogs/copies` | Yes | None | ⚠️ No role restriction |
+| POST | `/api/catalogs/:id/copies` | Yes | None | ⚠️ Missing role guard |
+| POST | `/api/catalogs/issue` | Yes | None | ⚠️ Missing role guard |
+| PUT | `/api/catalogs/return/:movementId` | Yes | None | ⚠️ Missing role guard |
+| GET | `/api/inquiries` | Yes | None | ✅ Role filtered |
+| POST | `/api/inquiries` | Yes | None | ⚠️ Sales can create |
+| PUT | `/api/inquiries/:id` | Yes | None | ⚠️ Any user can edit any inquiry |
+| DELETE | `/api/inquiries/:id` | Yes | None | 🔴 CRITICAL — No ownership check |
+| PUT | `/api/inquiries/:id/stage` | Yes | None | ✅ |
+| POST | `/api/inquiries/:id/comments` | Yes | None | ✅ |
+| POST | `/api/inquiries/:id/checklists` | Yes | None | ✅ |
+| POST | `/api/inquiries/:id/labels` | Yes | None | ✅ |
+| PUT | `/api/inquiries/:id/description` | Yes | None | ✅ |
+| PUT | `/api/inquiries/:id/assign` | Yes | None | ⚠️ Any user can reassign |
+| GET | `/api/selections` | Yes | None | ⚠️ No role filter |
+| GET | `/api/selections/:id` | Yes | None | ⚠️ No ownership check |
+| GET | `/api/selections/by-inquiry/:inquiryId` | Yes | None | ✅ |
+| POST | `/api/selections` | Yes | None | ✅ |
+| PUT | `/api/selections/:id` | Yes | None | ⚠️ No ownership check |
+| DELETE | `/api/selections/:id` | Yes | None | 🔴 CRITICAL — No ownership/role check |
+| GET/POST | `/api/calculations/*` | Yes | None | ⚠️ No ownership check |
+| GET | `/api/quotations` | Yes | None | ✅ Role filtered |
+| POST | `/api/quotations` | Yes | None | ⚠️ No role guard |
+| POST | `/api/quotations/generate` | Yes | None | ⚠️ No role guard |
+| GET | `/api/quotations/pipeline/board` | Yes | None | ⚠️ No role limit |
+| GET | `/api/quotations/:id` | Yes | None | ⚠️ No ownership check |
+| PUT | `/api/quotations/:id` | Yes | None | ⚠️ No ownership check |
+| DELETE | `/api/quotations/:id` | Yes | None | 🔴 No ownership check |
+| GET | `/api/architects` | Yes | None | ✅ |
+| POST | `/api/architects` | Yes | None | ⚠️ No role guard |
+| PUT | `/api/architects/:id` | Yes | None | ⚠️ No role guard |
+| DELETE | `/api/architects/:id` | Yes | None | 🔴 No role guard |
+| GET | `/api/pipeline` | Yes | None | ✅ Role filtered |
+| GET | `/api/logs` | Yes | Role check in handler | ✅ |
+| GET | `/api/logs/export` | Yes | Role check in handler | ✅ |
+| POST | `/api/upload` | Yes | None | ⚠️ No file type validation |
+| POST | `/api/checklists/:id/items` | Yes | None | ✅ |
+| PUT | `/api/checklist-items/:id` | Yes | None | ✅ |
+| DELETE | `/api/checklists/:id` | Yes | None | ✅ |
+| DELETE | `/api/labels/:id` | Yes | None | ⚠️ No ownership check |
+| DELETE | `/api/quotation-labels/:id` | Yes | None | ⚠️ No ownership check |
+
+### 3.2 Duplicate Route Registration
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Lines:** 93–115 and 366–377
+
+`POST /api/companies` is registered **twice** — once without a role guard (line 93) and once with [requireRole(['super_admin', 'admin_hr'])](file:///d:/deco-hub-crm/server/src/middleware/authMiddleware.ts#21-29) (line 366). In Express 5, the **first matching route wins**, meaning the unguarded one at line 93 takes priority.
+
+```typescript
+// Line 93 — NO role guard — this one wins!
+app.post('/api/companies', authenticateToken, async (req: any, res) => { ... });
+
+// Line 366 — Role guard — NEVER reached
+app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin_hr']), async ...
+```
+
+**Impact:** Any authenticated user can create companies, bypassing role restrictions.
+
+### 3.3 Route Order Conflict — quotations
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts) — Lines 2699 and 2816
+
+The route `GET /api/quotations/pipeline/board` (line 3471) is registered **after** `GET /api/quotations/:id` (line 3094). Express will match `/api/quotations/pipeline` as `{ id: "pipeline" }` if the order is wrong. Verify ordering is correct (it appears it is in this file, but the route `GET /api/quotations/preview/:selectionId` on line 2699 shares a prefix conflict with `GET /api/quotations/:id` — these need careful ordering).
+
+---
+
+## 4. 🔒 Security Audit Report
+
+### SEC-001 🔴 CRITICAL — Hardcoded Plaintext Credentials in [.env](file:///d:/deco-hub-crm/.env)
+
+**File:** [.env](file:///d:/deco-hub-crm/.env) (root)  
+**Lines:** 7–8
+
+```
+Email: superadmin@gmail.com
+Password: admin123@
+```
+
+Plain credentials stored directly in the [.env](file:///d:/deco-hub-crm/.env) file as comments. This file is checked into the [.gitignore](file:///d:/deco-hub-crm/.gitignore) (✅ correctly excluded), but its presence on disk exposes credentials to anyone with server access.
+
+**Impact:** Direct credentials leak. Any developer who checks the repo or reads server logs/artifacts can obtain superadmin credentials.
+
+**Fix:** Remove credentials entirely from [.env](file:///d:/deco-hub-crm/.env). Store them in a secrets manager (AWS Secrets Manager, Azure Key Vault) or document separately in a secure password manager.
+
+---
+
+### SEC-002 🔴 CRITICAL — Weak Default JWT Secret
+
+**File:** [server/.env](file:///d:/deco-hub-crm/server/.env), line 2  
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts), line 18
+
+```typescript
+// index.ts line 18
+const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
+
+// server/.env
+JWT_SECRET="my-super-secret-key-change-this"
+```
+
+The [.env](file:///d:/deco-hub-crm/.env) value `"my-super-secret-key-change-this"` is a placeholder text that has not been changed. The fallback in [index.ts](file:///d:/deco-hub-crm/server/src/index.ts) is `'super-secret-key'` — 16 characters, easily brute-forceable. JWT tokens signed with weak secrets can be forged by an attacker.
+
+**Impact:** Complete authentication bypass. Attacker can forge JWT tokens and impersonate any user including `super_admin`.
+
+**Fix:**
+```typescript
+// server/.env — Replace with a cryptographically random 64+ char string
+JWT_SECRET="$(openssl rand -hex 64)"
+
+// index.ts — Remove the fallback, hard-fail if missing
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('FATAL: JWT_SECRET not set!');
+```
+
+---
+
+### SEC-003 🔴 CRITICAL — CORS Allows All Origins
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Lines:** 43–47
+
+```typescript
+app.use(cors({
+  origin: true, // Allow ALL connections from ANY origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true
+}));
+```
+
+`origin: true` is equivalent to `origin: '*'` with credentials support — this is a dangerous combination. Any website can make authenticated cross-origin requests to this API using a victim's credentials.
+
+**Impact:** Cross-Site Request Forgery (CSRF) from any domain. Malicious sites can impersonate authenticated users.
+
+**Fix:**
+```typescript
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+```
+
+---
+
+### SEC-004 🔴 CRITICAL — No Rate Limiting on Authentication
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Line:** 220
+
+```typescript
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  // No rate limiting — unlimited attempts allowed
+```
+
+An attacker can attempt thousands of login attempts per second to brute-force credentials.
+
+**Impact:** Credential brute-force attack. Given the weak JWT secret (SEC-002), this compounds the risk significantly.
+
+**Fix:**
+```bash
+npm install express-rate-limit
+```
+```typescript
+import rateLimit from 'express-rate-limit';
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                   // Max 10 attempts per IP
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' }
+});
+
+app.post('/api/auth/login', loginLimiter, async (req, res) => { ... });
+```
+
+---
+
+### SEC-005 🔴 CRITICAL — No File Type Validation on Upload Endpoint
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Line:** 3628
+
+```typescript
+app.post('/api/upload', authenticateToken, uploadDocs.single('file'), (req: any, res: Response) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  res.json({ url: `/documents/${req.file.filename}` });
+});
+```
+
+No MIME type or extension validation. A malicious user can upload `.exe`, `.php`, `.sh`, or malicious HTML files to the server.
+
+**Impact:** Remote Code Execution (RCE) if server executes uploaded files. XSS via uploaded HTML. Server compromise.
+
+**Fix:**
+```typescript
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+const uploadDocs = multer({
+  storage: storage,
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only images and PDFs are allowed.'));
+    }
+  }
+});
+```
+
+---
+
+### SEC-006 🔴 CRITICAL — Any User Can Delete Any Inquiry/Selection/Quotation
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Lines:** 1288 (delete inquiry), 1657 (delete selection), 3206 (delete quotation)
+
+```typescript
+// Line 1288 — NO ownership check
+app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res) => {
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  await prisma.inquiry.delete({ where: { id } });
+  // Anyone authenticated can delete ANY inquiry
+});
+```
+
+**Impact:** A sales user can delete another sales user's inquiries, or even their own manager's inquiries. Data destruction without authorization.
+
+**Fix:**
+```typescript
+app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res) => {
+  const isAdmin = ['super_admin', 'admin_hr'].includes(req.user.role);
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  
+  if (!inquiry) return res.status(404).json({ error: 'Not found' });
+  if (!isAdmin && inquiry.sales_person_id !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden: You cannot delete this record' });
+  }
+  // proceed with delete
+});
+```
+
+---
+
+### SEC-007 🟡 MEDIUM — Verbose Error Messages on Login
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Lines:** 229, 237
+
+```typescript
+if (!user) {
+  res.status(400).json({ error: 'User not found' }); // ← Leaks user existence
+}
+if (!validPassword) {
+  res.status(400).json({ error: 'Invalid password' }); // ← Confirms account exists
+}
+```
+
+**Impact:** User enumeration attack. Attacker can build a list of valid email accounts.
+
+**Fix:**
+```typescript
+// Return the same generic message for both failure cases
+res.status(401).json({ error: 'Invalid credentials' });
+```
+
+---
+
+### SEC-008 🟡 MEDIUM — Token Stored in localStorage (XSS Risk)
+
+**File:** [src/lib/api.ts](file:///d:/deco-hub-crm/src/lib/api.ts), line 9  
+**File:** [src/contexts/AuthContext.tsx](file:///d:/deco-hub-crm/src/contexts/AuthContext.tsx), lines 41, 54, 69, 84
+
+```typescript
+const token = localStorage.getItem('token');
+localStorage.setItem('token', data.token);
+localStorage.removeItem('token');
+```
+
+Tokens in `localStorage` are accessible to any JavaScript on the page, making them vulnerable to XSS attacks.
+
+**Impact:** If any XSS vulnerability exists (even via a third-party script), attacker can steal JWT tokens and fully impersonate users.
+
+**Fix:** Use `httpOnly`, `Secure` cookies for JWT storage. This requires backend changes to set cookies and the frontend Axios instance to use `withCredentials: true`.
+
+---
+
+### SEC-009 🟡 MEDIUM — No Input Validation on Any API Endpoint
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts) — All endpoints
+
+No `zod` or other validation is applied to request bodies despite `zod` being listed as a dependency. All endpoints accept any shaped data.
+
+**Impact:** Malformed data can cause Prisma errors leaking internal DB structures. Type coercion issues may corrupt data.
+
+**Fix:** Apply Zod schemas:
+```typescript
+import { z } from 'zod';
+
+const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6).max(100)
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const parsed = LoginSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  // ...proceed
+});
+```
+
+---
+
+### SEC-010 🟡 MEDIUM — Debug Console Logs Exposed in Production
+
+**File:** [server/src/index.ts](file:///d:/deco-hub-crm/server/src/index.ts)  
+**Lines:** 222–244, 1378–1386, 1402–1405, 1453–1457, 1475, etc.
+
+Extensive `console.log` statements with emoji markers reveal internal request data, user IDs, and database query patterns in production logs.
+
+```typescript
+console.log('🔵 Login attempt:', { email }); // Line 222 — exposes email in logs
+console.log('🔵 User found:', !!user);        // Line 226
+console.log('🔵 Password valid:', validPassword); // Line 234 — EXTREMELY sensitive!
+```
+
+**Impact:** Logs may be collected by log aggregators and expose PII or authentication outcomes.
+
+**Fix:** Remove all console.log debug statements. Use a proper logging library (e.g., `winston`) with log levels.
+
+---
+
+### SEC-011 🟢 LOW — Supabase Client Initialized Without Keys
+
+**File:** [src/integrations/supabase/client.ts](file:///d:/deco-hub-crm/src/integrations/supabase/client.ts)  
+**Lines:** 5–6
+
+```typescript
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;           // undefined
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY; // undefined
+```
+
+Supabase is imported in [package.json](file:///d:/deco-hub-crm/package.json) and initialized with `undefined` values. The frontend no longer uses Supabase (it uses a custom Express backend), but the client is initialized, creating a dead connection attempt at startup.
+
+**Impact:** Silent initialization error; wasted bundle size; potential security confusion about auth providers.
+
+**Fix:** Remove the entire `src/integrations/supabase/` directory and `@supabase/supabase-js` from `package.json`.
+
+---
+
+## 5. 🗄️ Database Integrity Report
+
+### DB-001 🟡 MEDIUM — `ActivityLog` Model Has No Relation to User (Referential Integrity Gap)
+
+**File:** `server/prisma/schema.prisma`  
+**Lines:** 857–865
+
+```prisma
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String   // Raw string — NO Prisma relation defined
+  // ...
+}
+```
+
+`userId` is a raw String with no `@relation` to the `User` model. If a user is deleted, their activity logs become orphaned with a dangling `userId` that no longer references any user.
+
+**Fix:**
+```prisma
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // ...
+}
+```
+
+---
+
+### DB-002 🟡 MEDIUM — `LeaveRequest.reviewedBy` Stores ID as a Plain String
+
+**File:** `server/prisma/schema.prisma`  
+**Line:** 159
+
+```prisma
+reviewedBy  String?  // Admin ID who approved/rejected — no FK constraint
+```
+
+Same issue as ActivityLog — no referential integrity to the User table.
+
+**Fix:** Add a proper `@relation` to the User model.
+
+---
+
+### DB-003 🟡 MEDIUM — Inquiry Deletion Does Not Clean Up All Relations
+
+**File:** `server/src/index.ts`  
+**Lines:** 1294–1295
+
+```typescript
+await prisma.selection.deleteMany({ where: { inquiryId: id } });
+await prisma.inquiry.delete({ where: { id } });
+```
+
+The code manually deletes selections before the inquiry, but doesn't handle:
+- `InquiryComment` — has `onDelete: Cascade` ✅
+- `InquiryChecklist` — has `onDelete: Cascade` ✅  
+- `InquiryLabel` — has `onDelete: Cascade` ✅
+- `CatalogMovement` — has **NO cascade** ⚠️ — orphaned movements remain!
+- Selections cascade is manually handled but their **calculation records** may not cascade correctly without schema-level `onDelete: Cascade`
+
+**Fix:** Verify all Prisma cascade deletions at the schema level, or use `prisma.$transaction` to clean up explicitly.
+
+---
+
+### DB-004 🟡 MEDIUM — No Pagination on High-Volume Endpoints
+
+**File:** `server/src/index.ts`  
+**Lines:** 130 (logs), 162 (log export), 1188 (inquiries), 1308 (selections)
+
+```typescript
+// Line 130 — Hard limit of 500, no pagination
+const logs = await prisma.activityLog.findMany({ take: 500 });
+
+// Line 1188 — No limit, returns ALL inquiries
+const inquiries = await prisma.inquiry.findMany({ ... });
+```
+
+**Impact:** As data grows, these endpoints will become slow, consume large memory, and may crash the server.
+
+**Fix:**
+```typescript
+// Add cursor-based or offset pagination
+const { page = 1, limit = 50 } = req.query;
+const skip = (Number(page) - 1) * Number(limit);
+const inquiries = await prisma.inquiry.findMany({ skip, take: Number(limit), ... });
+const total = await prisma.inquiry.count({ where: whereClause });
+res.json({ data: inquiries, total, page, limit });
+```
+
+---
+
+### DB-005 🟢 LOW — Schema Contains Development Annotation Comments
+
+**File:** `server/prisma/schema.prisma`  
+**Lines:** 1, 52, 94, 243, 329, 407, 501, 695, 723, 728, 735, 777, etc.
+
+Comments like `// [FILE: schema.prisma]`, `// [APPEND TO schema.prisma]`, `// === ADD THIS NEW LINE ===`, and `// [UPDATE THIS MODEL IN schema.prisma]` are artifact copy-paste comments from development instructions — they clutter the schema.
+
+**Fix:** Remove all `[FILE:]`, `[APPEND TO]`, `[UPDATE THIS MODEL]` annotation comments.
+
+---
+
+### DB-006 🟢 LOW — `Inquiry.stage` and `Inquiry.priority` are Raw Strings, Not Enums
+
+**File:** `server/prisma/schema.prisma`  
+**Lines:** 95–96
+
+```prisma
+stage    String  @default("Inquiry")  // Should be an Enum
+priority String  @default("Medium")   // Should be an Enum
+```
+
+No database-level constraint ensures valid values. API code can write any arbitrary string.
+
+**Fix:**
+```prisma
+enum InquiryStage { Inquiry, QuotationSubmitted, Ongoing, Completed }
+enum Priority { High, Medium, Low }
+
+model Inquiry {
+  stage    InquiryStage @default(Inquiry)
+  priority Priority     @default(Medium)
+}
+```
+
+---
+
+## 6. 🖥️ Frontend Issues Report
+
+### FE-001 🟡 MEDIUM — Dead Supabase Integration in Frontend Bundle
+
+**Files:**  
+- `src/integrations/supabase/client.ts`  
+- `src/integrations/supabase/types.ts` (8,961 bytes of type definitions)  
+- `package.json` — `@supabase/supabase-js: ^2.89.0`
+
+The Supabase SDK is included in the production bundle but never used. The application uses a custom Express backend exclusively.
+
+**Impact:** ~200KB+ unnecessary bundle size increase. Slower page loads.
+
+---
+
+### FE-002 🟡 MEDIUM — `AuthContext` Uses `any` Type Extensively
+
+**File:** `src/contexts/AuthContext.tsx`  
+**Lines:** 14, 34
+
+```typescript
+user: any | null;          // Line 14
+const [user, setUser] = useState<any | null>(null); // Line 34
+```
+
+**Impact:** TypeScript provides no type safety for user properties. Bugs like accessing `user.userId` instead of the correct field go uncaught.
+
+**Fix:** Define a proper `User` interface or reuse the `Profile` interface already defined in the same file.
+
+---
+
+### FE-003 🟡 MEDIUM — `ProtectedRoute` Has TOCTOU Race Condition on Role Check
+
+**File:** `src/components/ProtectedRoute.tsx`  
+**Lines:** 37–43
+
+```typescript
+// If role is null OR undefined, access checks are skipped entirely
+if (role) {
+  if (deniedRoles && deniedRoles.includes(role)) { ... }
+  if (allowedRoles && !allowedRoles.includes(role)) { ... }
+}
+// If role === null, the user passes through to the page!
+```
+
+If `role` is `null` (which happens during the brief period between token validation and user data load), the role check is bypassed entirely. The `loading` guard above prevents this in most cases, but if `loading` becomes `false` before `role` is set, there's a race.
+
+**Fix:**
+```typescript
+// Treat null role conservatively
+if (allowedRoles && (!role || !allowedRoles.includes(role))) {
+  return <Navigate to="/auth" replace />;
+}
+```
+
+---
+
+### FE-004 🟡 MEDIUM — `signOut` Uses Hard Redirect Instead of React Router
+
+**File:** `src/contexts/AuthContext.tsx`  
+**Line:** 88
+
+```typescript
+window.location.href = '/auth'; // Hard reload — loses context
+```
+
+**Impact:** Hard page reloads are slower than router navigation and can cause issues in SPAs that rely on React state. However, in this case it's intentional to clear state, so it's acceptable but the comment should document why.
+
+---
+
+### FE-005 🟡 MEDIUM — `NavLink` in `Sidebar.tsx` has Duplicate `isActive` Logic
+
+**File:** `src/components/layout/Sidebar.tsx`  
+**Lines:** 101–116
+
+```typescript
+// Custom isActive logic computed outside
+const isActive = item.href === '/dashboard'
+    ? location.pathname === '/dashboard'
+    : location.pathname.startsWith(item.href);
+
+// NavLink's own isActive ignored — unused variable `routerActive`
+className={({ isActive: routerActive }) =>
+    cn('...', isActive ? '...' : '...')  // Uses outer `isActive`, not `routerActive`
+}
+```
+
+The `routerActive` parameter from NavLink is computed but never used. The outer `isActive` variable does the same job with custom logic. This is confusing and redundant.
+
+**Fix:** Use only one `isActive` mechanism — either NavLink's built-in or the manual one, not both.
+
+---
+
+### FE-006 🟢 LOW — Folder Name Typos
+
+**Paths:**
+- `src/pages/Caculation/` — Should be `Calculation/`
+- `src/pages/piplines/` — Should be `pipelines/`
+- `src/pages/Employe/` — Should be `Employee/`
+- `src/pages/Inquirie/` — Should be `Inquiries/`
+
+**Impact:** Confusing for new developers. Inconsistent naming degrades project professionalism.
+
+---
+
+### FE-007 🟢 LOW — `CalculationHub.tsx` Import — Does This Page Have a Route?
+
+**File:** `src/pages/Caculation/CalculationHub.tsx` (11.6KB)
+
+This file exists in the pages directory but has **no corresponding route** defined in `App.tsx`. It may be orphaned/unused code.
+
+**Impact:** Dead code in the bundle.
+
+---
+
+## 7. ⚡ Performance Issues Report
+
+### PERF-001 🔴 HIGH — 3,713-Line Monolithic Backend File
+
+**File:** `server/src/index.ts`
+
+The entire backend (80+ routes, 3 helper functions, multer config, CORS config) lives in a single file. This creates:
+- Slow startup due to single large module parse
+- Impossible to unit test individual route handlers
+- Merge conflicts in team development
+- No separation of concerns
+
+**Fix:** Split into route modules:
+```
+server/src/
+├── index.ts          (app setup, middleware, listen)
+├── routes/
+│   ├── auth.ts
+│   ├── employees.ts
+│   ├── inquiries.ts
+│   ├── selections.ts
+│   ├── calculations.ts
+│   ├── quotations.ts
+│   ├── catalogs.ts
+│   ├── attendance.ts
+│   ├── pipeline.ts
+│   └── architects.ts
+├── middleware/
+│   └── authMiddleware.ts
+└── helpers/
+    └── logActivity.ts
+```
+
+---
+
+### PERF-002 🟡 MEDIUM — No Pagination Causes N+1 and Memory Issues
+
+See DB-004 above. Additionally, `/api/products/all` (line 550) returns **all products from all catalogs** without any limit — this will become a serious performance issue as catalog data grows.
+
+---
+
+### PERF-003 🟡 MEDIUM — N+1 Query in Local Calculation Save
+
+**File:** `server/src/index.ts`  
+**Lines:** 2200–2209
+
+```typescript
+for (const item of items) {
+  await prisma.selectionItem.update({ ... }); // Sequential DB calls in a loop
+}
+```
+
+Each item triggers a separate DB round-trip. With 20 items, this is 20 sequential queries.
+
+**Fix:**
+```typescript
+// Use Promise.all for parallel execution
+await Promise.all(items.map(item =>
+  prisma.selectionItem.update({ where: { id: item.selectionItemId }, data: { ... } })
+));
+```
+
+---
+
+### PERF-004 🟢 LOW — `@supabase/supabase-js` Inflates Bundle
+
+Already reported in FE-001. Removing this library could reduce the JS bundle by ~200KB.
+
+---
+
+### PERF-005 🟢 LOW — Large Frontend Pages Without Code Splitting
+
+**Files:** `src/pages/Catalogs/Catalogs.tsx` (75KB), `src/pages/piplines/Pipeline.tsx` (66KB), `src/pages/Attendance/Attendance.tsx` (43KB)
+
+These are very large single-file React components. Without lazy loading, they all load at once on first page visit.
+
+**Fix:** Use `React.lazy()` and `Suspense` in `App.tsx`:
+```typescript
+const Catalogs = React.lazy(() => import('./pages/Catalogs/Catalogs'));
+```
+
+---
+
+## 8. 🔴 Critical Issues (High Priority)
+
+| # | Issue | File | Line | Risk |
+|---|-------|------|------|------|
+| C1 | Hardcoded plaintext superadmin credentials in `.env` | `.env` | 7–8 | 🔴 Critical |
+| C2 | Weak/placeholder JWT secret with dangerous fallback | `server/src/index.ts`, `server/.env` | 18, L2 | 🔴 Critical |
+| C3 | CORS `origin: true` allows any origin with credentials | `server/src/index.ts` | 43–47 | 🔴 Critical |
+| C4 | No rate limiting on `/api/auth/login` | `server/src/index.ts` | 220 | 🔴 Critical |
+| C5 | No file type validation on `/api/upload` | `server/src/index.ts` | 3628 | 🔴 Critical |
+| C6 | Anyone can delete any inquiry/selection/quotation | `server/src/index.ts` | 1288, 1657, 3206 | 🔴 Critical |
+| C7 | Duplicate `POST /api/companies` route — unguarded wins | `server/src/index.ts` | 93, 366 | 🔴 Critical |
+
+---
+
+## 9. 🟡 Medium Priority Issues
+
+| # | Issue | File | Line |
+|---|-------|------|------|
+| M1 | No input validation (Zod unused despite being installed) | `server/src/index.ts` | All endpoints |
+| M2 | User enumeration via distinct login error messages | `server/src/index.ts` | 229, 237 |
+| M3 | JWT stored in `localStorage` — XSS vulnerable | `src/lib/api.ts` | 9 |
+| M4 | Verbose debug console.log with sensitive data | `server/src/index.ts` | 222–244 |
+| M5 | No pagination on inquiry/selection/product endpoints | `server/src/index.ts` | 1188, 1308, 550 |
+| M6 | `ActivityLog.userId` has no referential integrity | `server/prisma/schema.prisma` | 859 |
+| M7 | `LeaveRequest.reviewedBy` has no referential integrity | `server/prisma/schema.prisma` | 159 |
+| M8 | `AuthContext` uses `any` type — no type safety | `src/contexts/AuthContext.tsx` | 14, 34 |
+| M9 | N+1 query loop in calculation save routes | `server/src/index.ts` | 2200–2209 |
+| M10 | `GET /api/users/all` returns emails with no role guard | `server/src/index.ts` | 3702 |
+| M11 | `InquiryComment` can be posted with empty content AND no URL | `server/src/index.ts` | 3374 |
+| M12 | Inquiry `stage` and `priority` are unvalidated strings | `server/prisma/schema.prisma` | 95–96 |
+| M13 | Missing CRUD guards on architect create/update/delete | `server/src/index.ts` | 3241, 3262, 3285 |
+| M14 | `PUT /api/inquiries/:id` — any user can update any inquiry | `server/src/index.ts` | 1261 |
+| M15 | Supabase client initialized with `undefined` keys | `src/integrations/supabase/client.ts` | 5–6 |
+
+---
+
+## 10. 🟢 Low Priority Issues
+
+| # | Issue | File |
+|---|-------|------|
+| L1 | Schema annotation comments (development artifacts) | `server/prisma/schema.prisma` |
+| L2 | Folder name typos (Caculation, piplines, Employe) | `src/pages/` |
+| L3 | `CalculationHub.tsx` has no route — possibly orphaned | `src/pages/Caculation/` |
+| L4 | `NavLink` dual `isActive` computation — confusing | `src/components/layout/Sidebar.tsx` |
+| L5 | No error boundary components in React app | `src/App.tsx` |
+| L6 | `NEW_LIST_EXTRACTED.xlsx` data file committed to repo | `d:\deco-hub-crm\` root |
+| L7 | Backend `@types/multer` is in `dependencies` not `devDependencies` | `server/package.json` |
+| L8 | No `Content-Security-Policy` header on backend responses | `server/src/index.ts` |
+| L9 | Attendance Late Mark logic hardcoded — not configurable | `server/src/index.ts` line 725 |
+| L10 | `signOut()` uses `window.location.href` hard redirect | `src/contexts/AuthContext.tsx` line 88 |
+| L11 | No `helmet` middleware for HTTP security headers | `server/src/index.ts` |
+| L12 | `newformat/` directory at project root — unclear purpose | Root directory |
+
+---
+
+## 11. 📐 Recommendations & Fix Plan
+
+### Phase 1 — Critical Security (Do Before Going Live)
+
+**Priority: Immediate (1–2 days)**
+
+1. **Fix JWT Secret**: Replace `"my-super-secret-key-change-this"` with a 64-char random hex string. Remove the `|| 'super-secret-key'` fallback.
+2. **Lock CORS**: Replace `origin: true` with explicit origin whitelist.
+3. **Add Rate Limiting**: Install `express-rate-limit`, apply to `/api/auth/login`.
+4. **Add File Upload Validation**: Whitelist MIME types and enforce size limits on `/api/upload`.
+5. **Remove Credentials from `.env`**: Purge the `Email:` and `Password:` lines from root `.env`.
+6. **Fix Duplicate Company Route**: Remove the unguarded `POST /api/companies` at line 93.
+7. **Add Ownership Checks**: Add `sales_person_id === req.user.id || isAdmin` checks to delete/update endpoints.
+
+### Phase 2 — Data Integrity & Validation (Week 1)
+
+8. **Install Zod Validation**: Create request schemas for all POST/PUT endpoints.
+9. **Fix Login Error Messages**: Return generic `"Invalid credentials"` regardless of failure reason.
+10. **Add Pagination**: Implement `page`/`limit` query parameters on all list endpoints.
+11. **Add Prisma Relations**: Fix `ActivityLog.userId` and `LeaveRequest.reviewedBy` to be proper FK relations.
+12. **Convert Stage/Priority Strings to Enums**: Create Prisma enums for `InquiryStage`, `QuotationStage`, `Priority`.
+
+### Phase 3 — Architecture Refactoring (Week 2–3)
+
+13. **Split Backend Monolith**: Break `index.ts` into route modules (see PERF-001).
+14. **Remove Supabase**: Delete `src/integrations/supabase/` and remove the npm package.
+15. **Add Error Boundaries**: Wrap page-level components in React Error Boundaries.
+16. **Add Code Splitting**: Implement `React.lazy()` for large page components.
+17. **Add Helmet Middleware**: Install `helmet` for HTTP security headers.
+18. **Fix Folder Typos**: Rename `Caculation` → `Calculation`, `piplines` → `pipelines`.
+
+### Phase 4 — Performance Optimizations (Month 2)
+
+19. **Replace Sequential Loops with `Promise.all`** in calculation save routes.
+20. **Move JWT to HttpOnly Cookies**: Migrate from `localStorage` to secure cookies.
+21. **Add Request Logging**: Replace `console.log` debug statements with `winston` logger.
+22. **Add Auto-Checkout Cron Job**: Uncomment and implement the cron job at line 993–1008.
+
+---
+
+## 12. 💻 Suggested Code Improvements (with File References)
+
+### Fix 1 — Secure Express Setup (`server/src/index.ts`)
+
+```typescript
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+
+// Add after dotenv.config()
+if (!process.env.JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET environment variable is not set');
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+app.use(helmet()); // Sets X-XSS-Protection, Content-Security-Policy, etc.
+
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173'],
+  credentials: true,
+}));
+
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
+
+app.use('/api/', apiLimiter);
+app.post('/api/auth/login', loginLimiter, /* handler */);
+```
+
+### Fix 2 — JWT Token Payload (`server/src/index.ts`, Line 241)
+
+```typescript
+// Current (stores `id` but authMiddleware decodes `user.id` inconsistently)
+const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+
+// Fixed — ensure consistent property naming
+const token = jwt.sign(
+  { userId: user.id, role: user.role },
+  JWT_SECRET,
+  { expiresIn: '8h' } // Reduce from 24h for better security
+);
+```
+
+**Note:** Currently `authMiddleware.ts` sets `req.user = user` where `user.id` contains the JWT `id` field. But some routes use `req.user.userId` (line 104) and others `req.user.id` (line 254). This is a **consistency bug** — some request handlers may fail to find the correct user ID.
+
+### Fix 3 — AuthContext TypeScript Safety (`src/contexts/AuthContext.tsx`)
+
+```typescript
+// Replace 'any' with proper interface
+interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: AppRole;
+  mobile_number: string | null;
+}
+
+// Update all useState calls:
+const [user, setUser] = useState<AuthUser | null>(null);
+```
+
+### Fix 4 — File Upload Security (`server/src/index.ts`)
+
+```typescript
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+
+const uploadDocs = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type: ${file.mimetype}`));
+    }
+  }
+});
+```
+
+---
+
+## 13. 🎯 Risk Score Summary
+
+| Category | Score | Notes |
+|----------|-------|-------|
+| Authentication Security | 4/10 | Weak secret, localStorage JWT, no rate limit |
+| Authorization / RBAC | 5/10 | Partial guards; delete/update holes exist |
+| Data Validation | 3/10 | No input validation anywhere |
+| CORS & External Access | 2/10 | Wild-card CORS with credentials is critical |
+| Database Integrity | 6/10 | Good cascade setup, missing FK relations |
+| Code Architecture | 4/10 | Monolith, dead code, naming issues |
+| Frontend Correctness | 7/10 | Good routing, minor type safety gaps |
+| Performance | 6/10 | N+1 loops, no pagination, large components |
+
+### **Overall Risk Score: `7.5 / 10` (HIGH)**
+
+> **This application should NOT be deployed to production in its current state.** The combination of a brute-forceable authentication system, open CORS, no file validation, and the ability for any user to delete any record represents a high likelihood of data loss or breach with real users.
+
+Addressing the **7 Critical Issues** in Phase 1 would bring the risk score down to approximately **4.5/10 (Moderate)**, which is acceptable for a carefully monitored internal deployment.
+
+---
+
+*Audit completed: 2026-03-04. Do not modify files based on this report until the findings have been reviewed and prioritized by the development team.*
