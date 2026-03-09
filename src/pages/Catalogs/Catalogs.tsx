@@ -678,9 +678,9 @@ const Catalogs: React.FC = () => {
       return cat ? (
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] text-muted-foreground">Collection:</span>
-          <span className="text-[11px] font-semibold bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full">
-            {company?.name} › {cat.name}
-          </span>
+          <span className="text-[11px] font-semibold bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full max-w-[220px] truncate block" title={`${company?.name} › ${cat.name}`}>
+  {company?.name} › {cat.name}
+</span>
         </div>
       ) : null;
     })()}
