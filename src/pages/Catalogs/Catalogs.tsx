@@ -240,9 +240,9 @@ const Catalogs: React.FC = () => {
   const getCatalogsForCompany = (compId: string) => companies.find(c => c.id === compId)?.catalogs || [];
   const getAvailableCopies = (catId: string) => copies.filter(c => c.catalogId === catId && c.status === 'AVAILABLE');
 
- const getAttr = (product: Product, key: string) => {
-  return product.attributes?.[key] ?? '-';
-};
+  const getAttr = (product: Product, key: string) => {
+    return product.attributes?.[key] ?? '-';
+  };
 
   // --- FILTER LOGIC ---
   const getFilteredInventory = () => {
@@ -348,54 +348,54 @@ const Catalogs: React.FC = () => {
   };
 
   const handleUpload = async () => {
-  if (!file || !selectedCompanyUpload) {
-    toast({ title: 'Error', description: 'Please select file and company', variant: 'destructive' });
-    return;
-  }
-
-  setIsUploading(true);
-  setUploadStatus('Uploading...');
-
-  try {
-    const formData = new FormData();
-    formData.append('file', file);                          // Send file directly, no pre-processing
-    formData.append('companyId', selectedCompanyUpload);
-    formData.append('defaultType', uploadType);
-
-    const response = await api.post('/upload-catalog', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    });
-
-    const { data } = response;
-
-    if (data.errors && data.errors.length > 0) {
-      const firstError = typeof data.errors[0] === 'string' ? data.errors[0] : JSON.stringify(data.errors[0]);
-      toast({
-        title: 'Partial Success',
-        description: `Processed ${data.productsCreated} items. ${data.errors.length} errors. First: ${firstError}`,
-        variant: 'destructive'
-      });
-    } else {
-      toast({ title: 'Success', description: data.message || 'Catalog uploaded successfully.' });
+    if (!file || !selectedCompanyUpload) {
+      toast({ title: 'Error', description: 'Please select file and company', variant: 'destructive' });
+      return;
     }
 
-    setIsUploadOpen(false);
-    setFile(null);
-    setSelectedCompanyUpload('');
-    fetchCompanies();
-    if (selectedCatalog) fetchProducts(selectedCatalog);
+    setIsUploading(true);
+    setUploadStatus('Uploading...');
 
-  } catch (error: any) {
-    toast({
-      title: 'Upload Failed',
-      description: error.response?.data?.details || error.response?.data?.error || 'Failed to upload.',
-      variant: 'destructive'
-    });
-  } finally {
-    setIsUploading(false);
-    setUploadStatus('');
-  }
-};
+    try {
+      const formData = new FormData();
+      formData.append('file', file);                          // Send file directly, no pre-processing
+      formData.append('companyId', selectedCompanyUpload);
+      formData.append('defaultType', uploadType);
+
+      const response = await api.post('/upload-catalog', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      const { data } = response;
+
+      if (data.errors && data.errors.length > 0) {
+        const firstError = typeof data.errors[0] === 'string' ? data.errors[0] : JSON.stringify(data.errors[0]);
+        toast({
+          title: 'Partial Success',
+          description: `Processed ${data.productsCreated} items. ${data.errors.length} errors. First: ${firstError}`,
+          variant: 'destructive'
+        });
+      } else {
+        toast({ title: 'Success', description: data.message || 'Catalog uploaded successfully.' });
+      }
+
+      setIsUploadOpen(false);
+      setFile(null);
+      setSelectedCompanyUpload('');
+      fetchCompanies();
+      if (selectedCatalog) fetchProducts(selectedCatalog);
+
+    } catch (error: any) {
+      toast({
+        title: 'Upload Failed',
+        description: error.response?.data?.details || error.response?.data?.error || 'Failed to upload.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsUploading(false);
+      setUploadStatus('');
+    }
+  };
 
   const handleIssueCatalog = async () => {
     try {
@@ -583,15 +583,15 @@ const Catalogs: React.FC = () => {
                         />
                         {file && <p className="text-xs text-muted-foreground mt-1">Selected: {file.name}</p>}
                       </div>
-<div className="bg-blue-500/10 border border-blue-500/20 rounded-md p-3 flex gap-3 items-start">
-  <Check className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
-  <div className="text-xs">
-    <p className="font-semibold text-blue-700 mb-1">Expected Format</p>
-    <p className="text-muted-foreground">
-      Row 1: Group headers (Delear Price, Customer Rate, Design Repeat). Row 2: Column headers (Collection, Design/ Quality, RRP, etc.). Data starts from Row 3.
-    </p>
-  </div>
-</div>
+                      <div className="bg-blue-500/10 border border-blue-500/20 rounded-md p-3 flex gap-3 items-start">
+                        <Check className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                        <div className="text-xs">
+                          <p className="font-semibold text-blue-700 mb-1">Expected Format</p>
+                          <p className="text-muted-foreground">
+                            Row 1: Group headers (Delear Price, Customer Rate, Design Repeat). Row 2: Column headers (Collection, Design/ Quality, RRP, etc.). Data starts from Row 3.
+                          </p>
+                        </div>
+                      </div>
                       <Button
                         onClick={handleUpload}
                         disabled={!file || !selectedCompanyUpload || isUploading}
@@ -607,235 +607,233 @@ const Catalogs: React.FC = () => {
               </div>
             </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-4 gap-6" style={{ height: 'calc(100vh - 280px)' }}>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6" style={{ height: 'calc(100vh - 280px)' }}>
 
-  {/* Sidebar: Companies — STICKY, independently scrollable */}
-  <div className="card-premium p-4 flex flex-col" style={{ height: 'calc(100vh - 280px)', overflowY: 'auto' }}>
-    <h3 className="font-semibold mb-4 text-xs uppercase text-muted-foreground tracking-wider flex-shrink-0">Companies & Catalogs</h3>
-    <div className="relative mb-4 flex-shrink-0">
-      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-      <Input placeholder="Search..." className="pl-9 h-9 text-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-    </div>
-    <div className="space-y-2 overflow-y-auto flex-1">
-      {filteredCompanies.map(company => (
-        <div key={company.id} className="border border-border rounded-lg overflow-hidden">
-          <div className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => toggleCompany(company.id)}>
-            <div className="font-medium flex items-center gap-2">
-              {expandedCompany === company.id ? <ChevronDown className="h-4 w-4 text-primary" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-              <span className="truncate text-sm">{company.name}</span>
-            </div>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company.id, company.name); }}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          {expandedCompany === company.id && (
-            <div className="bg-background p-2 space-y-1 border-t border-border animate-in slide-in-from-top-2">
-              {company.catalogs.length === 0 ? (
-                <p className="text-xs text-muted-foreground p-2 text-center">No catalogs.</p>
-              ) : (
-                company.catalogs.map(catalog => (
-                  <button
-                    key={catalog.id}
-                    onClick={() => setSelectedCatalog(catalog.id)}
-                    className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${
-                      selectedCatalog === catalog.id
-                        ? 'bg-accent/10 text-accent font-medium border border-accent/20'
-                        : 'text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
-                    <span className="truncate">{catalog.name}</span>
-                    <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded capitalize flex-shrink-0 ${
-                      catalog.type === 'Curtains' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {catalog.type}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  </div>
+              {/* Sidebar: Companies — STICKY, independently scrollable */}
+              <div className="card-premium p-4 flex flex-col" style={{ height: 'calc(100vh - 280px)', overflowY: 'auto' }}>
+                <h3 className="font-semibold mb-4 text-xs uppercase text-muted-foreground tracking-wider flex-shrink-0">Companies & Catalogs</h3>
+                <div className="relative mb-4 flex-shrink-0">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search..." className="pl-9 h-9 text-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                </div>
+                <div className="space-y-2 overflow-y-auto flex-1">
+                  {filteredCompanies.map(company => (
+                    <div key={company.id} className="border border-border rounded-lg overflow-hidden">
+                      <div className="flex justify-between items-center p-3 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => toggleCompany(company.id)}>
+                        <div className="font-medium flex items-center gap-2 min-w-0 flex-1">
+                          {expandedCompany === company.id ? <ChevronDown className="h-4 w-4 flex-shrink-0 text-primary" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                          <span className="truncate text-sm">{company.name}</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0 text-destructive hover:bg-destructive/10 ml-2" onClick={(e) => { e.stopPropagation(); handleDeleteCompany(company.id, company.name); }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      {expandedCompany === company.id && (
+                        <div className="bg-background p-2 space-y-1 border-t border-border animate-in slide-in-from-top-2">
+                          {company.catalogs.length === 0 ? (
+                            <p className="text-xs text-muted-foreground p-2 text-center">No catalogs.</p>
+                          ) : (
+                            company.catalogs.map(catalog => (
+                              <button
+                                key={catalog.id}
+                                onClick={() => setSelectedCatalog(catalog.id)}
+                                className={`w-full text-left text-sm px-3 py-2 rounded-md transition-colors flex items-center gap-2 ${selectedCatalog === catalog.id
+                                    ? 'bg-accent/10 text-accent font-medium border border-accent/20'
+                                    : 'text-muted-foreground hover:bg-muted'
+                                  }`}
+                              >
+                                <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
+                                <span className="truncate flex-1">{catalog.name}</span>
+                                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded capitalize flex-shrink-0 ${catalog.type === 'Curtains' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                  {catalog.type}
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
 
-  {/* Main Area: Products — independently scrollable */}
-  <div className="md:col-span-3 card-premium overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
+              {/* Main Area: Products — independently scrollable */}
+              <div className="md:col-span-3 card-premium overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
                 {selectedCatalog ? (
                   <>
                     {/* Add this ABOVE the <table> tag, inside the products panel */}
-<div className="p-4 border-b border-border bg-muted/20 flex flex-col md:flex-row md:justify-between md:items-center gap-4 flex-shrink-0">
-  <div className="flex items-center gap-3 flex-wrap">
-    <h3 className="font-semibold text-foreground whitespace-nowrap">
-      Products ({filteredProducts.length})
-    </h3>
-    {/* Collection badge — replaces empty Collection column in table */}
-    {(() => {
-      const cat = companies.flatMap(c => c.catalogs).find(c => c.id === selectedCatalog);
-      const company = companies.find(c => c.catalogs.some(cl => cl.id === selectedCatalog));
-      return cat ? (
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">Collection:</span>
-          <span className="text-[11px] font-semibold bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full max-w-[220px] truncate block" title={`${company?.name} › ${cat.name}`}>
-  {company?.name} › {cat.name}
-</span>
-        </div>
-      ) : null;
-    })()}
-    {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-  </div>
-  <div className="relative w-full md:w-64 flex-shrink-0">
-    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-    <Input
-      placeholder="Search products..."
-      className="pl-9 h-9 text-sm"
-      value={productSearchQuery}
-      onChange={(e) => setProductSearchQuery(e.target.value)}
-    />
-  </div>
-</div>
+                    <div className="p-4 border-b border-border bg-muted/20 flex flex-col md:flex-row md:justify-between md:items-center gap-4 flex-shrink-0">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h3 className="font-semibold text-foreground whitespace-nowrap">
+                          Products ({filteredProducts.length})
+                        </h3>
+                        {/* Collection badge — replaces empty Collection column in table */}
+                        {(() => {
+                          const cat = companies.flatMap(c => c.catalogs).find(c => c.id === selectedCatalog);
+                          const company = companies.find(c => c.catalogs.some(cl => cl.id === selectedCatalog));
+                          return cat ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-muted-foreground">Collection:</span>
+                              <span className="text-[11px] font-semibold bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full max-w-[220px] truncate block" title={`${company?.name} › ${cat.name}`}>
+                                {company?.name} › {cat.name}
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                      </div>
+                      <div className="relative w-full md:w-64 flex-shrink-0">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search products..."
+                          className="pl-9 h-9 text-sm"
+                          value={productSearchQuery}
+                          onChange={(e) => setProductSearchQuery(e.target.value)}
+                        />
+                      </div>
+                    </div>
 
-<div className="overflow-x-auto flex-1 overflow-y-auto">
-    {loading ? (
-    <div className="flex items-center justify-center h-full">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-    </div>
-  ) : filteredProducts.length === 0 ? (
-    <div className="flex items-center justify-center h-full text-muted-foreground">
-      No products found
-    </div>
-  ) : (
-   <table className="w-full text-sm min-w-[1600px]">
-<thead className="sticky top-0 z-20 shadow-sm">
+                    <div className="overflow-x-auto flex-1 overflow-y-auto">
+                      {loading ? (
+                        <div className="flex items-center justify-center h-full">
+                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        </div>
+                      ) : filteredProducts.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-muted-foreground">
+                          No products found
+                        </div>
+                      ) : (
+                        <table className="w-full text-sm min-w-[1600px]">
+                          <thead className="sticky top-0 z-20 shadow-sm">
 
-    {/* ROW 1 — Group Headers */}
-<tr className="border-b text-[10px] uppercase tracking-wider bg-muted">
-  <th className="px-4 py-1.5 text-left" colSpan={6}></th>
-      <th className="px-4 py-1.5 text-center border-l border-orange-200 bg-orange-50 text-orange-700" colSpan={4}>
-        Delear Price
-      </th>
-      <th className="px-4 py-1.5 text-center border-l border-blue-200 bg-blue-50 text-blue-700" colSpan={4}>
-        Customer Rate
-      </th>
-      <th className="px-4 py-1.5 text-center border-l border-purple-200 bg-purple-50 text-purple-700" colSpan={2}>
-        Design Repeat
-      </th>
-      <th className="px-4 py-1.5 text-left border-l border-border" colSpan={3}></th>
-    </tr>
+                            {/* ROW 1 — Group Headers */}
+                            <tr className="border-b text-[10px] uppercase tracking-wider bg-muted">
+                              <th className="px-4 py-1.5 text-left" colSpan={6}></th>
+                              <th className="px-4 py-1.5 text-center border-l border-orange-200 bg-orange-50 text-orange-700" colSpan={4}>
+                                Delear Price
+                              </th>
+                              <th className="px-4 py-1.5 text-center border-l border-blue-200 bg-blue-50 text-blue-700" colSpan={4}>
+                                Customer Rate
+                              </th>
+                              <th className="px-4 py-1.5 text-center border-l border-purple-200 bg-purple-50 text-purple-700" colSpan={2}>
+                                Design Repeat
+                              </th>
+                              <th className="px-4 py-1.5 text-left border-l border-border" colSpan={3}></th>
+                            </tr>
 
-   {/* ROW 2 — Column Headers */}
-<tr className="border-b text-xs bg-muted">
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground w-12">Sr. No</th>
-      {/* <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Collection</th> */}
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Design/ Quality</th>
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">SRL No</th>
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Width (CM)</th>
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Gsm</th>
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">HSN</th>
+                            {/* ROW 2 — Column Headers */}
+                            <tr className="border-b text-xs bg-muted">
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground w-12">Sr. No</th>
+                              {/* <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Collection</th> */}
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Design/ Quality</th>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">SRL No</th>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Width (CM)</th>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Gsm</th>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">HSN</th>
 
-      {/* Delear Price group */}
-      <th className="text-left px-4 py-2 font-semibold text-orange-700 border-l border-orange-200 bg-orange-50/50">CL Rate</th>
-      <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">RL Rate</th>
-      <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">CL Landing Cost</th>
-      <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">RL Landing Cost</th>
+                              {/* Delear Price group */}
+                              <th className="text-left px-4 py-2 font-semibold text-orange-700 border-l border-orange-200 bg-orange-50/50">CL Rate</th>
+                              <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">RL Rate</th>
+                              <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">CL Landing Cost</th>
+                              <th className="text-left px-4 py-2 font-semibold text-orange-700 bg-orange-50/50">RL Landing Cost</th>
 
-      {/* Customer Rate group */}
-      <th className="text-left px-4 py-2 font-semibold text-blue-700 border-l border-blue-200 bg-blue-50/50">RRP</th>
-      <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">GST %</th>
-      <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">GST Amount</th>
-      <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">MRP</th>
+                              {/* Customer Rate group */}
+                              <th className="text-left px-4 py-2 font-semibold text-blue-700 border-l border-blue-200 bg-blue-50/50">RRP</th>
+                              <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">GST %</th>
+                              <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">GST Amount</th>
+                              <th className="text-left px-4 py-2 font-semibold text-blue-700 bg-blue-50/50">MRP</th>
 
-      {/* Design Repeat group */}
-      <th className="text-left px-4 py-2 font-semibold text-purple-700 border-l border-purple-200 bg-purple-50/50">Vertical</th>
-      <th className="text-left px-4 py-2 font-semibold text-purple-700 bg-purple-50/50">Horizontal</th>
+                              {/* Design Repeat group */}
+                              <th className="text-left px-4 py-2 font-semibold text-purple-700 border-l border-purple-200 bg-purple-50/50">Vertical</th>
+                              <th className="text-left px-4 py-2 font-semibold text-purple-700 bg-purple-50/50">Horizontal</th>
 
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground border-l border-border">Martindale</th>
-      <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Price Code</th>
-      <th className="text-right px-4 py-2 font-semibold text-muted-foreground">Actions</th>
-    </tr>
-  </thead>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground border-l border-border">Martindale</th>
+                              <th className="text-left px-4 py-2 font-semibold text-muted-foreground">Price Code</th>
+                              <th className="text-right px-4 py-2 font-semibold text-muted-foreground">Actions</th>
+                            </tr>
+                          </thead>
 
-  <tbody>
-    {filteredProducts.map((product) => {
-      // Fix GST: Excel stores as 0.05, display as "5%"
-      const rawGst = getAttr(product, 'GST');
-      const gstDisplay = rawGst !== '-'
-        ? (parseFloat(rawGst) <= 1
-          ? `${(parseFloat(rawGst) * 100).toFixed(0)}%`
-          : `${parseFloat(rawGst).toFixed(0)}%`)
-        : '-';
+                          <tbody>
+                            {filteredProducts.map((product) => {
+                              // Fix GST: Excel stores as 0.05, display as "5%"
+                              const rawGst = getAttr(product, 'GST');
+                              const gstDisplay = rawGst !== '-'
+                                ? (parseFloat(rawGst) <= 1
+                                  ? `${(parseFloat(rawGst) * 100).toFixed(0)}%`
+                                  : `${parseFloat(rawGst).toFixed(0)}%`)
+                                : '-';
 
-      // CL Landing Cost & RL Landing Cost are formula-based, compute if missing
-      const clRate = parseFloat(getAttr(product, 'CL Rate')) || 0;
-      const rlRate = parseFloat(getAttr(product, 'RL Rate')) || 0;
-      const clLanding = getAttr(product, 'CL Landing Cost') !== '-'
-        ? getAttr(product, 'CL Landing Cost')
-        : clRate > 0 ? (clRate * 1.05).toFixed(0) : '-';
-      const rlLanding = getAttr(product, 'RL Landing Cost') !== '-'
-        ? getAttr(product, 'RL Landing Cost')
-        : rlRate > 0 ? (rlRate * 1.05).toFixed(0) : '-';
+                              // CL Landing Cost & RL Landing Cost are formula-based, compute if missing
+                              const clRate = parseFloat(getAttr(product, 'CL Rate')) || 0;
+                              const rlRate = parseFloat(getAttr(product, 'RL Rate')) || 0;
+                              const clLanding = getAttr(product, 'CL Landing Cost') !== '-'
+                                ? getAttr(product, 'CL Landing Cost')
+                                : clRate > 0 ? (clRate * 1.05).toFixed(0) : '-';
+                              const rlLanding = getAttr(product, 'RL Landing Cost') !== '-'
+                                ? getAttr(product, 'RL Landing Cost')
+                                : rlRate > 0 ? (rlRate * 1.05).toFixed(0) : '-';
 
-      // GST Amount & MRP are formula-based, compute if missing
-      const rrp = parseFloat(product.price) || 0;
-      const gstPct = rawGst !== '-' ? (parseFloat(rawGst) <= 1 ? parseFloat(rawGst) : parseFloat(rawGst) / 100) : 0;
-      const gstAmount = getAttr(product, 'GST Amount') !== '-'
-        ? getAttr(product, 'GST Amount')
-        : rrp > 0 ? (rrp * gstPct).toFixed(0) : '-';
-      const mrp = getAttr(product, 'MRP') !== '-'
-        ? getAttr(product, 'MRP')
-        : rrp > 0 ? (rrp + rrp * gstPct).toFixed(0) : '-';
+                              // GST Amount & MRP are formula-based, compute if missing
+                              const rrp = parseFloat(product.price) || 0;
+                              const gstPct = rawGst !== '-' ? (parseFloat(rawGst) <= 1 ? parseFloat(rawGst) : parseFloat(rawGst) / 100) : 0;
+                              const gstAmount = getAttr(product, 'GST Amount') !== '-'
+                                ? getAttr(product, 'GST Amount')
+                                : rrp > 0 ? (rrp * gstPct).toFixed(0) : '-';
+                              const mrp = getAttr(product, 'MRP') !== '-'
+                                ? getAttr(product, 'MRP')
+                                : rrp > 0 ? (rrp + rrp * gstPct).toFixed(0) : '-';
 
-      return (
-        <tr key={product.id} className="border-b hover:bg-muted/30 transition-colors text-xs">
-          <td className="px-4 py-3 text-muted-foreground">{getAttr(product, 'Sr. No')}</td>
-          {/* <td className="px-4 py-3 font-medium">{product.attributes?.['Collection'] || '-'}</td> */}
-          <td className="px-4 py-3 font-medium">{product.name}</td>
-          <td className="px-4 py-3 text-muted-foreground">{getAttr(product, 'SRL No')}</td>
-          <td className="px-4 py-3">{getAttr(product, 'Width (CM)')}</td>
-          <td className="px-4 py-3">{getAttr(product, 'Gsm')}</td>
-          <td className="px-4 py-3">{getAttr(product, 'HSN')}</td>
+                              return (
+                                <tr key={product.id} className="border-b hover:bg-muted/30 transition-colors text-xs">
+                                  <td className="px-4 py-3 text-muted-foreground">{getAttr(product, 'Sr. No')}</td>
+                                  {/* <td className="px-4 py-3 font-medium">{product.attributes?.['Collection'] || '-'}</td> */}
+                                  <td className="px-4 py-3 font-medium">{product.name}</td>
+                                  <td className="px-4 py-3 text-muted-foreground">{getAttr(product, 'SRL No')}</td>
+                                  <td className="px-4 py-3">{getAttr(product, 'Width (CM)')}</td>
+                                  <td className="px-4 py-3">{getAttr(product, 'Gsm')}</td>
+                                  <td className="px-4 py-3">{getAttr(product, 'HSN')}</td>
 
-          {/* Delear Price group */}
-          <td className="px-4 py-3 font-medium text-orange-700 border-l border-orange-100 bg-orange-50/20">₹{getAttr(product, 'CL Rate')}</td>
-          <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{getAttr(product, 'RL Rate')}</td>
-          <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{clLanding}</td>
-          <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{rlLanding}</td>
+                                  {/* Delear Price group */}
+                                  <td className="px-4 py-3 font-medium text-orange-700 border-l border-orange-100 bg-orange-50/20">₹{getAttr(product, 'CL Rate')}</td>
+                                  <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{getAttr(product, 'RL Rate')}</td>
+                                  <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{clLanding}</td>
+                                  <td className="px-4 py-3 text-orange-700 bg-orange-50/20">₹{rlLanding}</td>
 
-          {/* Customer Rate group */}
-          <td className="px-4 py-3 font-bold text-blue-700 border-l border-blue-100 bg-blue-50/20">₹{product.price}</td>
-          <td className="px-4 py-3 text-blue-700 bg-blue-50/20">{gstDisplay}</td>
-          <td className="px-4 py-3 text-blue-700 bg-blue-50/20">₹{gstAmount}</td>
-          <td className="px-4 py-3 text-blue-700 bg-blue-50/20">₹{mrp}</td>
+                                  {/* Customer Rate group */}
+                                  <td className="px-4 py-3 font-bold text-blue-700 border-l border-blue-100 bg-blue-50/20">₹{product.price}</td>
+                                  <td className="px-4 py-3 text-blue-700 bg-blue-50/20">{gstDisplay}</td>
+                                  <td className="px-4 py-3 text-blue-700 bg-blue-50/20">₹{gstAmount}</td>
+                                  <td className="px-4 py-3 text-blue-700 bg-blue-50/20">₹{mrp}</td>
 
-          {/* Design Repeat group */}
-          <td className="px-4 py-3 text-purple-700 border-l border-purple-100 bg-purple-50/20">{getAttr(product, 'Vertical')}</td>
-          <td className="px-4 py-3 text-purple-700 bg-purple-50/20">{getAttr(product, 'Horizontal')}</td>
+                                  {/* Design Repeat group */}
+                                  <td className="px-4 py-3 text-purple-700 border-l border-purple-100 bg-purple-50/20">{getAttr(product, 'Vertical')}</td>
+                                  <td className="px-4 py-3 text-purple-700 bg-purple-50/20">{getAttr(product, 'Horizontal')}</td>
 
-          <td className="px-4 py-3 border-l border-border">{getAttr(product, 'Martindale')}</td>
-          <td className="px-4 py-3 font-bold text-muted-foreground">{getAttr(product, 'PRICE CODE')}</td>
-          <td className="px-4 py-3 text-right">
-            {editingProduct?.id === product.id ? (
-              <div className="flex items-center gap-2 justify-end">
-                <Input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className="h-7 w-28 text-xs" placeholder="Design name" />
-                <Input value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} className="h-7 w-20 text-xs" placeholder="RRP" />
-                <Button size="icon" variant="ghost" className="h-7 w-7 text-success" onClick={handleUpdateProduct}><Save className="h-3.5 w-3.5" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingProduct(null)}><X className="h-3.5 w-3.5" /></Button>
-              </div>
-            ) : (
-              <Button size="icon" variant="ghost" className="h-7 w-7 text-primary" onClick={() => handleEditProduct(product)}>
-                <Edit2 className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </td>
-        </tr>
-      );
-    })}
-  </tbody>
-</table>
-  )}
-</div>
+                                  <td className="px-4 py-3 border-l border-border">{getAttr(product, 'Martindale')}</td>
+                                  <td className="px-4 py-3 font-bold text-muted-foreground">{getAttr(product, 'PRICE CODE')}</td>
+                                  <td className="px-4 py-3 text-right">
+                                    {editingProduct?.id === product.id ? (
+                                      <div className="flex items-center gap-2 justify-end">
+                                        <Input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className="h-7 w-28 text-xs" placeholder="Design name" />
+                                        <Input value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} className="h-7 w-20 text-xs" placeholder="RRP" />
+                                        <Button size="icon" variant="ghost" className="h-7 w-7 text-success" onClick={handleUpdateProduct}><Save className="h-3.5 w-3.5" /></Button>
+                                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingProduct(null)}><X className="h-3.5 w-3.5" /></Button>
+                                      </div>
+                                    ) : (
+                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-primary" onClick={() => handleEditProduct(product)}>
+                                        <Edit2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <div className="h-full flex items-center justify-center text-muted-foreground border-2 border-dashed border-border m-4 rounded-lg">
