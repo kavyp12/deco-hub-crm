@@ -101,7 +101,7 @@ app.post('/api/companies', authenticateToken, async (req: any, res) => {
 
     // 2. LOG THE ACTIVITY
     await logActivity(
-      req.user.userId,
+      req.user.id,
       'CREATE',
       'COMPANY',
       newCompany.id,
@@ -424,7 +424,7 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
     // Skip the first item if it's the group header row leaking through
     // (safety check: if Sr. No is not a number, skip it)
     const cleanData = data.filter(row => {
-      const srNo = row['Sr. No'];
+      const srNo = row['Sr. No'] ?? row['Sr No'];
       return srNo !== undefined && srNo !== '' && !isNaN(parseFloat(String(srNo)));
     });
 
@@ -432,7 +432,7 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
     const errors: string[] = [];
 
     const SKIP_COLUMNS = new Set([
-      'Sr. No', 'Collection', 'Design/ Quality',
+      'Sr. No', 'Sr No', 'Collection', 'Design/ Quality',
       'RRP', 'CL Landing Cost', 'RL Landing Cost',
       'GST Amount', 'MRP'   // formula-derived, skip from attributes
     ]);
@@ -441,14 +441,14 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
       const row = cleanData[i];
       const rowNumber = i + 3; // actual Excel row number
 
-      const srNo      = row['Sr. No']?.toString().trim();
+      const srNo = (row['Sr. No'] ?? row['Sr No'])?.toString().trim();
       const collection = row['Collection']?.toString().trim();
-      const design    = row['Design/ Quality']?.toString().trim();
-      const rrpRaw    = row['RRP']?.toString().trim();
+      const design = row['Design/ Quality']?.toString().trim();
+      const rrpRaw = row['RRP']?.toString().trim();
 
       if (!collection) { errors.push(`Row ${rowNumber}: Missing Collection`); continue; }
-      if (!design)     { errors.push(`Row ${rowNumber}: Missing Design/ Quality`); continue; }
-      if (!rrpRaw)     { errors.push(`Row ${rowNumber}: Missing RRP`); continue; }
+      if (!design) { errors.push(`Row ${rowNumber}: Missing Design/ Quality`); continue; }
+      if (!rrpRaw) { errors.push(`Row ${rowNumber}: Missing RRP`); continue; }
 
       const priceString = rrpRaw
         .replace(/₹/g, '')
