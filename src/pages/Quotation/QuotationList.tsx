@@ -71,12 +71,12 @@ export default function QuotationList() {
   return (
     <DashboardLayout>
       <div className="max-w-7xl mx-auto p-6 space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Quotations</h1>
             <p className="text-sm text-gray-500">Manage and edit your price quotes</p>
           </div>
-          <Button onClick={() => navigate('/selections')} className="bg-blue-600 hover:bg-blue-700">
+          <Button onClick={() => navigate('/selections')} className="bg-blue-600 hover:bg-blue-700 w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" /> New Quote (From Selection)
           </Button>
         </div>
@@ -99,91 +99,93 @@ export default function QuotationList() {
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
               </div>
             ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-gray-700 font-semibold border-b">
-                  <tr>
-                    <th className="px-4 py-3">Quote #</th>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Client</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Total Amount</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filtered.length === 0 ? (
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-sm text-left min-w-[800px]">
+                  <thead className="bg-gray-50 text-gray-700 font-semibold border-b">
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                        No quotations found.
-                      </td>
+                      <th className="px-4 py-3">Quote #</th>
+                      <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Client</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 text-right">Total Amount</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
-                  ) : (
-                    filtered.map((q: any) => (
-                      <tr key={q.id} className="hover:bg-gray-50 group">
-                        <td className="px-4 py-3 font-bold text-blue-600">{q.quotation_number}</td>
-                        
-                        <td className="px-4 py-3">
-                          {q.quotationType === 'simple' ? (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                              <FileText className="h-3 w-3 mr-1" />
-                              Simple
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                              <FileSpreadsheet className="h-3 w-3 mr-1" />
-                              Detailed
-                            </Badge>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-3 text-gray-500">{new Date(q.created_at).toLocaleDateString()}</td>
-                        <td className="px-4 py-3 font-medium">{q.clientName}</td>
-                        <td className="px-4 py-3">
-                           <Badge variant="outline" className="capitalize">{q.status}</Badge>
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold">₹{q.grandTotal.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right flex justify-end gap-1">
-                          
-                          {/* ✅ FIXED Edit Button */}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="text-gray-500 hover:text-blue-600 hover:bg-blue-50"
-                            onClick={() => handleEdit(q)}
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          
-                          {/* Preview Button */}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="text-gray-500 hover:text-blue-600 hover:bg-blue-50"
-                            onClick={() => navigate(`/quotations/preview/${q.id}`)}
-                            title="Preview / Print"
-                          >
-                            <Printer className="h-4 w-4" />
-                          </Button>
-
-                          {/* Delete Button */}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="text-red-400 hover:text-red-600 hover:bg-red-50"
-                            onClick={() => handleDelete(q.id, q.quotation_number)}
-                            title="Delete Quotation"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filtered.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                          No quotations found.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      filtered.map((q: any) => (
+                        <tr key={q.id} className="hover:bg-gray-50 group">
+                          <td className="px-4 py-3 font-bold text-blue-600">{q.quotation_number}</td>
+                          
+                          <td className="px-4 py-3">
+                            {q.quotationType === 'simple' ? (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                <FileText className="h-3 w-3 mr-1" />
+                                Simple
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                <FileSpreadsheet className="h-3 w-3 mr-1" />
+                                Detailed
+                              </Badge>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 text-gray-500">{new Date(q.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3 font-medium">{q.clientName}</td>
+                          <td className="px-4 py-3">
+                             <Badge variant="outline" className="capitalize">{q.status}</Badge>
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold">₹{q.grandTotal.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right">
+                             <div className="flex justify-end gap-1">
+                                {/* ✅ FIXED Edit Button */}
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+                                  onClick={() => handleEdit(q)}
+                                  title="Edit"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                
+                                {/* Preview Button */}
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="text-gray-500 hover:text-blue-600 hover:bg-blue-50"
+                                  onClick={() => navigate(`/quotations/preview/${q.id}`)}
+                                  title="Preview / Print"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                </Button>
+
+                                {/* Delete Button */}
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm" 
+                                  className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                                  onClick={() => handleDelete(q.id, q.quotation_number)}
+                                  title="Delete Quotation"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                             </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>

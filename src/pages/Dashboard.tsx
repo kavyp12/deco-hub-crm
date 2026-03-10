@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  FileText, 
-  TrendingUp, 
-  Calendar, 
-  ShoppingCart, 
-  ArrowRight, 
+import {
+  FileText,
+  TrendingUp,
+  Calendar,
+  ShoppingCart,
+  ArrowRight,
   MoreHorizontal,
   BookOpen,
   ArrowUpRight,
@@ -69,7 +69,7 @@ const Dashboard: React.FC = () => {
         const inquiries = inquiriesRes.data || [];
         const selections = selectionsRes.data || [];
         const companies = companiesRes.data || [];
-        
+
         const now = new Date();
         const thisMonth = format(now, 'yyyy-MM');
         const lastMonth = format(subMonths(now, 1), 'yyyy-MM');
@@ -93,20 +93,20 @@ const Dashboard: React.FC = () => {
         }
 
         // --- Calculate Stats ---
-        const thisMonthInquiriesCount = inquiries.filter((i: any) => 
+        const thisMonthInquiriesCount = inquiries.filter((i: any) =>
           format(new Date(i.created_at), 'yyyy-MM') === thisMonth
         ).length;
 
-        const lastMonthInquiriesCount = inquiries.filter((i: any) => 
+        const lastMonthInquiriesCount = inquiries.filter((i: any) =>
           format(new Date(i.created_at), 'yyyy-MM') === lastMonth
         ).length;
-        
-        const pendingSelectionsCount = selections.filter((s: any) => 
+
+        const pendingSelectionsCount = selections.filter((s: any) =>
           s.status === 'pending'
         ).length;
 
-        const conversionRate = inquiries.length > 0 
-          ? Math.round((selections.length / inquiries.length) * 100) 
+        const conversionRate = inquiries.length > 0
+          ? Math.round((selections.length / inquiries.length) * 100)
           : 0;
 
         // --- Calculate Monthly History (Last 6 Months) ---
@@ -114,10 +114,10 @@ const Dashboard: React.FC = () => {
           const d = subMonths(now, 5 - i);
           const monthKey = format(d, 'yyyy-MM');
           const monthLabel = format(d, 'MMM');
-          
+
           const montlyInq = inquiries.filter((item: any) => format(new Date(item.created_at), 'yyyy-MM') === monthKey).length;
           const montlySel = selections.filter((item: any) => format(new Date(item.created_at), 'yyyy-MM') === monthKey).length;
-          
+
           return { month: monthLabel, inquiries: montlyInq, selections: montlySel };
         });
 
@@ -147,45 +147,45 @@ const Dashboard: React.FC = () => {
   }, []);
 
   // Calculate trends
-  const inquiryTrend = stats.lastMonthInquiries > 0 
+  const inquiryTrend = stats.lastMonthInquiries > 0
     ? Math.round(((stats.thisMonthInquiries - stats.lastMonthInquiries) / stats.lastMonthInquiries) * 100)
     : 100;
 
   const statCards = [
-    { 
-      title: 'Total Inquiries', 
-      value: stats.totalInquiries, 
-      icon: FileText, 
-      color: 'bg-blue-500', 
-      shadow: 'shadow-blue-500/20', 
+    {
+      title: 'Total Inquiries',
+      value: stats.totalInquiries,
+      icon: FileText,
+      color: 'bg-blue-500',
+      shadow: 'shadow-blue-500/20',
       link: '/inquiries',
       subtext: 'Lifetime Volume'
     },
-    { 
-      title: 'This Month', 
-      value: stats.thisMonthInquiries, 
-      icon: TrendingUp, 
-      color: 'bg-indigo-500', 
-      shadow: 'shadow-indigo-500/20', 
+    {
+      title: 'This Month',
+      value: stats.thisMonthInquiries,
+      icon: TrendingUp,
+      color: 'bg-indigo-500',
+      shadow: 'shadow-indigo-500/20',
       link: '/inquiries',
       trend: inquiryTrend,
       subtext: 'vs last month'
     },
-    { 
-      title: 'Active Selections', 
-      value: stats.pendingSelections, 
-      icon: ShoppingCart, 
-      color: 'bg-amber-500', 
-      shadow: 'shadow-amber-500/20', 
+    {
+      title: 'Active Selections',
+      value: stats.pendingSelections,
+      icon: ShoppingCart,
+      color: 'bg-amber-500',
+      shadow: 'shadow-amber-500/20',
       link: '/selections',
       subtext: 'Requires Attention'
     },
-    { 
-      title: 'Conversion Rate', 
-      value: `${stats.conversionRate}%`, 
-      icon: Activity, 
-      color: 'bg-emerald-500', 
-      shadow: 'shadow-emerald-500/20', 
+    {
+      title: 'Conversion Rate',
+      value: `${stats.conversionRate}%`,
+      icon: Activity,
+      color: 'bg-emerald-500',
+      shadow: 'shadow-emerald-500/20',
       link: '/selections',
       subtext: 'Inquiry to Selection'
     },
@@ -207,7 +207,7 @@ const Dashboard: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="animate-fade-in max-w-7xl mx-auto space-y-6 md:space-y-8 pb-10">
-        
+
         {/* Header & Quick Actions */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
@@ -235,8 +235,8 @@ const Dashboard: React.FC = () => {
         {/* Top Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {statCards.map((stat, index) => (
-            <Link 
-              to={stat.link} 
+            <Link
+              to={stat.link}
               key={stat.title}
               className="card-premium p-5 animate-fade-in group hover:-translate-y-1 transition-all duration-300 hover:shadow-lg border border-border/50 relative overflow-hidden"
               style={{ animationDelay: `${index * 50}ms` }}
@@ -254,7 +254,7 @@ const Dashboard: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-2xl md:text-3xl font-bold text-foreground tracking-tight">
-                  {loading ? <span className="animate-pulse bg-muted h-8 w-16 block rounded"/> : stat.value}
+                  {loading ? <span className="animate-pulse bg-muted h-8 w-16 block rounded" /> : stat.value}
                 </h3>
                 <p className="text-sm text-muted-foreground font-medium mt-1">{stat.title}</p>
                 <p className="text-xs text-muted-foreground/70 mt-1">{stat.subtext}</p>
@@ -267,10 +267,10 @@ const Dashboard: React.FC = () => {
 
         {/* Main Content Grid: Analytics + Feeds */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          
+
           {/* Left Column: Charts & Inquiries (2/3 width) */}
           <div className="xl:col-span-2 space-y-6">
-            
+
             {/* Performance Chart */}
             <div className="card-premium p-6 border border-border/50">
               <div className="flex items-center justify-between mb-6">
@@ -282,39 +282,41 @@ const Dashboard: React.FC = () => {
                   <p className="text-sm text-muted-foreground">Inquiries vs Selections (Last 6 Months)</p>
                 </div>
               </div>
-              
-              <div className="h-64 w-full flex items-end justify-between gap-2 md:gap-4 mt-4">
-                {monthlyActivity.map((data, idx) => {
-                  const maxVal = Math.max(...monthlyActivity.map(d => Math.max(d.inquiries, d.selections, 10))); // Scale
-                  const inqHeight = (data.inquiries / maxVal) * 100;
-                  const selHeight = (data.selections / maxVal) * 100;
-                  
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group cursor-pointer">
-                      <div className="w-full flex justify-center gap-1 md:gap-2 items-end h-full">
-                        {/* Inquiry Bar */}
-                        <div 
-                          style={{ height: `${Math.max(inqHeight, 5)}%` }} 
-                          className="w-3 md:w-6 bg-primary/80 rounded-t-sm transition-all duration-500 hover:bg-primary relative group/bar"
-                        >
-                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
+
+              <div className="w-full overflow-x-auto pb-4">
+                <div className="h-64 min-w-[450px] w-full flex items-end justify-between gap-2 md:gap-4 mt-4">
+                  {monthlyActivity.map((data, idx) => {
+                    const maxVal = Math.max(...monthlyActivity.map(d => Math.max(d.inquiries, d.selections, 10))); // Scale
+                    const inqHeight = (data.inquiries / maxVal) * 100;
+                    const selHeight = (data.selections / maxVal) * 100;
+
+                    return (
+                      <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group cursor-pointer">
+                        <div className="w-full flex justify-center gap-1 md:gap-2 items-end h-full">
+                          {/* Inquiry Bar */}
+                          <div
+                            style={{ height: `${Math.max(inqHeight, 5)}%` }}
+                            className="w-3 md:w-6 bg-primary/80 rounded-t-sm transition-all duration-500 hover:bg-primary relative group/bar"
+                          >
+                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
                               {data.inquiries} Inquiries
-                           </div>
-                        </div>
-                        {/* Selection Bar */}
-                        <div 
-                          style={{ height: `${Math.max(selHeight, 5)}%` }} 
-                          className="w-3 md:w-6 bg-success/80 rounded-t-sm transition-all duration-500 hover:bg-success relative group/bar"
-                        >
-                           <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
+                            </div>
+                          </div>
+                          {/* Selection Bar */}
+                          <div
+                            style={{ height: `${Math.max(selHeight, 5)}%` }}
+                            className="w-3 md:w-6 bg-success/80 rounded-t-sm transition-all duration-500 hover:bg-success relative group/bar"
+                          >
+                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover text-popover-foreground text-xs py-1 px-2 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap shadow-md border pointer-events-none">
                               {data.selections} Selections
-                           </div>
+                            </div>
+                          </div>
                         </div>
+                        <span className="text-xs text-muted-foreground font-medium">{data.month}</span>
                       </div>
-                      <span className="text-xs text-muted-foreground font-medium">{data.month}</span>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -368,29 +370,29 @@ const Dashboard: React.FC = () => {
 
           {/* Right Column: Inventory & Status (1/3 width) */}
           <div className="space-y-6">
-            
+
             {/* Catalog Distribution (Visual Update) */}
             <div className="card-premium p-6 border border-border/50">
               <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-primary" />
                 Inventory Mix
               </h2>
-              
+
               <div className="space-y-6 relative">
-                 {/* Donut Chart Simulation with CSS Conic Gradient */}
-                 <div className="flex justify-center mb-6">
-                    <div className="relative h-40 w-40 rounded-full border-8 border-muted/30 flex items-center justify-center">
-                        <div className="text-center">
-                          <span className="block text-2xl font-bold text-foreground">{totalCompanies}</span>
-                          <span className="text-xs text-muted-foreground">Catalogs</span>
-                        </div>
-                         {/* Simple visual indicator rings */}
-                         <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
-                            <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-orange-500 opacity-20" />
-                            <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-blue-500" strokeDasharray={`${(stats.blindsCount / totalCompanies) * 251} 251`} />
-                         </svg>
+                {/* Donut Chart Simulation with CSS Conic Gradient */}
+                <div className="flex justify-center mb-6">
+                  <div className="relative h-40 w-40 rounded-full border-8 border-muted/30 flex items-center justify-center">
+                    <div className="text-center">
+                      <span className="block text-2xl font-bold text-foreground">{totalCompanies}</span>
+                      <span className="text-xs text-muted-foreground">Catalogs</span>
                     </div>
-                 </div>
+                    {/* Simple visual indicator rings */}
+                    <svg className="absolute inset-0 h-full w-full -rotate-90 transform" viewBox="0 0 100 100">
+                      <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-orange-500 opacity-20" />
+                      <circle cx="50" cy="50" r="40" fill="transparent" stroke="currentColor" strokeWidth="8" className="text-blue-500" strokeDasharray={`${(stats.blindsCount / totalCompanies) * 251} 251`} />
+                    </svg>
+                  </div>
+                </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center justify-between text-sm p-2 rounded-lg bg-orange-500/5 border border-orange-500/10">

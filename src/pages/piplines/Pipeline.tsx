@@ -562,13 +562,13 @@ const Pipeline: React.FC = () => {
       <div className="h-[calc(100vh-6rem)] flex flex-col animate-fade-in">
         
         {/* Header */}
-        <div className="flex justify-between items-center mb-6 px-1">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 px-1">
           <div><h1 className="text-2xl font-bold">Sales Pipeline</h1><p className="text-muted-foreground">Manage inquiries & quotations</p></div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
              {/* ADD STAGE DROPDOWN */}
              <Popover>
                 <PopoverTrigger asChild>
-                    <Button variant="outline" className="gap-2 border-dashed">
+                    <Button variant="outline" className="gap-2 border-dashed w-full sm:w-auto">
                         <PlusCircle className="h-4 w-4" /> Add Stage
                     </Button>
                 </PopoverTrigger>
@@ -586,7 +586,7 @@ const Pipeline: React.FC = () => {
                 </PopoverContent>
              </Popover>
 
-             <div className="w-64 relative">
+             <div className="w-full sm:w-64 relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Search board..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
              </div>
@@ -765,10 +765,10 @@ const Pipeline: React.FC = () => {
 
         {/* --- DETAIL MODAL (Unchanged) --- */}
         <Dialog open={!!selectedTask} onOpenChange={(open) => !open && setSelectedTask(null)}>
-           <DialogContent className="max-w-5xl h-[85vh] p-0 bg-background border-border flex flex-col overflow-hidden text-foreground">
+           <DialogContent className="max-w-[95vw] md:max-w-5xl h-[90vh] md:h-[85vh] p-0 bg-background border-border flex flex-col overflow-hidden text-foreground">
               {selectedTask && (
                 <div className="flex flex-col h-full">
-                  <div className="px-6 py-4 border-b border-border bg-card/30 flex-shrink-0 flex justify-between items-start">
+                  <div className="px-4 py-3 md:px-6 md:py-4 border-b border-border bg-card/30 flex-shrink-0 flex flex-col sm:flex-row justify-between items-start gap-4">
                     <div className="flex items-start gap-4">
                         <Monitor className="h-6 w-6 text-muted-foreground mt-1" />
                         <div>
@@ -791,14 +791,14 @@ const Pipeline: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="flex-1 flex overflow-hidden relative">
+                  <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden relative">
                       {/* LEFT COLUMN */}
-                      <div className="flex-1 overflow-y-auto p-6 space-y-8">
+                      <div className="md:flex-1 md:overflow-y-auto p-4 md:p-6 space-y-8 flex-shrink-0">
                           
-                          <div className="flex flex-wrap items-start gap-8">
+                          <div className="flex flex-col sm:flex-row flex-wrap items-start gap-6 sm:gap-8">
                               
                               {/* 1. MEMBERS */}
-                              <div className="space-y-1.5">
+                              <div className="space-y-1.5 w-full sm:w-auto">
                                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members</h4>
                                 <div className="flex items-center gap-1">
                                     {(() => {
@@ -843,7 +843,7 @@ const Pipeline: React.FC = () => {
                               </div>
 
                               {/* 2. LABELS */}
-                              <div className="space-y-1.5">
+                              <div className="space-y-1.5 w-full sm:w-auto">
                                   <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Labels</h4>
                                   <div className="flex items-center gap-2 flex-wrap">
                                       {(selectedTask.labels || []).map(l => (
@@ -924,7 +924,7 @@ const Pipeline: React.FC = () => {
                               </div>
                               
                               {/* 3. ADD TO CARD */}
-                              <div className="space-y-1.5">
+                              <div className="space-y-1.5 w-full sm:w-auto">
                                   <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add to card</h4>
                                   <div className="flex items-center gap-2">
                                     <Popover>
@@ -1050,14 +1050,14 @@ const Pipeline: React.FC = () => {
 
                       {/* --- DRAGGABLE SPLITTER --- */}
                       <div 
-                          className="w-1 cursor-col-resize bg-border hover:bg-primary transition-colors flex items-center justify-center group z-10"
+                          className="hidden md:flex w-1 cursor-col-resize bg-border hover:bg-primary transition-colors items-center justify-center group z-10"
                           onMouseDown={startResizing}
                       >
                           <div className="h-8 w-1 bg-border group-hover:bg-primary rounded-full" />
                       </div>
 
                       {/* RIGHT COLUMN (Activity Stream) - Resizable */}
-                      <div style={{ width: sidebarWidth }} className="flex-shrink-0 bg-muted/10 flex flex-col h-full relative" ref={sidebarRef}>
+                      <div style={{ width: typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : sidebarWidth }} className="flex-shrink-0 bg-muted/10 flex flex-col md:h-full min-h-[500px] relative border-t md:border-t-0" ref={sidebarRef}>
                           
                           {/* Activity Header */}
                           <div className="p-4 pb-2 border-b border-border bg-background">

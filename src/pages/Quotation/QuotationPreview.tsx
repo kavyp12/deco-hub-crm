@@ -120,34 +120,34 @@ const QuotationPreview: React.FC = () => {
       <div className="max-w-6xl mx-auto animate-fade-in pb-20">
         
         {/* --- Toolbar --- */}
-        <div className="flex items-center justify-between mb-6 print:hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 print:hidden px-4 sm:px-0">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => navigate('/quotations')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">Quotation Preview</h1>
+              <h1 className="text-xl sm:text-2xl font-bold text-foreground">Quotation Preview</h1>
               <p className="text-sm text-gray-500">{isSimple ? 'Simple Format' : 'Detailed Format'}</p>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="gap-2"><Mail className="h-4 w-4" /> Email</Button>
-            <Button variant="outline" className="gap-2" onClick={handleDownloadPDF} disabled={downloading}>
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+            <Button variant="outline" className="gap-2 flex-1 sm:flex-none"><Mail className="h-4 w-4" /> Email</Button>
+            <Button variant="outline" className="gap-2 flex-1 sm:flex-none" onClick={handleDownloadPDF} disabled={downloading}>
               {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} 
               PDF
             </Button>
-            <Button variant="default" onClick={handlePrint} className="gap-2 shadow-sm bg-blue-600 hover:bg-blue-700">
+            <Button variant="default" onClick={handlePrint} className="gap-2 shadow-sm bg-blue-600 hover:bg-blue-700 flex-1 sm:flex-none">
               <Printer className="h-4 w-4" /> Print
             </Button>
           </div>
         </div>
 
         {/* --- PRINTABLE CONTAINER --- */}
-        <div className="flex justify-center print:block">
+        <div className="flex justify-start sm:justify-center overflow-x-auto w-full px-4 sm:px-0 pb-4 print:block print:overflow-visible print:px-0 print:pb-0">
           <div 
             id="printable-section" 
             ref={printRef}
-            className="bg-white text-black p-[10mm] shadow-xl w-[210mm] min-h-[297mm] text-xs font-sans relative print:shadow-none print:w-full print:min-h-0"
+            className="bg-white text-black p-[5mm] sm:p-[10mm] shadow-xl min-w-[210mm] w-[210mm] min-h-[297mm] text-xs font-sans relative print:shadow-none print:w-full print:min-w-0 print:min-h-0 shrink-0"
           >
             
             {/* 1. Header Section */}

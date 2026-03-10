@@ -222,13 +222,13 @@ export default function QuotationEdit() {
                 </p>
              </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end mt-4 sm:mt-0">
             {id !== 'new' && (
-              <Button variant="outline" onClick={() => navigate(`/quotations/preview/${id}`)}>
+              <Button variant="outline" onClick={() => navigate(`/quotations/preview/${id}`)} className="flex-1 sm:flex-none">
                  <Printer className="w-4 h-4 mr-2"/> Preview
               </Button>
             )}
-            <Button onClick={saveQuote} className="bg-green-600 hover:bg-green-700 text-white">
+            <Button onClick={saveQuote} className="bg-green-600 hover:bg-green-700 text-white flex-1 sm:flex-none">
                <Save className="w-4 h-4 mr-2"/> {id === 'new' ? 'Create Quotation' : 'Save Changes'}
             </Button>
           </div>
@@ -258,8 +258,8 @@ export default function QuotationEdit() {
 
         {/* Items Table */}
         <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-sm text-left min-w-[950px]">
                <thead className="bg-gray-100 text-gray-700 font-bold uppercase text-xs">
                  <tr>
                    <th className="p-3 w-10 text-center">#</th>

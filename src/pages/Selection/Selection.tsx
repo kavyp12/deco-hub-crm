@@ -594,8 +594,8 @@ const Selections: React.FC = () => {
 
         {/* Table */}
         <div className="card-premium overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto w-full pb-4">
+            <table className="w-full min-w-[800px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="table-header text-left px-6 py-4">Selection #</th>

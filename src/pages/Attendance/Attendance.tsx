@@ -598,7 +598,7 @@ export default function Attendance() {
           <TabsContent value="leaves" className="space-y-6">
             
             {!isAdmin && (
-                <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                     <Card className="bg-blue-50/50 border-blue-100">
                         <CardContent className="p-4 text-center">
                             <h4 className="text-xs font-bold text-blue-600 uppercase">Casual Leaves</h4>
@@ -629,7 +629,8 @@ export default function Attendance() {
             </div>
             
             <Card>
-              <table className="w-full text-sm text-left">
+              <div className="overflow-x-auto w-full">
+              <table className="w-full text-sm text-left min-w-[700px]">
                 <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                   <tr>
                     {isAdmin && <th className="px-6 py-3">Employee</th>}
@@ -670,6 +671,7 @@ export default function Attendance() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Card>
           </TabsContent>
         </Tabs>

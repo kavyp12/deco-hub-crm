@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Calculator, 
-  ChevronDown, 
-  ChevronUp, 
-  Plus, 
-  Search, 
-  Ruler, 
-  Layers, 
-  Zap, 
+import {
+  Calculator,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Search,
+  Ruler,
+  Layers,
+  Zap,
   Calendar,
   Briefcase,
   ArrowRight,
@@ -47,7 +47,7 @@ const CalculationList: React.FC = () => {
   const [groupedInquiries, setGroupedInquiries] = useState<GroupedInquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   // Track which inquiry dropdowns are open
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
 
@@ -58,7 +58,7 @@ const CalculationList: React.FC = () => {
   // --- 1. ROBUST TOTAL CALCULATION ---
   const calcTotal = (items: any[], type: string) => {
     if (!items || items.length === 0) return 0;
-    
+
     return items.reduce((sum, item) => {
       // A. LOCAL
       if (type === 'Local') {
@@ -72,20 +72,20 @@ const CalculationList: React.FC = () => {
 
       // B. FOREST (Sum components + 18% GST)
       if (type === 'Forest') {
-        const basic = (item.trackPrice || 0) + 
-                      (item.runnerPrice || 0) + 
-                      (item.tapePrice || 0) +
-                      (item.motorPrice || 0) + 
-                      (item.remotePrice || 0);
-        return sum + (basic * 1.18); 
+        const basic = (item.trackPrice || 0) +
+          (item.runnerPrice || 0) +
+          (item.tapePrice || 0) +
+          (item.motorPrice || 0) +
+          (item.remotePrice || 0);
+        return sum + (basic * 1.18);
       }
 
       // C. SOMFY (Sum components + 18% GST)
       if (type === 'Somfy') {
-        const basic = (item.trackPrice || 0) + 
-                      (item.motorPrice || 0) + 
-                      (item.remotePrice || 0) +
-                      (item.rippleTapePrice || 0);
+        const basic = (item.trackPrice || 0) +
+          (item.motorPrice || 0) +
+          (item.remotePrice || 0) +
+          (item.rippleTapePrice || 0);
         return sum + (basic * 1.18);
       }
 
@@ -139,7 +139,7 @@ const CalculationList: React.FC = () => {
               totalValue: calcTotal(res.data.items, 'Local')
             });
           }
-        } catch (e) {}
+        } catch (e) { }
 
         // 2. Check FOREST
         try {
@@ -154,7 +154,7 @@ const CalculationList: React.FC = () => {
               totalValue: calcTotal(res.data.items, 'Forest')
             });
           }
-        } catch (e) {}
+        } catch (e) { }
 
         // 3. Check SOMFY
         try {
@@ -169,13 +169,13 @@ const CalculationList: React.FC = () => {
               totalValue: calcTotal(res.data.items, 'Somfy')
             });
           }
-        } catch (e) {}
+        } catch (e) { }
 
         // 4. Check GENERIC (Roman / Blinds)
         // 4. Check GENERIC (Roman / Blinds / Others)
         try {
           const res = await api.get(`/calculations/by-selection/${selection.id}`);
-          
+
           if (res.data && res.data.items && res.data.items.length > 0) {
             const items = res.data.items;
 
@@ -207,7 +207,7 @@ const CalculationList: React.FC = () => {
               });
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // Group by Inquiry Number
@@ -225,14 +225,14 @@ const CalculationList: React.FC = () => {
         }
         groups[key].calculations.push(calc);
         groups[key].totalProjectValue += calc.totalValue;
-        
+
         if (new Date(calc.created_at) > new Date(groups[key].latestActivity)) {
           groups[key].latestActivity = calc.created_at;
         }
       });
 
       // Sort by latest activity
-      setGroupedInquiries(Object.values(groups).sort((a, b) => 
+      setGroupedInquiries(Object.values(groups).sort((a, b) =>
         new Date(b.latestActivity).getTime() - new Date(a.latestActivity).getTime()
       ));
 
@@ -251,7 +251,7 @@ const CalculationList: React.FC = () => {
   };
 
   const getIcon = (type: string) => {
-    switch(type) {
+    switch (type) {
       case 'Local': return <Ruler className="h-4 w-4 text-blue-600" />;
       case 'Forest': return <Layers className="h-4 w-4 text-green-600" />;
       case 'Somfy': return <Zap className="h-4 w-4 text-yellow-600" />;
@@ -266,7 +266,7 @@ const CalculationList: React.FC = () => {
   };
 
   // Filter Logic
-  const filteredInquiries = groupedInquiries.filter(group => 
+  const filteredInquiries = groupedInquiries.filter(group =>
     group.client_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     group.inquiry_number.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -274,12 +274,12 @@ const CalculationList: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto pb-20 px-4 sm:px-6 animate-fade-in">
-        
+
         {/* Top Header */}
         <div className="flex flex-col md:flex-row justify-between items-end gap-4 mb-8 pt-6">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3 text-gray-900">
-              <Briefcase className="h-8 w-8 text-[#ee4046]" /> 
+              <Briefcase className="h-8 w-8 text-[#ee4046]" />
               Project Calculations
             </h1>
             <p className="text-muted-foreground mt-2">
@@ -296,8 +296,8 @@ const CalculationList: React.FC = () => {
         {/* Search Bar */}
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-          <Input 
-            placeholder="Search by Client Name or Inquiry #..." 
+          <Input
+            placeholder="Search by Client Name or Inquiry #..."
             className="pl-10 h-12 text-lg bg-white shadow-sm border-gray-200"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -321,12 +321,12 @@ const CalculationList: React.FC = () => {
 
           {filteredInquiries.map((group) => {
             const isOpen = openDropdowns.has(group.inquiry_number);
-            
+
             return (
               <div key={group.inquiry_number} className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden transition-all hover:shadow-md">
-                
+
                 {/* 1. The Main "Card" Face (Click to Toggle) */}
-                <div 
+                <div
                   onClick={() => toggleDropdown(group.inquiry_number)}
                   className="p-5 cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white hover:bg-gray-50/50 transition-colors"
                 >
@@ -366,17 +366,16 @@ const CalculationList: React.FC = () => {
                   <div className="border-t border-gray-100 bg-gray-50/30 animate-in slide-in-from-top-1 duration-200">
                     <div className="grid grid-cols-1 divide-y divide-gray-100">
                       {group.calculations.map((calc, idx) => (
-                        <div key={`${calc.type}-${idx}`} className="flex items-center justify-between p-4 pl-[4.5rem] hover:bg-white transition-colors group">
-                          
+                        <div key={`${calc.type}-${idx}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 pl-[4.5rem] hover:bg-white transition-colors group gap-4">
+
                           {/* Calculation Info */}
                           <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-md border shadow-sm ${
-                              calc.type === 'Local' ? 'bg-blue-50 border-blue-100' : 
-                              calc.type === 'Forest' ? 'bg-green-50 border-green-100' : 
-                              calc.type === 'Somfy' ? 'bg-yellow-50 border-yellow-100' :
-                              calc.type === 'Roman' ? 'bg-orange-50 border-orange-100' :
-                              'bg-purple-50 border-purple-100'
-                            }`}>
+                            <div className={`p-2 rounded-md border shadow-sm ${calc.type === 'Local' ? 'bg-blue-50 border-blue-100' :
+                                calc.type === 'Forest' ? 'bg-green-50 border-green-100' :
+                                  calc.type === 'Somfy' ? 'bg-yellow-50 border-yellow-100' :
+                                    calc.type === 'Roman' ? 'bg-orange-50 border-orange-100' :
+                                      'bg-purple-50 border-purple-100'
+                              }`}>
                               {getIcon(calc.type)}
                             </div>
                             <div>
@@ -393,15 +392,15 @@ const CalculationList: React.FC = () => {
                           </div>
 
                           {/* Action Button */}
-                          <div className="flex items-center gap-4 pr-4">
-                             <div className="text-right mr-4">
-                                <span className="block text-xs text-gray-400">Value</span>
-                                <span className="font-mono text-sm font-semibold text-gray-700">
-                                  ₹{Math.round(calc.totalValue).toLocaleString('en-IN')}
-                                </span>
-                             </div>
-                             
-                             <Link to={getLink(calc.selectionId)}>
+                          <div className="flex items-center justify-between sm:justify-end gap-4 sm:pr-4 w-full sm:w-auto">
+                            <div className="text-left sm:text-right mr-0 sm:mr-4">
+                              <span className="block text-xs text-gray-400">Value</span>
+                              <span className="font-mono text-sm font-semibold text-gray-700">
+                                ₹{Math.round(calc.totalValue).toLocaleString('en-IN')}
+                              </span>
+                            </div>
+
+                            <Link to={getLink(calc.selectionId)}>
                               <Button size="sm" variant="outline" className="border-gray-300 hover:border-[#ee4046] hover:text-[#ee4046]">
                                 Open Hub
                                 <ArrowRight className="ml-2 h-3.5 w-3.5" />
@@ -412,7 +411,7 @@ const CalculationList: React.FC = () => {
                         </div>
                       ))}
                     </div>
-                    
+
                     {/* Footer of Dropdown */}
                     <div className="bg-gray-50 p-3 text-center border-t border-gray-100">
                       <p className="text-xs text-gray-400">End of calculations for {group.client_name}</p>

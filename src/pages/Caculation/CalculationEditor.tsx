@@ -21,31 +21,32 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+
+// Detect mobile screen
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return isMobile;
+};
 import { Badge } from "@/components/ui/badge";
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 
-// Colors for tags
 const TYPE_COLORS: any = {
   Local: 'bg-blue-100 text-blue-800 border-blue-300 ring-blue-300',
   'Forest (Manual)': 'bg-teal-100 text-teal-800 border-teal-300 ring-teal-300',
   'Forest (Auto)': 'bg-green-100 text-green-800 border-green-300 ring-green-300',
   Somfy: 'bg-yellow-100 text-yellow-800 border-yellow-300 ring-yellow-300',
   'Somfy (Manual)': 'bg-amber-100 text-amber-800 border-amber-300 ring-amber-300',
-  GPW: 'bg-indigo-100 text-indigo-800 border-indigo-300 ring-indigo-300', // <--- ADDED GPW COLOR
+  GPW: 'bg-indigo-100 text-indigo-800 border-indigo-300 ring-indigo-300',
   Roman: 'bg-orange-100 text-orange-800 border-orange-300 ring-orange-300',
   Blinds: 'bg-purple-100 text-purple-800 border-purple-300 ring-purple-300',
 };
 
-const COMMON_AREAS = [
-  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom",
-  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen",
-  "Study Room", "Home Office", "Balcony", "Verandah",
-  "Puja Room", "Staircase", "Lobby", "Entrance",
-  "Bathroom", "Store Room", "Servant Room", "Utility Area"
-];
-
-// Button base styles for active/inactive states
 const BUTTON_STYLES = {
   Local: {
     active: 'bg-blue-100 text-blue-700 border-blue-300 ring-1 ring-blue-300 font-bold',
@@ -67,7 +68,7 @@ const BUTTON_STYLES = {
     active: 'bg-amber-100 text-amber-700 border-amber-300 ring-1 ring-amber-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
-  GPW: { // <--- ADDED GPW STYLE
+  GPW: {
     active: 'bg-indigo-100 text-indigo-700 border-indigo-300 ring-1 ring-indigo-300 font-bold',
     inactive: 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
   },
@@ -101,14 +102,12 @@ const CalculationEditor: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [selection, setSelection] = useState<any>(null);
-
-  // -- Editing States --
   const [isEditing, setIsEditing] = useState(false);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [saving, setSaving] = useState(false);
-
   const [showQuoteModal, setShowQuoteModal] = useState(false);
   const [generatingQuote, setGeneratingQuote] = useState(false);
 
@@ -120,10 +119,6 @@ const CalculationEditor: React.FC = () => {
     try {
       const selRes = await api.get(`/selections/${selectionId}`);
       setSelection(selRes.data);
-
-      console.log('✅ Fetched Selection:', selRes.data);
-
-      // Preserve orderIndex and sort by it
       const items = (selRes.data.items || [])
         .sort((a: any, b: any) => a.orderIndex - b.orderIndex)
         .map((i: any) => ({
@@ -140,30 +135,22 @@ const CalculationEditor: React.FC = () => {
           details: i.details || {},
           orderIndex: i.orderIndex || 0
         }));
-
-      console.log('✅ Mapped Items with orderIndex:', items);
       setEditItems(items);
     } catch (error) {
-      console.error('❌ Fetch Error:', error);
       toast({ title: 'Error', description: 'Failed to load data', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
   };
 
-  // --- HELPER: Toggle Logic ---
   const toggleType = (currentTypes: string, type: string) => {
     const parts = currentTypes ? currentTypes.split(',').filter(Boolean) : [];
     if (parts.includes(type)) {
-      // Remove it
       return parts.filter(p => p !== type).join(',');
     } else {
-      // Add it
       return [...parts, type].join(',');
     }
   };
-
-  // --- ITEM MANAGEMENT ---
 
   const handleAddNewItem = () => {
     const newItem: EditItem = {
@@ -191,7 +178,6 @@ const CalculationEditor: React.FC = () => {
   const handleItemChange = (index: number, field: string, value: any) => {
     const updated = [...editItems];
     const item = { ...updated[index] };
-
     if (field === 'areaName') {
       item.areaName = value;
       item.details = { ...item.details, areaName: value };
@@ -202,7 +188,6 @@ const CalculationEditor: React.FC = () => {
     } else {
       (item as any)[field] = value;
     }
-
     updated[index] = item;
     setEditItems(updated);
   };
@@ -210,8 +195,6 @@ const CalculationEditor: React.FC = () => {
   const handleSaveItems = async () => {
     setSaving(true);
     try {
-      console.log('💾 Saving Items:', editItems);
-
       const payload = {
         items: editItems.map((item, index) => ({
           productId: (item.productId && !String(item.productId).startsWith('temp-')) ? item.productId : null,
@@ -221,51 +204,27 @@ const CalculationEditor: React.FC = () => {
           unit: item.unit || 'mm',
           width: item.width || 0,
           height: item.height || 0,
-
           calculationType: item.calculationType || 'Local',
-
           areaName: item.areaName || 'Unknown Area',
-          details: {
-            areaName: item.areaName || 'Unknown Area',
-            ...(item.details || {})
-          },
-
+          details: { areaName: item.areaName || 'Unknown Area', ...(item.details || {}) },
           orderIndex: index
         })),
         status: selection?.status || 'pending',
         delivery_date: selection?.delivery_date,
         notes: selection?.notes
       };
-
-      console.log('📤 Sending Payload:', payload);
-
-      const response = await api.put(`/selections/${selectionId}`, payload);
-
-      console.log('✅ Server Response:', response.data);
-
-      toast({
-        title: 'Success',
-        description: 'Items and calculation types updated successfully!',
-        duration: 3000
-      });
-
+      await api.put(`/selections/${selectionId}`, payload);
+      toast({ title: 'Success', description: 'Items and calculation types updated successfully!', duration: 3000 });
       setIsEditing(false);
       await fetchData();
-
     } catch (error: any) {
-      console.error('❌ Save Error:', error);
-      toast({
-        title: 'Error',
-        description: error.response?.data?.error || 'Failed to save changes',
-        variant: 'destructive'
-      });
+      toast({ title: 'Error', description: error.response?.data?.error || 'Failed to save changes', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
   };
 
-  // Count items by type
-  const countType = (type: string) => editItems.filter(i => 
+  const countType = (type: string) => editItems.filter(i =>
     i.calculationType && i.calculationType.split(',').includes(type)
   ).length;
 
@@ -275,7 +234,7 @@ const CalculationEditor: React.FC = () => {
     ForestAuto: countType('Forest (Auto)'),
     Somfy: countType('Somfy'),
     SomfyManual: countType('Somfy (Manual)'),
-    GPW: countType('GPW'), // <--- ADDED GPW COUNT
+    GPW: countType('GPW'),
     Roman: countType('Roman'),
     Blinds: countType('Blinds'),
   };
@@ -292,248 +251,318 @@ const CalculationEditor: React.FC = () => {
     <DashboardLayout>
       <div className="min-h-screen bg-gray-50 pb-20">
 
-        {/* Header */}
+        {/* ── HEADER ── */}
         <div className="bg-white border-b sticky top-0 z-20 shadow-sm">
-          <div className="max-w-7xl mx-auto px-6 py-4">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate('/selections')}>
-                  <ArrowLeft className="h-5 w-5 text-gray-500" />
-                </Button>
-                <div>
-                  <h1 className="text-xl font-bold text-gray-900">{selection?.inquiry?.client_name}</h1>
-                  <p className="text-sm text-gray-500">{selection?.selection_number} • Calculation Hub</p>
-                </div>
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3">
+
+            {/* Row 1: back arrow + title */}
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigate('/selections')}
+                className="shrink-0 h-8 w-8"
+              >
+                <ArrowLeft className="h-4 w-4 text-gray-500" />
+              </Button>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-base sm:text-xl font-bold text-gray-900 truncate leading-tight">
+                  {selection?.inquiry?.client_name}
+                </h1>
+                <p className="text-xs text-gray-500 truncate">
+                  {selection?.selection_number} • Calculation Hub
+                </p>
               </div>
+            </div>
 
-              <div className="flex items-center gap-4">
-                <div className="text-sm text-gray-600">
-                  Items: <span className="font-bold text-gray-900">{editItems.length}</span>
-                </div>
+            {/* Row 2: action buttons — full width row on mobile */}
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <span className="text-xs text-gray-500 mr-1">
+                Items: <span className="font-bold text-gray-800">{editItems.length}</span>
+              </span>
 
-                {/* DEEP COSTING BUTTON */}
-                <div className="h-6 w-px bg-gray-200"></div>
-                <Button
-                  onClick={() => navigate(`/calculations/deep/${selectionId}`)}
-                  variant="outline"
-                  className="text-purple-700 hover:bg-purple-50 border-purple-200 gap-2"
-                >
-                  <Calculator className="h-4 w-4" />
-                  Deep Costing
-                </Button>
+              <div className="h-4 w-px bg-gray-200 hidden sm:block" />
 
-                {/* QUOTATION BUTTON */}
-                <>
-                  <div className="h-6 w-px bg-gray-200"></div>
-                  <Button
-                    onClick={() => setShowQuoteModal(true)}
-                    className="bg-gray-900 hover:bg-gray-800 text-white gap-2"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Generate Quote
-                  </Button>
+              <Button
+                onClick={() => navigate(`/calculations/deep/${selectionId}`)}
+                variant="outline"
+                size="sm"
+                className="text-purple-700 hover:bg-purple-50 border-purple-200 gap-1.5 text-xs h-8 px-3"
+              >
+                <Calculator className="h-3.5 w-3.5" />
+                <span>Deep Costing</span>
+              </Button>
 
-                  <QuotationTypeModal
-                    isOpen={showQuoteModal}
-                    onClose={() => setShowQuoteModal(false)}
-                    loading={generatingQuote}
-                    onSelect={async (type: 'simple' | 'detailed') => {
-                      setGeneratingQuote(true);
-                      try {
-                        const response = await api.post('/quotations/generate', {
-                          selectionId,
-                          quotationType: type
-                        });
-                        const newQuote = response.data;
-
-                        navigate(`/quotations/preview/${newQuote.id}`);
-
-                        toast({
-                          title: 'Success',
-                          description: `${type === 'simple' ? 'Simple' : 'Detailed'} quotation generated successfully!`
-                        });
-                      } catch (error: any) {
-                        toast({
-                          title: 'Error',
-                          description: error.response?.data?.error || 'Failed to generate quotation',
-                          variant: 'destructive'
-                        });
-                      } finally {
-                        setGeneratingQuote(false);
-                        setShowQuoteModal(false);
-                      }
-                    }}
-                  />
-                </>
-              </div>
+              <Button
+                onClick={() => setShowQuoteModal(true)}
+                size="sm"
+                className="bg-gray-900 hover:bg-gray-800 text-white gap-1.5 text-xs h-8 px-3"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>Generate Quote</span>
+              </Button>
             </div>
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        <QuotationTypeModal
+          isOpen={showQuoteModal}
+          onClose={() => setShowQuoteModal(false)}
+          loading={generatingQuote}
+          onSelect={async (type: 'simple' | 'detailed') => {
+            setGeneratingQuote(true);
+            try {
+              const response = await api.post('/quotations/generate', { selectionId, quotationType: type });
+              navigate(`/quotations/preview/${response.data.id}`);
+              toast({ title: 'Success', description: `${type === 'simple' ? 'Simple' : 'Detailed'} quotation generated successfully!` });
+            } catch (error: any) {
+              toast({ title: 'Error', description: error.response?.data?.error || 'Failed to generate quotation', variant: 'destructive' });
+            } finally {
+              setGeneratingQuote(false);
+              setShowQuoteModal(false);
+            }
+          }}
+        />
 
-          {/* 1. MODULE SELECTION CARDS (GROUPED) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-5 sm:py-8 space-y-6 sm:space-y-8">
 
-            {/* CARD 1: CURTAINS GROUP */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col justify-between hover:border-blue-300 transition-colors">
+          {/* ── MODULE CARDS ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+
+            {/* CARD 1: CURTAINS */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 flex flex-col justify-between hover:border-blue-300 transition-colors">
               <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="h-10 w-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Layers className="h-6 w-6" />
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <Layers className="h-5 w-5 sm:h-6 sm:w-6" />
                   </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-gray-900">Curtains & Automation</h3>
+                  <div className="min-w-0">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-900 leading-tight">Curtains & Automation</h3>
                     {(typeCounts.Local + typeCounts.ForestManual + typeCounts.ForestAuto + typeCounts.Somfy + typeCounts.Roman + typeCounts.GPW) > 0 && (
-                      <p className="text-xs text-gray-500">
+                      <p className="text-[11px] text-gray-500 truncate">
                         {typeCounts.Local} Local • {typeCounts.GPW} GPW • {typeCounts.ForestManual + typeCounts.ForestAuto} Forest • {typeCounts.Somfy} Somfy • {typeCounts.Roman} Roman
                       </p>
                     )}
                   </div>
                 </div>
-                <p className="text-sm text-gray-500 mb-6">
+                <p className="text-xs sm:text-sm text-gray-500 mb-4">
                   Calculations for Standard Panna, Forest, Somfy, Gravel/Pulse/Weave, and Roman Blinds.
                 </p>
               </div>
 
-             <DropdownMenu>
+              <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button className="w-full justify-between bg-blue-600 hover:bg-blue-700">
+                  <Button className="w-full justify-between bg-blue-600 hover:bg-blue-700 text-sm h-9 sm:h-10">
                     Select Calculator
-                    <ChevronDown className="h-4 w-4 ml-2" />
+                    <ChevronDown className="h-4 w-4 ml-2 shrink-0" />
                   </Button>
                 </DropdownMenuTrigger>
-                
-                <DropdownMenuContent className="w-[280px]" align="start">
+
+                {/* 
+                  avoidCollisions + collisionPadding keeps the menu 
+                  inside the viewport on all screen sizes 
+                */}
+                <DropdownMenuContent
+                  className="w-[260px] sm:w-[280px]"
+                  align="start"
+                  avoidCollisions
+                  collisionPadding={12}
+                >
                   <DropdownMenuLabel>Choose Method</DropdownMenuLabel>
                   <DropdownMenuSeparator />
 
-                  {/* 1. LOCAL / STANDARD */}
+                  {/* LOCAL */}
                   <DropdownMenuItem onClick={() => navigate(`/calculations/local/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
-                      <div className="h-7 w-7 rounded bg-blue-50 flex items-center justify-center text-blue-600">
+                      <div className="h-7 w-7 rounded bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
                         <Ruler className="h-4 w-4" />
                       </div>
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm">Local / Standard</div>
                       </div>
                       {typeCounts.Local > 0 && (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5">
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] px-1.5 shrink-0">
                           {typeCounts.Local}
                         </Badge>
                       )}
                     </div>
                   </DropdownMenuItem>
 
-                  {/* 2. GPW (Gravel/Pulse/Weave) - ADDED THIS */}
+                  {/* GPW */}
                   <DropdownMenuItem onClick={() => navigate(`/calculations/gpw/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
-                      <div className="h-7 w-7 rounded bg-indigo-50 flex items-center justify-center text-indigo-600">
+                      <div className="h-7 w-7 rounded bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
                         <Calculator className="h-4 w-4" />
                       </div>
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm">Gravel / Pulse / Weave</div>
                         <div className="text-[10px] text-gray-400">Fixed Rates per RFT</div>
                       </div>
                       {typeCounts.GPW > 0 && (
-                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5">
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] px-1.5 shrink-0">
                           {typeCounts.GPW}
                         </Badge>
                       )}
                     </div>
                   </DropdownMenuItem>
 
-                  {/* 3. FOREST GROUP */}
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
-                      <div className="flex items-center gap-3">
-                        <div className="h-7 w-7 rounded bg-teal-50 flex items-center justify-center text-teal-600">
-                          <Settings className="h-4 w-4" />
-                        </div>
-                        <span className="font-bold text-sm">Forest Series</span>
-                      </div>
-                    </DropdownMenuSubTrigger>
-                    
-                    <DropdownMenuSubContent className="w-56">
-                      {/* Forest (Auto) */}
-                      <DropdownMenuItem onClick={() => navigate(`/calculations/forest/${selectionId}`)} className="cursor-pointer py-2">
-                         <div className="flex flex-col">
-                           <span className="font-bold">Forest (Auto)</span>
-                           <span className="text-xs text-gray-500">Track Calculator</span>
-                         </div>
-                         {typeCounts.ForestAuto > 0 && (
-                            <Badge variant="outline" className="ml-auto bg-green-50 text-green-700 border-green-200 text-[10px]">
+                  {/* FOREST — inline on mobile, submenu on desktop */}
+                  {isMobile ? (
+                    <>
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/forest/${selectionId}`)} className="cursor-pointer py-2.5 pl-5 border-l-2 border-teal-200 ml-3">
+                        <div className="flex items-center gap-3 w-full">
+                          <div className="h-7 w-7 rounded bg-teal-50 flex items-center justify-center text-teal-600 shrink-0">
+                            <Settings className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold text-sm">Forest (Auto)</span>
+                            <span className="text-[10px] text-gray-400">Track Calculator</span>
+                          </div>
+                          {typeCounts.ForestAuto > 0 && (
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-[10px] shrink-0">
                               {typeCounts.ForestAuto}
                             </Badge>
-                         )}
+                          )}
+                        </div>
                       </DropdownMenuItem>
-                      
-                      {/* Forest (Manual) */}
-                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
-                         <div className="flex flex-col">
-                           <span className="font-bold">Forest (Manual)</span>
-                           <span className="text-xs text-gray-500">Deep Costing</span>
-                         </div>
-                         {typeCounts.ForestManual > 0 && (
-                            <Badge variant="outline" className="ml-auto bg-teal-50 text-teal-700 border-teal-200 text-[10px]">
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2.5 pl-5 border-l-2 border-teal-200 ml-3">
+                        <div className="flex items-center gap-3 w-full">
+                          <div className="h-7 w-7 rounded bg-teal-50 flex items-center justify-center text-teal-600 shrink-0">
+                            <Settings className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold text-sm">Forest (Manual)</span>
+                            <span className="text-[10px] text-gray-400">Deep Costing</span>
+                          </div>
+                          {typeCounts.ForestManual > 0 && (
+                            <Badge variant="outline" className="bg-teal-50 text-teal-700 border-teal-200 text-[10px] shrink-0">
                               {typeCounts.ForestManual}
                             </Badge>
-                         )}
-                      </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-
-                  {/* 4. SOMFY GROUP */}
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
-                      <div className="flex items-center gap-3">
-                        <div className="h-7 w-7 rounded bg-yellow-50 flex items-center justify-center text-yellow-600">
-                          <Layers className="h-4 w-4" />
+                          )}
                         </div>
-                        <span className="font-bold text-sm">Somfy Automation</span>
-                      </div>
-                    </DropdownMenuSubTrigger>
-                    
-                    <DropdownMenuSubContent className="w-56">
-                      {/* Somfy Automation */}
-                      <DropdownMenuItem onClick={() => navigate(`/calculations/somfy/${selectionId}`)} className="cursor-pointer py-2">
-                         <div className="flex flex-col">
-                           <span className="font-bold">Somfy (Auto)</span>
-                           <span className="text-xs text-gray-500">Motors & Remotes</span>
-                         </div>
-                         {typeCounts.Somfy > 0 && (
-                            <Badge variant="outline" className="ml-auto bg-yellow-50 text-yellow-700 border-yellow-200 text-[10px]">
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
+                        <div className="flex items-center gap-3">
+                          <div className="h-7 w-7 rounded bg-teal-50 flex items-center justify-center text-teal-600 shrink-0">
+                            <Settings className="h-4 w-4" />
+                          </div>
+                          <span className="font-bold text-sm">Forest Series</span>
+                        </div>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-52" avoidCollisions collisionPadding={12}>
+                        <DropdownMenuItem onClick={() => navigate(`/calculations/forest/${selectionId}`)} className="cursor-pointer py-2">
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold">Forest (Auto)</span>
+                            <span className="text-xs text-gray-500">Track Calculator</span>
+                          </div>
+                          {typeCounts.ForestAuto > 0 && (
+                            <Badge variant="outline" className="ml-2 bg-green-50 text-green-700 border-green-200 text-[10px] shrink-0">
+                              {typeCounts.ForestAuto}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold">Forest (Manual)</span>
+                            <span className="text-xs text-gray-500">Deep Costing</span>
+                          </div>
+                          {typeCounts.ForestManual > 0 && (
+                            <Badge variant="outline" className="ml-2 bg-teal-50 text-teal-700 border-teal-200 text-[10px] shrink-0">
+                              {typeCounts.ForestManual}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+
+                  {/* SOMFY — inline on mobile, submenu on desktop */}
+                  {isMobile ? (
+                    <>
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/somfy/${selectionId}`)} className="cursor-pointer py-2.5 pl-5 border-l-2 border-yellow-200 ml-3">
+                        <div className="flex items-center gap-3 w-full">
+                          <div className="h-7 w-7 rounded bg-yellow-50 flex items-center justify-center text-yellow-600 shrink-0">
+                            <Layers className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold text-sm">Somfy (Auto)</span>
+                            <span className="text-[10px] text-gray-400">Motors & Remotes</span>
+                          </div>
+                          {typeCounts.Somfy > 0 && (
+                            <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200 text-[10px] shrink-0">
                               {typeCounts.Somfy}
                             </Badge>
-                         )}
+                          )}
+                        </div>
                       </DropdownMenuItem>
-                      
-                      {/* Somfy Manual */}
-                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
-                         <div className="flex flex-col">
-                           <span className="font-bold">Somfy (Manual)</span>
-                           <span className="text-xs text-gray-500">Deep Costing</span>
-                         </div>
-                         {typeCounts.SomfyManual > 0 && (
-                            <Badge variant="outline" className="ml-auto bg-amber-50 text-amber-700 border-amber-200 text-[10px]">
+                      <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2.5 pl-5 border-l-2 border-yellow-200 ml-3">
+                        <div className="flex items-center gap-3 w-full">
+                          <div className="h-7 w-7 rounded bg-yellow-50 flex items-center justify-center text-yellow-600 shrink-0">
+                            <Layers className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold text-sm">Somfy (Manual)</span>
+                            <span className="text-[10px] text-gray-400">Deep Costing</span>
+                          </div>
+                          {typeCounts.SomfyManual > 0 && (
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] shrink-0">
                               {typeCounts.SomfyManual}
                             </Badge>
-                         )}
+                          )}
+                        </div>
                       </DropdownMenuItem>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
+                    </>
+                  ) : (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger className="py-2.5 cursor-pointer">
+                        <div className="flex items-center gap-3">
+                          <div className="h-7 w-7 rounded bg-yellow-50 flex items-center justify-center text-yellow-600 shrink-0">
+                            <Layers className="h-4 w-4" />
+                          </div>
+                          <span className="font-bold text-sm">Somfy Automation</span>
+                        </div>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent className="w-52" avoidCollisions collisionPadding={12}>
+                        <DropdownMenuItem onClick={() => navigate(`/calculations/somfy/${selectionId}`)} className="cursor-pointer py-2">
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold">Somfy (Auto)</span>
+                            <span className="text-xs text-gray-500">Motors & Remotes</span>
+                          </div>
+                          {typeCounts.Somfy > 0 && (
+                            <Badge variant="outline" className="ml-2 bg-yellow-50 text-yellow-700 border-yellow-200 text-[10px] shrink-0">
+                              {typeCounts.Somfy}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => navigate(`/calculations/deep/${selectionId}`)} className="cursor-pointer py-2">
+                          <div className="flex flex-col flex-1 min-w-0">
+                            <span className="font-bold">Somfy (Manual)</span>
+                            <span className="text-xs text-gray-500">Deep Costing</span>
+                          </div>
+                          {typeCounts.SomfyManual > 0 && (
+                            <Badge variant="outline" className="ml-2 bg-amber-50 text-amber-700 border-amber-200 text-[10px] shrink-0">
+                              {typeCounts.SomfyManual}
+                            </Badge>
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
 
-                  {/* 5. ROMAN */}
+                  {/* ROMAN */}
                   <DropdownMenuItem onClick={() => navigate(`/calculations/roman/${selectionId}`)} className="cursor-pointer py-2.5">
                     <div className="flex items-center gap-3 w-full">
-                      <div className="h-7 w-7 rounded bg-orange-50 flex items-center justify-center text-orange-600">
+                      <div className="h-7 w-7 rounded bg-orange-50 flex items-center justify-center text-orange-600 shrink-0">
                         <Grid className="h-4 w-4" />
                       </div>
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm">Roman Curtains</div>
                       </div>
                       {typeCounts.Roman > 0 && (
-                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] px-1.5">
+                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[10px] px-1.5 shrink-0">
                           {typeCounts.Roman}
                         </Badge>
                       )}
@@ -544,59 +573,57 @@ const CalculationEditor: React.FC = () => {
               </DropdownMenu>
             </div>
 
-            {/* CARD 2: BLINDS SEPARATE */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col justify-between hover:border-purple-300 transition-colors">
+            {/* CARD 2: BLINDS */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 flex flex-col justify-between hover:border-purple-300 transition-colors">
               <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="h-10 w-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
-                    <Blinds className="h-6 w-6" />
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+                    <Blinds className="h-5 w-5 sm:h-6 sm:w-6" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900">Blinds & Rugs</h3>
+                    <h3 className="text-base sm:text-lg font-bold text-gray-900">Blinds & Rugs</h3>
                     {typeCounts.Blinds > 0 && (
-                      <p className="text-xs text-gray-500">{typeCounts.Blinds} items assigned</p>
+                      <p className="text-[11px] text-gray-500">{typeCounts.Blinds} items assigned</p>
                     )}
                   </div>
                 </div>
-                <p className="text-sm text-gray-500 mb-6">
+                <p className="text-xs sm:text-sm text-gray-500 mb-4">
                   Square feet based calculations for Blinds, Wallpapers, and Rugs.
                 </p>
               </div>
-              <Button onClick={() => navigate(`/calculations/blinds/${selectionId}`)} className="w-full bg-purple-600 hover:bg-purple-700">
-                Open Blinds Calculator <ChevronRight className="h-4 w-4 ml-2" />
+              <Button
+                onClick={() => navigate(`/calculations/blinds/${selectionId}`)}
+                className="w-full bg-purple-600 hover:bg-purple-700 text-sm h-9 sm:h-10"
+              >
+                Open Blinds Calculator
+                <ChevronRight className="h-4 w-4 ml-2" />
               </Button>
             </div>
 
           </div>
 
-          {/* 2. ITEMS TABLE WITH ASSIGNMENT */}
+          {/* ── ITEMS TABLE ── */}
           <div className="space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <div>
-                <h2 className="text-lg font-bold text-gray-800">Assign Items to Calculators</h2>
-                <p className="text-sm text-gray-500">Decide which calculation logic applies to each item. You can select multiple.</p>
+                <h2 className="text-base sm:text-lg font-bold text-gray-800">Assign Items to Calculators</h2>
+                <p className="text-xs sm:text-sm text-gray-500">Decide which calculation logic applies to each item. You can select multiple.</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 w-full sm:w-auto justify-end">
                 {!isEditing ? (
-                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-                    <Edit2 className="h-3.5 w-3.5 mr-2" /> Edit Assignments
+                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} className="h-8 text-xs sm:text-sm">
+                    <Edit2 className="h-3.5 w-3.5 mr-1.5" /> Edit Assignments
                   </Button>
                 ) : (
                   <>
-                    <Button variant="ghost" size="sm" onClick={() => { setIsEditing(false); fetchData(); }} disabled={saving}>
+                    <Button variant="ghost" size="sm" onClick={() => { setIsEditing(false); fetchData(); }} disabled={saving} className="h-8 text-xs">
                       Cancel
                     </Button>
-                    <Button size="sm" onClick={handleSaveItems} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+                    <Button size="sm" onClick={handleSaveItems} disabled={saving} className="bg-blue-600 hover:bg-blue-700 h-8 text-xs">
                       {saving ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                          Saving...
-                        </>
+                        <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Saving...</>
                       ) : (
-                        <>
-                          <Save className="h-3.5 w-3.5 mr-2" />
-                          Save Changes
-                        </>
+                        <><Save className="h-3.5 w-3.5 mr-1.5" />Save Changes</>
                       )}
                     </Button>
                   </>
@@ -604,146 +631,135 @@ const CalculationEditor: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-gray-100 border-b text-gray-600 font-semibold">
-                  <tr>
-                    <th className="px-6 py-4 w-12">#</th>
-                    <th className="px-6 py-4 w-1/4">Area Name</th>
-                    <th className="px-6 py-4">Dimensions</th>
-                    <th className="px-6 py-4 w-1/3">Assigned To</th>
-                    {isEditing && <th className="px-6 py-4 w-16"></th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {editItems.length === 0 ? (
+            <div className="bg-white rounded-lg border shadow-sm overflow-hidden w-full">
+              <div className="overflow-x-auto w-full">
+                <table className="w-full text-sm text-left min-w-[700px]">
+                  <thead className="bg-gray-100 border-b text-gray-600 font-semibold">
                     <tr>
-                      <td colSpan={isEditing ? 5 : 4} className="px-6 py-12 text-center text-gray-400">
-                        <Calculator className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                        <p>No items found. Add items to get started.</p>
-                      </td>
+                      <th className="px-4 sm:px-6 py-3 w-10">#</th>
+                      <th className="px-4 sm:px-6 py-3 w-1/4">Area Name</th>
+                      <th className="px-4 sm:px-6 py-3">Dimensions</th>
+                      <th className="px-4 sm:px-6 py-3 w-1/3">Assigned To</th>
+                      {isEditing && <th className="px-4 sm:px-6 py-3 w-12"></th>}
                     </tr>
-                  ) : (
-                    editItems.map((item, idx) => (
-                      <tr key={item.id} className="hover:bg-gray-50/50">
-                        <td className="px-6 py-4 text-gray-400 font-mono">{idx + 1}</td>
-
-                        {/* Area Name */}
-                        <td className="px-6 py-4">
-                          {isEditing ? (
-                            <>
-                              <Input
-                                list={`calc-area-${item.id}`} // Use item ID for uniqueness
-                                value={item.areaName || ''}
-                                onChange={(e) => handleItemChange(idx, 'areaName', e.target.value)}
-                                placeholder="Enter Area Name"
-                                className="h-9 text-sm font-bold"
-                              />
-                              <datalist id={`calc-area-${item.id}`}>
-                                {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby", "Staircase", "Utility"].map(area => (
-                                  <option key={area} value={area} />
-                                ))}
-                              </datalist>
-                            </>
-                          ) : (
-                            <div>
-                              <div className="font-bold text-gray-900">{item.areaName || 'Unknown'}</div>
-                              <div className="text-xs text-gray-500">{item.productName}</div>
-                            </div>
-                          )}
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {editItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={isEditing ? 5 : 4} className="px-6 py-12 text-center text-gray-400">
+                          <Calculator className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                          <p>No items found. Add items to get started.</p>
                         </td>
-
-                        {/* Dimensions */}
-                        <td className="px-6 py-4 font-mono text-gray-600">
-                          {isEditing ? (
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number"
-                                value={item.width}
-                                onChange={(e) => handleItemChange(idx, 'width', e.target.value)}
-                                placeholder="Width"
-                                className="h-9 w-24"
-                              />
-                              <span>×</span>
-                              <Input
-                                type="number"
-                                value={item.height}
-                                onChange={(e) => handleItemChange(idx, 'height', e.target.value)}
-                                placeholder="Height"
-                                className="h-9 w-24"
-                              />
-                              <Select value={item.unit} onValueChange={(v) => handleItemChange(idx, 'unit', v)}>
-                                <SelectTrigger className="h-9 w-20"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="mm">mm</SelectItem>
-                                  <SelectItem value="inch">in</SelectItem>
-                                  <SelectItem value="ft">ft</SelectItem>
-                                  <SelectItem value="cm">cm</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : (
-                            <span>{item.width} × {item.height} {item.unit}</span>
-                          )}
-                        </td>
-
-                        {/* CALCULATION TYPE ASSIGNMENT - MULTI SELECT */}
-                        <td className="px-6 py-4">
-                          {isEditing ? (
-                            <div className="flex gap-2 flex-wrap">
-                              {[
-                                'Local', 
-                                'Forest (Manual)', 
-                                'Forest (Auto)', 
-                                'Somfy', 
-                                'Somfy (Manual)', 
-                                'GPW', // <--- ADDED GPW
-                                'Roman', 
-                                'Blinds'
-                              ].map((type) => {
-                                const isActive = item.calculationType && item.calculationType.split(',').includes(type);
-                                const style = BUTTON_STYLES[type as keyof typeof BUTTON_STYLES];
-
-                                return (
-                                  <button
-                                    key={type}
-                                    onClick={() => handleItemChange(idx, 'calculationType', toggleType(item.calculationType, type))}
-                                    className={`
-                                      px-3 py-1.5 text-xs rounded-md border transition-all duration-200
-                                      ${isActive ? style.active : style.inactive}
-                                    `}
-                                  >
-                                    {type}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="flex gap-1 flex-wrap">
-                              {item.calculationType.split(',').filter(Boolean).map(t => (
-                                <span key={t} className={`px-2 py-1 rounded-md text-[10px] font-bold border ${TYPE_COLORS[t] || 'bg-gray-100 border-gray-200'}`}>
-                                  {t}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-
-                        {isEditing && (
-                          <td className="px-6 py-4">
-                            <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(idx)} className="text-red-400 hover:text-red-600">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </td>
-                        )}
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      editItems.map((item, idx) => (
+                        <tr key={item.id} className="hover:bg-gray-50/50">
+                          <td className="px-4 sm:px-6 py-3 text-gray-400 font-mono text-xs">{idx + 1}</td>
+
+                          {/* Area Name */}
+                          <td className="px-4 sm:px-6 py-3">
+                            {isEditing ? (
+                              <>
+                                <Input
+                                  list={`calc-area-${item.id}`}
+                                  value={item.areaName || ''}
+                                  onChange={(e) => handleItemChange(idx, 'areaName', e.target.value)}
+                                  placeholder="Enter Area Name"
+                                  className="h-8 text-xs font-bold"
+                                />
+                                <datalist id={`calc-area-${item.id}`}>
+                                  {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby", "Staircase", "Utility"].map(area => (
+                                    <option key={area} value={area} />
+                                  ))}
+                                </datalist>
+                              </>
+                            ) : (
+                              <div>
+                                <div className="font-bold text-gray-900 text-xs sm:text-sm">{item.areaName || 'Unknown'}</div>
+                                <div className="text-[10px] sm:text-xs text-gray-500">{item.productName}</div>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Dimensions */}
+                          <td className="px-4 sm:px-6 py-3 font-mono text-gray-600">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="number"
+                                  value={item.width}
+                                  onChange={(e) => handleItemChange(idx, 'width', e.target.value)}
+                                  placeholder="W"
+                                  className="h-8 w-16 sm:w-20 text-xs"
+                                />
+                                <span className="text-gray-400">×</span>
+                                <Input
+                                  type="number"
+                                  value={item.height}
+                                  onChange={(e) => handleItemChange(idx, 'height', e.target.value)}
+                                  placeholder="H"
+                                  className="h-8 w-16 sm:w-20 text-xs"
+                                />
+                                <Select value={item.unit} onValueChange={(v) => handleItemChange(idx, 'unit', v)}>
+                                  <SelectTrigger className="h-8 w-16 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="mm">mm</SelectItem>
+                                    <SelectItem value="inch">in</SelectItem>
+                                    <SelectItem value="ft">ft</SelectItem>
+                                    <SelectItem value="cm">cm</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : (
+                              <span className="text-xs sm:text-sm">{item.width} × {item.height} {item.unit}</span>
+                            )}
+                          </td>
+
+                          {/* Assigned To */}
+                          <td className="px-4 sm:px-6 py-3">
+                            {isEditing ? (
+                              <div className="flex gap-1.5 flex-wrap">
+                                {['Local', 'Forest (Manual)', 'Forest (Auto)', 'Somfy', 'Somfy (Manual)', 'GPW', 'Roman', 'Blinds'].map((type) => {
+                                  const isActive = item.calculationType && item.calculationType.split(',').includes(type);
+                                  const style = BUTTON_STYLES[type as keyof typeof BUTTON_STYLES];
+                                  return (
+                                    <button
+                                      key={type}
+                                      onClick={() => handleItemChange(idx, 'calculationType', toggleType(item.calculationType, type))}
+                                      className={`px-2 py-1 text-[10px] rounded-md border transition-all duration-200 ${isActive ? style.active : style.inactive}`}
+                                    >
+                                      {type}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="flex gap-1 flex-wrap">
+                                {item.calculationType.split(',').filter(Boolean).map(t => (
+                                  <span key={t} className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${TYPE_COLORS[t] || 'bg-gray-100 border-gray-200'}`}>
+                                    {t}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+
+                          {isEditing && (
+                            <td className="px-4 sm:px-6 py-3">
+                              <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(idx)} className="text-red-400 hover:text-red-600 h-7 w-7">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </td>
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
               {isEditing && (
-                <div className="p-4 bg-gray-50 border-t">
-                  <Button variant="outline" className="w-full border-dashed" onClick={handleAddNewItem}>
+                <div className="p-3 sm:p-4 bg-gray-50 border-t">
+                  <Button variant="outline" className="w-full border-dashed text-sm h-9" onClick={handleAddNewItem}>
                     <Plus className="h-4 w-4 mr-2" /> Add Manual Entry
                   </Button>
                 </div>
