@@ -47,7 +47,7 @@ model User {
   inquiries_created  Inquiry[]   @relation("CreatedBy")
   selections_created Selection[] @relation("SelectionCreatedBy")
   quotations_created Quotation[]
-  
+  dailyReports  DailyReport[]
   catalogMovements   CatalogMovement[]
   // === ADD THIS NEW LINE ===
   comments_made      InquiryComment[] 
@@ -82,7 +82,7 @@ model Inquiry {
   sales_person    User   @relation("SalesPerson", fields: [sales_person_id], references: [id])
   
   sales_persons   User[] @relation("InquiryMembers")
-  
+  reportEntries DailyReportEntry[]
   created_by_id String
   created_by    User   @relation("CreatedBy", fields: [created_by_id], references: [id])
 
@@ -862,4 +862,29 @@ model ActivityLog {
   entityId  String?  // ID of the specific item
   details   String?  // Description of what changed
   createdAt DateTime @default(now())
+}
+
+model DailyReport {
+  id          String   @id @default(uuid())
+  reportDate  DateTime
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String   @default("SUBMITTED")
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  entries     DailyReportEntry[]
+
+  @@unique([userId, reportDate])
+}
+
+model DailyReportEntry {
+  id            String      @id @default(uuid())
+  dailyReportId String
+  dailyReport   DailyReport @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  inquiryId     String
+  inquiry       Inquiry     @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  workDone      String      @db.Text
+  status        String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 }

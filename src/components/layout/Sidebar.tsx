@@ -10,9 +10,11 @@ import {
   Ruler,
   Calculator,
   ShieldAlert,
-  Briefcase, // <--- Added Icon for Architects
+  Briefcase,
   Kanban,
-  Clock
+  Clock,
+  ClipboardList,
+  BarChart3,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
@@ -26,21 +28,32 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const { profile, role, signOut } = useAuth();
   const location = useLocation();
 
-  // Sales role only sees Pipeline, Inquiries, and Measurements
-  const SALES_ALLOWED_PAGES = ['/pipeline', '/inquiries', '/measurements'];
+  // Sales role only sees these pages
+  const SALES_ALLOWED_PAGES = ['/pipeline', '/inquiries', '/measurements', '/daily-report'];
 
   const allNavigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Attendance', href: '/attendance', icon: Clock },
-    { name: 'Pipeline', href: '/pipeline', icon: Kanban },
-    { name: 'Inquiries', href: '/inquiries', icon: FileText },
-    { name: 'Selections', href: '/selections', icon: ShoppingCart },
-    { name: 'Measurements', href: '/measurements', icon: Ruler },
-    { name: 'Calculations', href: '/calculations', icon: Calculator },
-    { name: 'Quotations', href: '/quotations', icon: FileText },
-    { name: 'Architects', href: '/architects', icon: Briefcase },
+    { name: 'Dashboard',     href: '/dashboard',        icon: LayoutDashboard },
+    { name: 'Attendance',    href: '/attendance',        icon: Clock },
+    { name: 'Daily Report',  href: '/daily-report',      icon: ClipboardList },
+    { name: 'Pipeline',      href: '/pipeline',          icon: Kanban },
+    { name: 'Inquiries',     href: '/inquiries',         icon: FileText },
+    { name: 'Selections',    href: '/selections',        icon: ShoppingCart },
+    { name: 'Measurements',  href: '/measurements',      icon: Ruler },
+    { name: 'Calculations',  href: '/calculations',      icon: Calculator },
+    { name: 'Quotations',    href: '/quotations',        icon: FileText },
+    { name: 'Architects',    href: '/architects',        icon: Briefcase },
   ];
 
+  // Admin Reports — super_admin and admin_hr only
+  if (role === 'super_admin' || role === 'admin_hr') {
+    allNavigation.push({
+      name: 'Report Admin',
+      href: '/daily-reports/admin',
+      icon: BarChart3,
+    });
+  }
+
+  // Employees — super_admin and admin_hr only
   if (role === 'super_admin' || role === 'admin_hr') {
     allNavigation.push({
       name: 'Employees',
@@ -49,7 +62,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     });
   }
 
-  // Activity Logs (Super Admin Only)
+  // Activity Logs — super_admin only
   if (role === 'super_admin') {
     allNavigation.push({
       name: 'Activity Logs',
@@ -58,7 +71,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     });
   }
 
-  // Catalogs - not for sales
+  // Catalogs — not for sales
   if (role !== 'sales') {
     allNavigation.push({
       name: 'Catalogs',
@@ -75,10 +88,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const getRoleLabel = (role: string | null | undefined) => {
     switch (role) {
       case 'super_admin': return 'Super Admin';
-      case 'sales': return 'Sales';
-      case 'accounting': return 'Accounting';
-      case 'admin_hr': return 'Admin / HR';
-      default: return 'User';
+      case 'sales':       return 'Sales';
+      case 'accounting':  return 'Accounting';
+      case 'admin_hr':    return 'Admin / HR';
+      default:            return 'User';
     }
   };
 

@@ -3705,4 +3705,628 @@ app.get('/api/users/all', authenticateToken, async (req: Request, res: Response)
   }
 });
 
+// ==========================================
+// DAILY REPORT ROUTES — Add to index.ts
+// ==========================================
+// Paste these routes BEFORE the app.listen() line.
+
+// ==========================================
+// HELPER: Get report window boundaries
+// Report day = 6PM previous day → 6PM current day
+// ==========================================
+
+const getReportWindow = (dateInput?: string) => {
+  // If no date given, use "today"
+  const base = dateInput ? new Date(dateInput) : new Date();
+
+  // Normalize to just the date portion
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const day = base.getDate();
+
+  // Window end = 6PM on the given day
+  const windowEnd = new Date(year, month, day, 18, 0, 0, 0);
+
+  // Window start = 6PM on the previous day
+  const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
+
+  // Canonical report date (stored as 6PM of the current day)
+  return { windowStart, windowEnd, reportDate: windowEnd };
+};
+
+
+// ==========================================
+// EMPLOYEE: Submit / Update Daily Report
+// POST /api/daily-reports
+// ==========================================
+app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { entries, reportDate: reportDateStr } = req.body;
+    // entries: Array of { inquiryId, workDone, status }
+
+    if (!entries || !Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ error: 'At least one entry is required' });
+    }
+
+    const { reportDate } = getReportWindow(reportDateStr);
+
+    // Upsert the DailyReport record (one per user per day)
+    const report = await (prisma as any).dailyReport.upsert({
+      where: {
+        userId_reportDate: {
+          userId: req.user.id,
+          reportDate,
+        },
+      },
+      update: {
+        status: 'SUBMITTED',
+        submittedAt: new Date(),
+        updatedAt: new Date(),
+      },
+      create: {
+        userId: req.user.id,
+        reportDate,
+        status: 'SUBMITTED',
+      },
+    });
+
+    // Delete old entries and recreate (simple upsert strategy)
+    await (prisma as any).dailyReportEntry.deleteMany({
+      where: { dailyReportId: report.id },
+    });
+
+    await (prisma as any).dailyReportEntry.createMany({
+      data: entries.map((e: any) => ({
+        dailyReportId: report.id,
+        inquiryId: e.inquiryId,
+        workDone: e.workDone,
+        status: e.status,
+      })),
+    });
+
+    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, `Submitted daily report with ${entries.length} entries`);
+
+    res.json({ success: true, reportId: report.id });
+  } catch (error) {
+    console.error('Daily report submit error:', error);
+    res.status(500).json({ error: 'Failed to submit report' });
+  }
+});
+
+
+// ==========================================
+// EMPLOYEE: Get today's assigned inquiries + existing report
+// GET /api/daily-reports/my-today
+// ==========================================
+app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { windowStart, windowEnd, reportDate } = getReportWindow();
+
+    // Get inquiries assigned to this user (as sales_person OR member)
+    const inquiries = await prisma.inquiry.findMany({
+      where: {
+        OR: [
+          { sales_person_id: req.user.id },
+          { sales_persons: { some: { id: req.user.id } } },
+        ],
+      },
+      select: {
+        id: true,
+        inquiry_number: true,
+        client_name: true,
+        stage: true,
+        inquiry_date: true,
+        address: true,
+        reportEntries: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            status: true,
+            workDone: true,
+            createdAt: true,
+            dailyReport: { select: { reportDate: true } },
+          },
+        },
+      },
+      orderBy: { inquiry_date: 'desc' },
+    });
+
+    // Check for today's existing report
+    const existingReport = await (prisma as any).dailyReport.findUnique({
+      where: { userId_reportDate: { userId: req.user.id, reportDate } },
+      include: {
+        entries: {
+          include: {
+            inquiry: { select: { id: true, inquiry_number: true, client_name: true } },
+          },
+        },
+      },
+    });
+
+    // Flag inquiries inactive (no update in 3+ days)
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const enriched = inquiries.map((inq: any) => {
+      const lastEntry = inq.reportEntries?.[0];
+      const lastUpdate = lastEntry ? new Date(lastEntry.createdAt) : null;
+      const isInactive = !lastUpdate || lastUpdate < threeDaysAgo;
+      return {
+        ...inq,
+        lastStatus: lastEntry?.status || null,
+        lastWorkDone: lastEntry?.workDone || null,
+        lastUpdatedAt: lastUpdate,
+        isInactive,
+      };
+    });
+
+    res.json({
+      inquiries: enriched,
+      existingReport: existingReport || null,
+      reportDate,
+    });
+  } catch (error) {
+    console.error('My today error:', error);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+
+// ==========================================
+// ADMIN: Get all daily reports (filterable)
+// GET /api/daily-reports/admin
+// Query: ?date=YYYY-MM-DD&userId=&inquiryId=&status=
+// ==========================================
+app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Response) => {
+  try {
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin_hr') {
+      return res.status(403).json({ error: 'Access Denied' });
+    }
+
+    const { date, userId, inquiryId, status } = req.query as any;
+
+    const { reportDate } = date ? getReportWindow(date) : getReportWindow();
+
+    // Build where clause for entries
+    const entryWhere: any = {};
+    if (inquiryId) entryWhere.inquiryId = inquiryId;
+    if (status) entryWhere.status = status;
+
+    // Get all sales users for "missing report" detection
+    const salesUsers = await prisma.user.findMany({
+      where: { role: { in: ['sales', 'accounting', 'admin_hr'] } },
+      select: { id: true, name: true, role: true, email: true },
+    });
+
+    // Filter to specific user if requested
+    const targetUsers = userId
+      ? salesUsers.filter((u: any) => u.id === userId)
+      : salesUsers;
+
+    // Fetch submitted reports
+    const reportWhere: any = {
+      reportDate,
+      ...(userId ? { userId } : {}),
+    };
+
+    const reports = await (prisma as any).dailyReport.findMany({
+      where: reportWhere,
+      include: {
+        user: { select: { id: true, name: true, role: true } },
+        entries: {
+          where: Object.keys(entryWhere).length > 0 ? entryWhere : undefined,
+          include: {
+            inquiry: {
+              select: {
+                id: true,
+                inquiry_number: true,
+                client_name: true,
+                stage: true,
+                address: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { submittedAt: 'desc' },
+    });
+
+    // Identify who is missing
+    const submittedUserIds = new Set(reports.map((r: any) => r.userId));
+    const missingUsers = targetUsers
+      .filter((u: any) => !submittedUserIds.has(u.id))
+      .map((u: any) => ({ ...u, status: 'MISSING' }));
+
+    res.json({ reports, missingUsers, reportDate });
+  } catch (error) {
+    console.error('Admin reports error:', error);
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+
+// ==========================================
+// ADMIN: Analytics Summary
+// GET /api/daily-reports/analytics
+// Query: ?date=YYYY-MM-DD
+// ==========================================
+app.get('/api/daily-reports/analytics', authenticateToken, async (req: any, res: Response) => {
+  try {
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin_hr') {
+      return res.status(403).json({ error: 'Access Denied' });
+    }
+
+    const { date } = req.query as any;
+    const { reportDate } = date ? getReportWindow(date) : getReportWindow();
+
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalEmployees,
+      submittedReports,
+      allEntries,
+      inactiveInquiries,
+      allInquiries,
+    ] = await Promise.all([
+      prisma.user.count({ where: { role: { in: ['sales', 'accounting', 'admin_hr'] } } }),
+      (prisma as any).dailyReport.count({ where: { reportDate, status: 'SUBMITTED' } }),
+      (prisma as any).dailyReportEntry.findMany({
+        where: { dailyReport: { reportDate } },
+        select: { status: true, inquiryId: true },
+      }),
+      // Inquiries with no report entry in last 3 days
+      prisma.inquiry.findMany({
+        where: {
+          reportEntries: {
+            none: {
+              createdAt: { gte: threeDaysAgo },
+            },
+          },
+        },
+        select: {
+          id: true,
+          inquiry_number: true,
+          client_name: true,
+          stage: true,
+          sales_person: { select: { id: true, name: true } },
+          reportEntries: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { createdAt: true, status: true },
+          },
+        },
+      }),
+      prisma.inquiry.count(),
+    ]);
+
+    // Status distribution
+    const statusMap: Record<string, number> = {};
+    for (const e of allEntries) {
+      statusMap[e.status] = (statusMap[e.status] || 0) + 1;
+    }
+
+    // Unique inquiries worked today
+    const uniqueInquiriesWorked = new Set(allEntries.map((e: any) => e.inquiryId)).size;
+
+    res.json({
+      totalEmployees,
+      reportsSubmitted: submittedReports,
+      reportsMissing: Math.max(0, totalEmployees - submittedReports),
+      totalInquiriesWorked: uniqueInquiriesWorked,
+      totalInquiries: allInquiries,
+      inactiveInquiries: inactiveInquiries.slice(0, 50), // Cap for performance
+      inactiveCount: inactiveInquiries.length,
+      statusDistribution: statusMap,
+      reportDate,
+    });
+  } catch (error) {
+    console.error('Analytics error:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics' });
+  }
+});
+
+
+// ==========================================
+// ADMIN: Inquiry Timeline
+// GET /api/daily-reports/inquiry/:inquiryId/timeline
+// ==========================================
+app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, async (req: any, res: Response) => {
+  try {
+    if (req.user.role !== 'super_admin' && req.user.role !== 'admin_hr') {
+      return res.status(403).json({ error: 'Access Denied' });
+    }
+
+    const entries = await (prisma as any).dailyReportEntry.findMany({
+      where: { inquiryId: req.params.inquiryId },
+      include: {
+        dailyReport: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const inquiry = await prisma.inquiry.findUnique({
+      where: { id: req.params.inquiryId },
+      select: {
+        id: true,
+        inquiry_number: true,
+        client_name: true,
+        stage: true,
+        sales_person: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json({ inquiry, timeline: entries });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+});
+
+// ==========================================
+// NOTIFICATIONS ROUTE
+// Paste this block into server/src/index.ts
+// BEFORE the app.listen() line
+// ==========================================
+
+// ─── GET /api/notifications ──────────────────────────────────────────────────
+// Returns role-aware notifications for the logged-in user.
+// Each notification has: id, type, title, message, link, severity, createdAt
+//
+// Roles and what they see:
+//   super_admin / admin_hr  → missing daily reports, inactive inquiries, pending leaves
+//   sales                   → own daily report status, own inactive inquiries, birthdays/anniversaries today
+//   accounting              → pending selections, pending quotations
+
+app.get('/api/notifications', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const userId = req.user.id;
+    const role   = req.user.role;
+    const now    = new Date();
+
+    // Reporting window end = 6PM today
+    const todayAt6PM = new Date(now);
+    todayAt6PM.setHours(18, 0, 0, 0);
+
+    // Window start = 6PM yesterday
+    const yesterdayAt6PM = new Date(todayAt6PM);
+    yesterdayAt6PM.setDate(yesterdayAt6PM.getDate() - 1);
+
+    const reportDate = todayAt6PM; // canonical report date
+
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+
+    const notifications: any[] = [];
+
+    // ── SUPER ADMIN / ADMIN HR ──────────────────────────────────────────────
+    if (role === 'super_admin' || role === 'admin_hr') {
+
+      // 1. Missing daily reports — sales employees who haven't submitted today
+      const salesUsers = await prisma.user.findMany({
+        where: { role: { in: ['sales', 'accounting'] } },
+        select: { id: true, name: true },
+      });
+
+      const submittedUserIds = await (prisma as any).dailyReport.findMany({
+        where: { reportDate },
+        select: { userId: true },
+      }).then((rows: any[]) => rows.map((r: any) => r.userId));
+
+      const missingCount = salesUsers.filter((u: any) => !submittedUserIds.includes(u.id)).length;
+      const missingNames = salesUsers.filter((u: any) => !submittedUserIds.includes(u.id)).map((u: any) => u.name);
+
+      if (missingCount > 0 && now < todayAt6PM) {
+        notifications.push({
+          id: 'missing-reports',
+          type: 'missing_report',
+          title: `${missingCount} Report${missingCount > 1 ? 's' : ''} Missing`,
+          message: `${missingNames.slice(0, 3).join(', ')}${missingNames.length > 3 ? ` +${missingNames.length - 3} more` : ''} ${missingCount === 1 ? 'has' : 'have'} not submitted today's report.`,
+          link: '/daily-reports/admin',
+          severity: 'warning',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 2. Inactive inquiries (3+ days no update)
+      const inactiveInquiries = await prisma.inquiry.findMany({
+        where: {
+          reportEntries: { none: { createdAt: { gte: threeDaysAgo } } },
+        },
+        select: { id: true, inquiry_number: true, client_name: true },
+        take: 5,
+      });
+
+      if (inactiveInquiries.length > 0) {
+        notifications.push({
+          id: 'inactive-inquiries',
+          type: 'inactive_inquiry',
+          title: `${inactiveInquiries.length} Inactive Inquir${inactiveInquiries.length > 1 ? 'ies' : 'y'}`,
+          message: `No update for 3+ days: ${inactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${inactiveInquiries.length > 2 ? ` +${inactiveInquiries.length - 2} more` : ''}.`,
+          link: '/daily-reports/admin?tab=inactive',
+          severity: 'error',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 3. Pending leave requests
+      const pendingLeaves = await prisma.leaveRequest.count({
+        where: { status: 'PENDING' },
+      });
+      if (pendingLeaves > 0) {
+        notifications.push({
+          id: 'pending-leaves',
+          type: 'leave_request',
+          title: `${pendingLeaves} Pending Leave${pendingLeaves > 1 ? 's' : ''}`,
+          message: `${pendingLeaves} leave request${pendingLeaves > 1 ? 's' : ''} awaiting your approval.`,
+          link: '/attendance',
+          severity: 'info',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 4. Client birthdays today
+      const allInquiries = await prisma.inquiry.findMany({
+        where: { client_birth_date: { not: null } },
+        select: { id: true, client_name: true, client_birth_date: true, inquiry_number: true },
+      });
+      const birthdaysToday = allInquiries.filter((inq: any) => {
+        if (!inq.client_birth_date) return false;
+        const bd = new Date(inq.client_birth_date);
+        return bd.getDate() === now.getDate() && bd.getMonth() === now.getMonth();
+      });
+      if (birthdaysToday.length > 0) {
+        notifications.push({
+          id: 'birthdays-today',
+          type: 'birthday',
+          title: `🎂 ${birthdaysToday.length} Birthday${birthdaysToday.length > 1 ? 's' : ''} Today`,
+          message: birthdaysToday.slice(0, 3).map((i: any) => i.client_name).join(', ') + (birthdaysToday.length > 3 ? ` +${birthdaysToday.length - 3} more` : ''),
+          link: '/inquiries',
+          severity: 'info',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 5. Client anniversaries today
+      const anniversariesToday = allInquiries.filter((inq: any) => {
+        if (!inq.client_anniversary_date) return false;
+        const ad = new Date(inq.client_anniversary_date);
+        return ad.getDate() === now.getDate() && ad.getMonth() === now.getMonth();
+      });
+      if (anniversariesToday.length > 0) {
+        notifications.push({
+          id: 'anniversaries-today',
+          type: 'anniversary',
+          title: `💍 ${anniversariesToday.length} Anniversary Today`,
+          message: anniversariesToday.slice(0, 3).map((i: any) => i.client_name).join(', ') + (anniversariesToday.length > 3 ? ` +${anniversariesToday.length - 3} more` : ''),
+          link: '/inquiries',
+          severity: 'info',
+          createdAt: now.toISOString(),
+        });
+      }
+    }
+
+    // ── SALES ───────────────────────────────────────────────────────────────
+    if (role === 'sales') {
+
+      // 1. Own daily report not submitted today (within window)
+      if (now < todayAt6PM) {
+        const myReport = await (prisma as any).dailyReport.findUnique({
+          where: { userId_reportDate: { userId, reportDate } },
+        });
+        if (!myReport) {
+          const msLeft = todayAt6PM.getTime() - now.getTime();
+          const hoursLeft = Math.floor(msLeft / (1000 * 60 * 60));
+          const minsLeft = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+          notifications.push({
+            id: 'own-report-missing',
+            type: 'missing_report',
+            title: `Daily Report Pending`,
+            message: `You haven't submitted today's report. ${hoursLeft}h ${minsLeft}m left before the window closes.`,
+            link: '/daily-report',
+            severity: 'warning',
+            createdAt: now.toISOString(),
+          });
+        }
+      }
+
+      // 2. Own inactive inquiries (3+ days)
+      const myInactiveInquiries = await prisma.inquiry.findMany({
+        where: {
+          OR: [
+            { sales_person_id: userId },
+            { sales_persons: { some: { id: userId } } },
+          ],
+          reportEntries: { none: { createdAt: { gte: threeDaysAgo } } },
+        },
+        select: { id: true, inquiry_number: true, client_name: true },
+      });
+      if (myInactiveInquiries.length > 0) {
+        notifications.push({
+          id: 'my-inactive-inquiries',
+          type: 'inactive_inquiry',
+          title: `${myInactiveInquiries.length} Inactive Inquir${myInactiveInquiries.length > 1 ? 'ies' : 'y'}`,
+          message: `No update in 3+ days: ${myInactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${myInactiveInquiries.length > 2 ? ` +${myInactiveInquiries.length - 2} more` : ''}.`,
+          link: '/daily-report',
+          severity: 'error',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 3. Birthdays/anniversaries for own clients today
+      const myInquiries = await prisma.inquiry.findMany({
+        where: {
+          OR: [
+            { sales_person_id: userId },
+            { sales_persons: { some: { id: userId } } },
+          ],
+          client_birth_date: { not: null },
+        },
+        select: { id: true, client_name: true, client_birth_date: true, client_anniversary_date: true },
+      });
+      const myBirthdays = myInquiries.filter((inq: any) => {
+        if (!inq.client_birth_date) return false;
+        const bd = new Date(inq.client_birth_date);
+        return bd.getDate() === now.getDate() && bd.getMonth() === now.getMonth();
+      });
+      if (myBirthdays.length > 0) {
+        notifications.push({
+          id: 'my-client-birthdays',
+          type: 'birthday',
+          title: `🎂 Client Birthday Today`,
+          message: myBirthdays.map((i: any) => i.client_name).join(', '),
+          link: '/inquiries',
+          severity: 'info',
+          createdAt: now.toISOString(),
+        });
+      }
+    }
+
+    // ── ACCOUNTING ──────────────────────────────────────────────────────────
+    if (role === 'accounting') {
+
+      // 1. Pending selections
+      const pendingSelections = await prisma.selection.count({
+        where: { status: 'pending' },
+      });
+      if (pendingSelections > 0) {
+        notifications.push({
+          id: 'pending-selections',
+          type: 'pending_selection',
+          title: `${pendingSelections} Pending Selection${pendingSelections > 1 ? 's' : ''}`,
+          message: `${pendingSelections} selection${pendingSelections > 1 ? 's' : ''} waiting to be confirmed.`,
+          link: '/selections',
+          severity: 'warning',
+          createdAt: now.toISOString(),
+        });
+      }
+
+      // 2. Draft quotations
+      const draftQuotations = await prisma.quotation.count({
+        where: { status: 'draft' },
+      });
+      if (draftQuotations > 0) {
+        notifications.push({
+          id: 'draft-quotations',
+          type: 'draft_quotation',
+          title: `${draftQuotations} Draft Quotation${draftQuotations > 1 ? 's' : ''}`,
+          message: `${draftQuotations} quotation${draftQuotations > 1 ? 's are' : ' is'} still in draft.`,
+          link: '/quotations',
+          severity: 'info',
+          createdAt: now.toISOString(),
+        });
+      }
+    }
+
+    // Sort: errors first, then warnings, then info
+    const order = { error: 0, warning: 1, info: 2 };
+    notifications.sort((a, b) => (order[a.severity as keyof typeof order] ?? 3) - (order[b.severity as keyof typeof order] ?? 3));
+
+    res.json({ notifications, count: notifications.length });
+  } catch (error) {
+    console.error('Notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

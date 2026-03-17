@@ -54,6 +54,13 @@ import Architecture from "./pages/Architects/Architects";
 import Pipeline from "./pages/piplines/Pipeline";
 
 import Attendance from "./pages/Attendance/Attendance";
+
+
+//reports 
+
+import DailyReportPage from "./pages/reports/DailyReportPage";
+import AdminDailyReports from "./pages/reports/AdminDailyReports";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -223,6 +230,24 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+
+            {/* Daily Reports */}
+<Route
+  path="/daily-report"
+  element={
+    <ProtectedRoute>
+      <DailyReportPage />
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/daily-reports/admin"
+  element={
+    <ProtectedRoute allowedRoles={['super_admin', 'admin_hr']}>
+      <AdminDailyReports />
+    </ProtectedRoute>
+  }
+/>
 
             {/* Employees */}
             <Route
