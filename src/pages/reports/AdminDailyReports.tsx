@@ -669,7 +669,11 @@ const [date, setDate]                 = useState('');
                 <TrendingUp className="h-4 w-4 text-accent" /> Report Submission Rate
               </h3>
               <p className="text-xs text-muted-foreground mb-4">
-                {format(new Date(date), 'EEEE, dd MMM yyyy')}
+                {/* 🚨 FIX: Safe date formatting. If "All Time" is selected, it falls back to showing Today's analytics date */}
+                {date 
+                  ? format(new Date(date), 'EEEE, dd MMM yyyy') 
+                  : format(new Date(analytics.reportDate), 'EEEE, dd MMM yyyy') + ' (Showing Today)'
+                }
               </p>
               <div className="flex items-center gap-4 mb-3">
                 <div className="flex-1 bg-muted/40 rounded-full h-4 overflow-hidden">
