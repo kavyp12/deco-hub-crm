@@ -1,14 +1,13 @@
-// [FILE: src/pages/reports/DailyReportPage.tsx]
-
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import {
   ClipboardList, Send, AlertTriangle, CheckCircle2,
-  Clock, Eye, Pencil, Info,
+  Clock, Eye, Pencil, Info, Search, CalendarDays
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -56,6 +55,7 @@ interface InquiryOption {
   lastStatus: string | null;
   lastUpdatedAt: string | null;
   isInactive: boolean;
+  daysInactive: number;
 }
 
 interface InquiryEntry {
@@ -64,21 +64,12 @@ interface InquiryEntry {
   workDone: string;
 }
 
-// ─── Window: 6 PM → 6 PM (next day) ─────────────────────────────────────────
-// The reporting window opens at 6 PM and stays open for 24 hours until next 6 PM.
-// This means an employee can ALWAYS file a report — the window is rolling.
-// Example: report filed at 8 PM on Monday = counts for Tuesday's report.
-//          report filed at 2 PM on Tuesday = counts for Tuesday's report.
-
 const getWindowInfo = () => {
   const now = new Date();
-
   const todayAt6PM = new Date(now);
   todayAt6PM.setHours(18, 0, 0, 0);
 
   const isPast6PM = now >= todayAt6PM;
-
-  // Window end = next 6PM
   const windowEnd = new Date(todayAt6PM);
   if (isPast6PM) windowEnd.setDate(windowEnd.getDate() + 1);
 
@@ -86,7 +77,6 @@ const getWindowInfo = () => {
   const hoursLeft = Math.max(0, Math.floor(msLeft / (1000 * 60 * 60)));
   const minsLeft  = Math.max(0, Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60)));
 
-  // The "report day" label
   const reportDayDate = isPast6PM
     ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
     : now;
@@ -106,6 +96,10 @@ const DailyReportPage: React.FC = () => {
   const { toast } = useToast();
   const win = getWindowInfo();
 
+  // Tabs
+  const [activeTab, setActiveTab]           = useState<'today' | 'history'>('today');
+
+  // Today State
   const [inquiries, setInquiries]           = useState<InquiryOption[]>([]);
   const [loading, setLoading]               = useState(true);
   const [submitting, setSubmitting]         = useState(false);
@@ -113,10 +107,20 @@ const DailyReportPage: React.FC = () => {
   const [editMode, setEditMode]             = useState(false);
   const [entries, setEntries]               = useState<Record<string, InquiryEntry>>({});
   const [savedEntries, setSavedEntries]     = useState<any[]>([]);
+  
+  // History State
+  const [historyEntries, setHistoryEntries] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySearch, setHistorySearch]   = useState('');
+
+  // Dialog States
   const [previewOpen, setPreviewOpen]       = useState(false);
   const [previewItem, setPreviewItem]       = useState<{ entry: any; inq: InquiryOption | undefined } | null>(null);
+  const [timelineOpen, setTimelineOpen]     = useState(false);
+  const [timelineData, setTimelineData]     = useState<any>(null);
+  const [timelineLoading, setTimelineLoading]= useState(false);
 
-  // ─── Fetch ────────────────────────────────────────────────────────────────
+  // ─── Fetch Today's Data ──────────────────────────────────────────────────
 
   useEffect(() => {
     (async () => {
@@ -128,18 +132,15 @@ const DailyReportPage: React.FC = () => {
         if (data.existingReport?.entries?.length) {
           setSubmitted(true);
           setSavedEntries(data.existingReport.entries);
-          // Pre-fill from saved
           const map: Record<string, InquiryEntry> = {};
           data.existingReport.entries.forEach((e: any) => {
             map[e.inquiryId] = { inquiryId: e.inquiryId, status: e.status, workDone: e.workDone };
           });
-          // Also init inquiries not in saved report as empty
           inqs.forEach(inq => {
             if (!map[inq.id]) map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' };
           });
           setEntries(map);
         } else {
-          // Init all as empty
           const map: Record<string, InquiryEntry> = {};
           inqs.forEach(inq => { map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' }; });
           setEntries(map);
@@ -150,16 +151,45 @@ const DailyReportPage: React.FC = () => {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [toast]);
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // ─── Fetch History Data ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (activeTab === 'history' && historyEntries.length === 0) {
+      fetchHistory();
+    }
+  }, [activeTab]);
+
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get('/daily-reports/my-history');
+      setHistoryEntries(data);
+    } catch (error) {
+      toast({ title: 'Error', description: 'Could not load history', variant: 'destructive' });
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const filteredHistory = historyEntries.filter(entry => {
+    if (!historySearch) return true;
+    const q = historySearch.toLowerCase();
+    return (
+      entry.inquiry?.inquiry_number?.toLowerCase().includes(q) ||
+      entry.inquiry?.client_name?.toLowerCase().includes(q) ||
+      entry.workDone?.toLowerCase().includes(q) ||
+      (STATUSES.find(s => s.value === entry.status)?.label || '').toLowerCase().includes(q)
+    );
+  });
+
+  // ─── Handlers ─────────────────────────────────────────────────────────────
 
   const updateEntry = (id: string, field: 'status' | 'workDone', val: string) =>
     setEntries(prev => ({ ...prev, [id]: { ...prev[id], [field]: val } }));
 
   const filledCount = Object.values(entries).filter(e => e.status && e.workDone.trim()).length;
-
-  // ─── Submit ───────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
     const toSubmit = Object.values(entries).filter(e => e.status || e.workDone.trim());
@@ -181,6 +211,10 @@ const DailyReportPage: React.FC = () => {
       setSavedEntries(data.existingReport?.entries || []);
       setSubmitted(true);
       setEditMode(false);
+      // Refresh history silently if they switch tabs later
+      const historyData = await api.get('/daily-reports/my-history');
+      setHistoryEntries(historyData.data);
+      
       toast({ title: '✅ Report Submitted', description: `${toSubmit.length} ${toSubmit.length === 1 ? 'inquiry' : 'inquiries'} updated.` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
@@ -191,86 +225,375 @@ const DailyReportPage: React.FC = () => {
 
   const startEdit = () => { setEditMode(true); setSubmitted(false); };
 
-  const inactiveCount = inquiries.filter(i => i.isInactive).length;
-
-  // ─── Loading ──────────────────────────────────────────────────────────────
+  const openTimeline = async (inquiryId: string) => {
+    setTimelineLoading(true);
+    setTimelineOpen(true);
+    setTimelineData(null);
+    try {
+      const { data } = await api.get(`/daily-reports/inquiry/${inquiryId}/timeline`);
+      setTimelineData(data);
+    } catch {
+      toast({ title: 'Error', description: 'Could not load history', variant: 'destructive' });
+    } finally {
+      setTimelineLoading(false);
+    }
+  };
 
   if (loading) return (
     <DashboardLayout>
       <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Loading your inquiries...
+        Loading your data...
       </div>
     </DashboardLayout>
   );
 
-  // ─── SUBMITTED VIEW ───────────────────────────────────────────────────────
+  return (
+    <DashboardLayout>
+      <div className="max-w-4xl mx-auto animate-fade-in">
 
-  if (submitted && !editMode) {
-    return (
-      <DashboardLayout>
-        <div className="max-w-3xl mx-auto animate-fade-in">
-
-          {/* Header */}
-          <div className="flex items-start sm:items-center justify-between gap-3 mb-4">
-            <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2">
-                <ClipboardList className="h-6 w-6 text-accent" /> Daily Report
-              </h1>
-              <p className="text-sm text-muted-foreground mt-0.5">{win.reportLabel}</p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className="flex items-center gap-1.5 text-green-600 bg-green-50 px-3 py-1.5 rounded-full text-sm font-medium border border-green-200">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Submitted
-              </span>
-              <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={startEdit}>
-                <Pencil className="h-3.5 w-3.5" /> Edit
-              </Button>
-            </div>
+        {/* ── Page Header & Tabs ── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <ClipboardList className="h-6 w-6 text-accent" /> Daily Reports
+            </h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Manage and track your daily updates</p>
           </div>
-
-          {/* Window timer */}
-          <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg mb-5 w-fit">
-            <Clock className="h-3.5 w-3.5" />
-            Window closes {win.closesAt} · {win.hoursLeft}h {win.minsLeft}m left to edit
-          </div>
-
-          {/* Saved inquiry cards */}
-          <div className="space-y-3">
-            {savedEntries.map((entry: any, idx: number) => {
-              const inq = inquiries.find(i => i.id === entry.inquiryId);
-              const num   = inq?.inquiry_number || entry.inquiry?.inquiry_number || '—';
-              const name  = inq?.client_name    || entry.inquiry?.client_name    || '—';
-              const label = STATUSES.find(s => s.value === entry.status)?.label || entry.status;
-              return (
-                <div key={entry.id || idx} className="card-premium p-4 flex items-start gap-4">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
-                    {idx + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{num}</span>
-                      <span className="text-sm font-semibold">{name}</span>
-                    </div>
-                    <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                      {label}
-                    </span>
-                    <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">{entry.workDone}</p>
-                  </div>
-                  <button
-                    onClick={() => { setPreviewItem({ entry, inq }); setPreviewOpen(true); }}
-                    className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-accent hover:bg-accent/10 transition-colors"
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-center text-xs text-muted-foreground mt-5">
-            ✅ {savedEntries.length} {savedEntries.length === 1 ? 'inquiry' : 'inquiries'} updated · Visible to your manager
-          </p>
         </div>
 
+        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
+          <button
+            onClick={() => setActiveTab('today')}
+            className={cn(
+              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              activeTab === 'today' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            📋 Today's Report
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={cn(
+              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              activeTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            📜 My History
+          </button>
+        </div>
+
+        {/* ════════════════════════════════════════
+            TAB 1: TODAY'S REPORT
+        ════════════════════════════════════════ */}
+        {activeTab === 'today' && (
+          <div className="animate-fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg w-fit">
+                <Clock className="h-3.5 w-3.5" />
+                <span>{win.reportLabel}</span>
+                <span className="mx-1 text-blue-300">|</span>
+                <span>Closes {win.closesAt} · <strong>{win.hoursLeft}h {win.minsLeft}m left</strong></span>
+              </div>
+              
+              {submitted && !editMode ? (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="flex items-center gap-1.5 text-green-600 bg-green-50 px-3 py-1.5 rounded-full text-sm font-medium border border-green-200">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Submitted
+                  </span>
+                  <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={startEdit}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
+                </div>
+              ) : (
+                <span className="flex items-center gap-1.5 text-yellow-600 bg-yellow-50 px-3 py-1.5 rounded-full text-sm font-medium border border-yellow-200 w-fit">
+                  <Clock className="h-4 w-4" /> Pending Submission
+                </span>
+              )}
+            </div>
+
+            {/* View Mode: Already Submitted */}
+            {submitted && !editMode ? (
+              <>
+                <div className="space-y-3 mt-6">
+                  {savedEntries.map((entry: any, idx: number) => {
+                    const inq = inquiries.find(i => i.id === entry.inquiryId);
+                    const num   = inq?.inquiry_number || entry.inquiry?.inquiry_number || '—';
+                    const name  = inq?.client_name    || entry.inquiry?.client_name    || '—';
+                    const label = STATUSES.find(s => s.value === entry.status)?.label || entry.status;
+                    return (
+                      <div key={entry.id || idx} className="card-premium p-4 flex items-start gap-4">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
+                          {idx + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{num}</span>
+                            <span className="text-sm font-semibold">{name}</span>
+                          </div>
+                          <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                            {label}
+                          </span>
+                          <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">{entry.workDone}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => openTimeline(entry.inquiryId)}>
+                            <Clock className="h-3 w-3" /> History
+                          </Button>
+                          <button
+                            onClick={() => { setPreviewItem({ entry, inq }); setPreviewOpen(true); }}
+                            className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-accent hover:bg-accent/10 transition-colors"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-center text-xs text-muted-foreground mt-5">
+                  ✅ {savedEntries.length} {savedEntries.length === 1 ? 'inquiry' : 'inquiries'} updated · Visible to your manager
+                </p>
+              </>
+            ) : (
+              /* Edit Mode / New Submission */
+              <>
+                {/* Warnings */}
+                {inquiries.filter(i => i.daysInactive >= 3).length > 0 && (
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-3 text-sm">
+                    <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-red-700">🚨 {inquiries.filter(i => i.daysInactive >= 3).length} Critical Inquiries</p>
+                      <p className="text-red-600 mt-0.5">No update for 3+ days. Action required immediately.</p>
+                    </div>
+                  </div>
+                )}
+                {inquiries.filter(i => i.daysInactive === 2).length > 0 && (
+                  <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-5 text-sm">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-yellow-700">⚠️ {inquiries.filter(i => i.daysInactive === 2).length} Warning Inquiries</p>
+                      <p className="text-yellow-700 mt-0.5">No update for 2 days. Please follow up today.</p>
+                    </div>
+                  </div>
+                )}
+
+                {inquiries.length === 0 ? (
+                  <div className="card-premium p-12 text-center text-muted-foreground">
+                    <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-25" />
+                    <p className="font-medium">No inquiries assigned to you</p>
+                    <p className="text-sm mt-1 opacity-70">Contact your manager to get inquiries assigned.</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Update all your assigned inquiries below. You can skip any inquiry with no activity today.
+                    </p>
+
+                    <div className="space-y-4">
+                      {inquiries.map((inq, idx) => {
+                        const entry = entries[inq.id] || { inquiryId: inq.id, status: '', workDone: '' };
+                        const isFilled = !!(entry.status && entry.workDone.trim());
+
+                        let borderClass = 'border-l-transparent';
+                        if (isFilled) borderClass = 'border-l-green-400';
+                        else if (inq.daysInactive >= 3) borderClass = 'border-l-red-500 bg-red-50/40';
+                        else if (inq.daysInactive === 2) borderClass = 'border-l-yellow-400 bg-yellow-50/40';
+
+                        return (
+                          <div
+                            key={inq.id}
+                            className={cn(
+                              'card-premium overflow-hidden transition-all duration-200 border-l-4',
+                              borderClass
+                            )}
+                          >
+                            <div className="flex items-center gap-3 px-5 py-3.5 bg-muted/25 border-b border-border/50">
+                              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
+                                {idx + 1}
+                              </div>
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
+                                    {inq.inquiry_number}
+                                  </span>
+                                  <span className="text-sm font-semibold">{inq.client_name}</span>
+                                  
+                                  {inq.daysInactive >= 3 && (
+                                    <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold border border-red-200">
+                                      🚨 3+ Days Inactive
+                                    </span>
+                                  )}
+                                  {inq.daysInactive === 2 && (
+                                    <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold border border-yellow-200">
+                                      ⚠️ 2 Days Inactive
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex-shrink-0 flex items-center gap-2">
+                                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => openTimeline(inq.id)}>
+                                  <Clock className="h-3 w-3" /> History
+                                </Button>
+                                
+                                {inq.lastStatus && (
+                                  <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <Info className="h-3 w-3" />
+                                    <span className={cn('px-2 py-0.5 rounded-full border text-xs font-medium', STATUS_COLORS[inq.lastStatus])}>
+                                      {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
+                                    </span>
+                                  </div>
+                                )}
+                                {isFilled
+                                  ? <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                  : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
+                                }
+                              </div>
+                            </div>
+
+                            <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
+                              <div className="space-y-1.5">
+                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                  Today's Status
+                                </label>
+                                <Select
+                                  value={entry.status || undefined}
+                                  onValueChange={val => updateEntry(inq.id, 'status', val)}
+                                >
+                                  <SelectTrigger className="h-9 text-sm">
+                                    <SelectValue placeholder="Select status..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {STATUSES.map(s => (
+                                      <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                  Work Done Today
+                                </label>
+                                <Textarea
+                                  placeholder="What did you do on this inquiry today? e.g. called client, sent samples, visited site..."
+                                  rows={3}
+                                  value={entry.workDone}
+                                  onChange={e => updateEntry(inq.id, 'workDone', e.target.value)}
+                                  className="resize-none text-sm"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
+                      <p className="text-sm text-muted-foreground">
+                        <span className={cn('font-semibold', filledCount > 0 ? 'text-green-600' : 'text-foreground')}>
+                          {filledCount}
+                        </span>
+                        <span className="text-muted-foreground">/{inquiries.length} filled</span>
+                      </p>
+                      <Button
+                        variant="default"
+                        size="lg"
+                        onClick={handleSubmit}
+                        disabled={submitting || filledCount === 0}
+                        className="gap-2 px-8"
+                      >
+                        <Send className="h-4 w-4" />
+                        {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════
+            TAB 2: MY HISTORY
+        ════════════════════════════════════════ */}
+        {activeTab === 'history' && (
+          <div className="animate-fade-in">
+            {/* Search Bar */}
+            <div className="card-premium p-4 mb-4 flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by inquiry number, client name, status, or work done..."
+                  className="pl-9 h-9 text-sm"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="text-center py-20 text-muted-foreground text-sm">
+                Loading your history...
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="card-premium p-12 text-center text-muted-foreground">
+                <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-25" />
+                <p className="font-medium">No history found</p>
+                <p className="text-sm mt-1 opacity-70">
+                  {historySearch ? "No records match your search." : "You haven't submitted any daily reports yet."}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                  Showing {filteredHistory.length} recorded entries
+                </p>
+                
+                {/* 🚨 COMPACT LIST LAYOUT 🚨 */}
+                <div className="card-premium overflow-hidden divide-y divide-border/50">
+                  {filteredHistory.map((entry) => {
+                    const label = STATUSES.find((s) => s.value === entry.status)?.label || entry.status;
+                    return (
+                      <div key={entry.id} className="p-4 hover:bg-muted/20 transition-colors flex flex-col sm:flex-row gap-4 sm:items-start">
+                        
+                        {/* Left Side: Metadata (Inquiry, Date, Status) */}
+                        <div className="sm:w-64 flex-shrink-0 space-y-2.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
+                              {entry.inquiry?.inquiry_number}
+                            </span>
+                            <span className="text-sm font-semibold truncate">{entry.inquiry?.client_name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={cn('text-[11px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                              {label}
+                            </span>
+                            <span className="text-xs text-muted-foreground flex items-center gap-1 whitespace-nowrap">
+                              <CalendarDays className="h-3 w-3 opacity-70" />
+                              {format(new Date(entry.createdAt), 'dd MMM yyyy')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Right Side: Work Done Text */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                            {entry.workDone}
+                          </p>
+                        </div>
+                        
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Dialogs ── */}
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -297,190 +620,58 @@ const DailyReportPage: React.FC = () => {
             )}
           </DialogContent>
         </Dialog>
-      </DashboardLayout>
-    );
-  }
 
-  // ─── FORM VIEW ───────────────────────────────────────────────────────────
+        <Dialog open={timelineOpen} onOpenChange={setTimelineOpen}>
+          <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="text-base flex items-center gap-2">
+                <Clock className="h-4 w-4 text-accent" />
+                {timelineData?.inquiry
+                  ? `${timelineData.inquiry.inquiry_number} — ${timelineData.inquiry.client_name}`
+                  : 'Activity Timeline'}
+              </DialogTitle>
+            </DialogHeader>
 
-  return (
-    <DashboardLayout>
-      <div className="max-w-3xl mx-auto animate-fade-in">
-
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <ClipboardList className="h-6 w-6 text-accent" /> Daily Report
-            </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">{win.reportLabel}</p>
-          </div>
-          <span className="flex items-center gap-1.5 text-yellow-600 bg-yellow-50 px-3 py-1.5 rounded-full text-sm font-medium border border-yellow-200 w-fit">
-            <Clock className="h-4 w-4" /> Pending Submission
-          </span>
-        </div>
-
-        {/* Window info */}
-        <div className="flex items-center gap-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg mb-5 w-fit">
-          <Clock className="h-3.5 w-3.5" />
-          Window: 6:00 PM → 6:00 PM · Closes {win.closesAt} · <strong>{win.hoursLeft}h {win.minsLeft}m left</strong>
-        </div>
-
-        {/* Inactive warning */}
-        {inactiveCount > 0 && (
-          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-5 text-sm">
-            <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-red-700">🚨 {inactiveCount} Inactive {inactiveCount === 1 ? 'Inquiry' : 'Inquiries'}</p>
-              <p className="text-red-600 mt-0.5">No update for 3+ days. Please update these today.</p>
-            </div>
-          </div>
-        )}
-
-        {inquiries.length === 0 ? (
-          <div className="card-premium p-12 text-center text-muted-foreground">
-            <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-25" />
-            <p className="font-medium">No inquiries assigned to you</p>
-            <p className="text-sm mt-1 opacity-70">Contact your manager to get inquiries assigned.</p>
-          </div>
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground mb-4">
-              Update all your assigned inquiries below. You can skip any inquiry with no activity today.
-            </p>
-
-            {/* ── One card per assigned inquiry ── */}
-            <div className="space-y-4">
-              {inquiries.map((inq, idx) => {
-                const entry = entries[inq.id] || { inquiryId: inq.id, status: '', workDone: '' };
-                const isFilled = !!(entry.status && entry.workDone.trim());
-
-                return (
-                  <div
-                    key={inq.id}
-                    className={cn(
-                      'card-premium overflow-hidden transition-all duration-200',
-                      isFilled
-                        ? 'border-l-4 border-l-green-400'
-                        : inq.isInactive
-                          ? 'border-l-4 border-l-red-400'
-                          : 'border-l-4 border-l-transparent'
-                    )}
-                  >
-                    {/* ── Card header: inquiry info ── */}
-                    <div className="flex items-center gap-3 px-5 py-3.5 bg-muted/25 border-b border-border/50">
-                      {/* Number badge */}
-                      <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
-                        {idx + 1}
-                      </div>
-
-                      {/* Inquiry name */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
-                            {inq.inquiry_number}
-                          </span>
-                          <span className="text-sm font-semibold">{inq.client_name}</span>
-                          {inq.isInactive && (
-                            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold border border-red-200">
-                              🚨 Inactive
-                            </span>
-                          )}
-                        </div>
-                        {inq.address && (
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{inq.address}</p>
-                        )}
-                      </div>
-
-                      {/* Last status + filled checkmark */}
-                      <div className="flex-shrink-0 flex items-center gap-2">
-                        {inq.lastStatus && (
-                          <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Info className="h-3 w-3" />
-                            <span className={cn('px-2 py-0.5 rounded-full border text-xs font-medium', STATUS_COLORS[inq.lastStatus])}>
-                              {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
+            <div className="overflow-y-auto flex-1 pr-1 mt-2">
+              {timelineLoading ? (
+                <div className="text-center py-10 text-muted-foreground text-sm">Loading history...</div>
+              ) : !timelineData || timelineData.timeline.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground text-sm">No history recorded yet.</div>
+              ) : (
+                <div className="relative pb-2">
+                  <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
+                  <div className="space-y-5">
+                    {timelineData.timeline.map((entry: any, i: number) => (
+                      <div key={entry.id} className="flex gap-4 pl-10 relative">
+                        <div className={cn(
+                          'absolute left-[13px] w-3 h-3 rounded-full border-2 border-background mt-1',
+                          i === 0 ? 'bg-accent' : 'bg-muted-foreground/40'
+                        )} />
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between mb-1.5 gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold">{entry.dailyReport?.user?.name || "You"}</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground flex-shrink-0">
+                              {format(new Date(entry.createdAt), 'dd MMM yyyy')}
                             </span>
                           </div>
-                        )}
-                        {isFilled
-                          ? <CheckCircle2 className="h-4 w-4 text-green-500" />
-                          : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
-                        }
-                      </div>
-                    </div>
-
-                    {/* ── Card body: status + work done ── */}
-                    <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
-
-                      {/* Status dropdown */}
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                          Today's Status
-                        </label>
-                        <Select
-                          value={entry.status || undefined}
-                          onValueChange={val => updateEntry(inq.id, 'status', val)}
-                        >
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Select status..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {STATUSES.map(s => (
-                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {/* Last status — mobile only */}
-                        {inq.lastStatus && (
-                          <p className="sm:hidden text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                            <Info className="h-3 w-3" />
-                            Last: <span className={cn('px-1.5 py-0.5 rounded-full ml-1', STATUS_COLORS[inq.lastStatus])}>
-                              {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
-                            </span>
+                          <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                            {STATUSES.find((s: any) => s.value === entry.status)?.label || entry.status}
+                          </span>
+                          <p className="text-sm text-muted-foreground bg-muted/30 rounded-lg px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
+                            {entry.workDone}
                           </p>
-                        )}
+                        </div>
                       </div>
-
-                      {/* Work done textarea */}
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                          Work Done Today
-                        </label>
-                        <Textarea
-                          placeholder="What did you do on this inquiry today? e.g. called client, sent samples, visited site..."
-                          rows={3}
-                          value={entry.workDone}
-                          onChange={e => updateEntry(inq.id, 'workDone', e.target.value)}
-                          className="resize-none text-sm"
-                        />
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                );
-              })}
+                </div>
+              )}
             </div>
+          </DialogContent>
+        </Dialog>
 
-            {/* Submit bar */}
-            <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
-              <p className="text-sm text-muted-foreground">
-                <span className={cn('font-semibold', filledCount > 0 ? 'text-green-600' : 'text-foreground')}>
-                  {filledCount}
-                </span>
-                <span className="text-muted-foreground">/{inquiries.length} filled</span>
-              </p>
-              <Button
-                variant="accent"
-                size="lg"
-                onClick={handleSubmit}
-                disabled={submitting || filledCount === 0}
-                className="gap-2 px-8"
-              >
-                <Send className="h-4 w-4" />
-                {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
-              </Button>
-            </div>
-          </>
-        )}
       </div>
     </DashboardLayout>
   );

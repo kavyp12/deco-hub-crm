@@ -128,7 +128,7 @@ const AdminDailyReports: React.FC = () => {
   const { toast } = useToast();
 
   // ── Filters ──────────────────────────────────────────────────────────────
-  const [date, setDate]                 = useState(format(new Date(), 'yyyy-MM-dd'));
+const [date, setDate]                 = useState(''); 
   const [filterUser, setFilterUser]     = useState('__all__');
   const [filterStatus, setFilterStatus] = useState('__all__');
   const [filterInquiry, setFilterInquiry] = useState('__all__');
@@ -162,14 +162,18 @@ const AdminDailyReports: React.FC = () => {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const params: any = { date };
+      const params: any = {};
+      
+      // 🚨 FIX: Only attach date to API call if one is selected
+      if (date) params.date = date; 
       if (filterUser   !== '__all__') params.userId    = filterUser;
       if (filterStatus !== '__all__') params.status    = filterStatus;
       if (filterInquiry !== '__all__') params.inquiryId = filterInquiry;
 
       const [reportsRes, analyticsRes] = await Promise.all([
         api.get('/daily-reports/admin', { params }),
-        api.get('/daily-reports/analytics', { params: { date } }),
+        // Analytics always defaults to 'today' if viewing All Time so the charts don't break
+        api.get('/daily-reports/analytics', { params: { date: date || format(new Date(), 'yyyy-MM-dd') } }),
       ]);
       setReports(reportsRes.data.reports || []);
       setMissingUsers(reportsRes.data.missingUsers || []);
@@ -334,7 +338,7 @@ const AdminDailyReports: React.FC = () => {
           <>
             {/* ── Filter bar ── */}
             <div className="card-premium p-4 mb-4 space-y-3">
-              {/* Row 1: date + search + filter toggle */}
+{/* Row 1: date + search + filter toggle */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -346,11 +350,11 @@ const AdminDailyReports: React.FC = () => {
                   />
                 </div>
 
-                {/* Quick date buttons */}
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setQuickDate(new Date())} className="text-xs px-2.5 py-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-medium">Today</button>
-                  <button onClick={() => setQuickDate(subDays(new Date(), 1))} className="text-xs px-2.5 py-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-medium">Yesterday</button>
-                  <button onClick={() => setQuickDate(subDays(new Date(), 2))} className="text-xs px-2.5 py-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors font-medium">2 days ago</button>
+                {/* 🚨 FIX: Updated Quick date buttons with "All Time" */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button onClick={() => setDate('')} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === '' ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>All Time</button>
+                  <button onClick={() => setQuickDate(new Date())} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === format(new Date(), 'yyyy-MM-dd') ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>Today</button>
+                  <button onClick={() => setQuickDate(subDays(new Date(), 1))} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === format(subDays(new Date(), 1), 'yyyy-MM-dd') ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>Yesterday</button>
                 </div>
 
                 <div className="relative flex-1">
@@ -531,7 +535,14 @@ const AdminDailyReports: React.FC = () => {
                             <span className="text-xs text-muted-foreground capitalize bg-muted/60 px-2 py-0.5 rounded-full">
                               {report.user.role.replace('_', ' ')}
                             </span>
+                            
+                            {/* 🚨 FIX: Added Date Badge so Admin knows when this report was from */}
+                            <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md font-medium flex items-center gap-1">
+                              <CalendarDays className="h-3 w-3" />
+                              {format(new Date(report.reportDate), 'dd MMM yyyy')}
+                            </span>
                           </div>
+                          
                           {/* Entry previews */}
                           {!isExpanded && report.entries.length > 0 && (
                             <p className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -785,27 +796,30 @@ const AdminDailyReports: React.FC = () => {
                 <p className="text-sm text-muted-foreground mb-3">
                   🚨 <strong>{analytics.inactiveCount}</strong> {analytics.inactiveCount === 1 ? 'inquiry has' : 'inquiries have'} had no update for 3+ consecutive days
                 </p>
-                <div className="space-y-3">
+               <div className="space-y-3">
                   {analytics.inactiveInquiries.map((inq: any) => {
                     const lastEntry = inq.reportEntries?.[0];
                     const daysSince = lastEntry
                       ? Math.floor((Date.now() - new Date(lastEntry.createdAt).getTime()) / (1000 * 60 * 60 * 24))
                       : null;
-                    const severity = daysSince === null ? 'extreme' : daysSince >= 7 ? 'high' : daysSince >= 5 ? 'medium' : 'low';
+                      
+                    const severity = daysSince === null ? 'extreme' : daysSince >= 3 ? 'high' : daysSince === 2 ? 'medium' : 'low';
+                    
                     return (
                       <div key={inq.id} className={cn(
                         'card-premium p-5 border-l-4',
                         severity === 'extreme' ? 'border-l-gray-400' :
                         severity === 'high'    ? 'border-l-red-500' :
-                        severity === 'medium'  ? 'border-l-orange-400' : 'border-l-yellow-400'
+                        severity === 'medium'  ? 'border-l-yellow-400' : 'border-l-blue-400'
                       )}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-2 flex-wrap">
                               <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{inq.inquiry_number}</span>
                               <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">{inq.stage}</span>
-                              {severity === 'high' && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">🔴 Critical</span>}
-                              {severity === 'medium' && <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-semibold">🟠 Warning</span>}
+                              
+                              {severity === 'high' && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">🔴 Critical (3+ days)</span>}
+                              {severity === 'medium' && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold">🟡 Warning (2 days)</span>}
                             </div>
                             <p className="font-semibold">{inq.client_name}</p>
                             <p className="text-sm text-muted-foreground mt-1">
@@ -821,7 +835,7 @@ const AdminDailyReports: React.FC = () => {
                           </div>
                           <div className="flex sm:flex-col items-center sm:items-end gap-3 sm:gap-1 flex-shrink-0">
                             <div className="text-right">
-                              <p className={cn('text-base font-bold', daysSince === null ? 'text-muted-foreground' : daysSince >= 7 ? 'text-red-600' : daysSince >= 5 ? 'text-orange-500' : 'text-yellow-600')}>
+                              <p className={cn('text-base font-bold', daysSince === null ? 'text-muted-foreground' : daysSince >= 3 ? 'text-red-600' : daysSince === 2 ? 'text-yellow-600' : 'text-blue-600')}>
                                 {daysSince !== null ? `${daysSince} day${daysSince !== 1 ? 's' : ''} ago` : 'Never updated'}
                               </p>
                               {lastEntry && (

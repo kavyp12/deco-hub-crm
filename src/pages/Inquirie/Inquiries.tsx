@@ -17,12 +17,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
-    DialogDescription,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import api from '@/lib/api';
 import { format } from 'date-fns';
@@ -32,12 +32,12 @@ interface Inquiry {
   id: string;
   inquiry_number: string;
   client_name: string;
-  
+
   // Architect Fields
   architect_id_name: string | null; // Manual Name
   architectId: string | null;       // DB ID
   architect: { id: string; name: string } | null; // Relation
-  
+
   mobile_number: string;
   inquiry_date: string;
   address: string;
@@ -53,11 +53,11 @@ const ITEMS_PER_PAGE = 10;
 const Inquiries: React.FC = () => {
   const { toast } = useToast();
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  
+
   // Lists
-  const [salesPeople, setSalesPeople] = useState<{id: string, name: string}[]>([]);
-  const [architects, setArchitects] = useState<{id: string, name: string}[]>([]);
-  
+  const [salesPeople, setSalesPeople] = useState<{ id: string, name: string }[]>([]);
+  const [architects, setArchitects] = useState<{ id: string, name: string }[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -68,21 +68,21 @@ const Inquiries: React.FC = () => {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
   const [formLoading, setFormLoading] = useState(false);
-  
+
   // Toggle State for Edit Form
   const [useArchDb, setUseArchDb] = useState(true);
 
   const [editForm, setEditForm] = useState({
-      client_name: '',
-      
-      architect_id_name: '', // Manual
-      architectId: '',       // Dropdown
-      
-      mobile_number: '',
-      inquiry_date: '',
-      address: '',
-      sales_person_id: '',
-      expected_final_date: '',
+    client_name: '',
+
+    architect_id_name: '', // Manual
+    architectId: '',       // Dropdown
+
+    mobile_number: '',
+    inquiry_date: '',
+    address: '',
+    sales_person_id: '',
+    expected_final_date: '',
   });
 
   useEffect(() => {
@@ -92,97 +92,97 @@ const Inquiries: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-        const { data: allInquiries } = await api.get('/inquiries');
-        
-        const [peopleRes, archRes] = await Promise.all([
-            api.get('/users/sales-people'),
-            api.get('/architects')
-        ]);
-        
-        setSalesPeople(peopleRes.data);
-        setArchitects(archRes.data);
+      const { data: allInquiries } = await api.get('/inquiries');
 
-        const filtered = allInquiries; 
-        setTotalCount(filtered.length);
+      const [peopleRes, archRes] = await Promise.all([
+        api.get('/users/sales-people'),
+        api.get('/architects')
+      ]);
 
-        const from = (currentPage - 1) * ITEMS_PER_PAGE;
-        const to = from + ITEMS_PER_PAGE;
-        const paginatedData = filtered.slice(from, to);
+      setSalesPeople(peopleRes.data);
+      setArchitects(archRes.data);
 
-        setInquiries(paginatedData);
+      const filtered = allInquiries;
+      setTotalCount(filtered.length);
+
+      const from = (currentPage - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE;
+      const paginatedData = filtered.slice(from, to);
+
+      setInquiries(paginatedData);
     } catch (error) {
-        console.error('Error:', error);
+      console.error('Error:', error);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
   const handleEditOpen = (inquiry: Inquiry) => {
-      setSelectedInquiry(inquiry);
-      
-      // Check if this inquiry uses a DB architect or Manual string
-      const hasDbArch = !!inquiry.architectId;
-      setUseArchDb(hasDbArch);
+    setSelectedInquiry(inquiry);
 
-      setEditForm({
-          client_name: inquiry.client_name,
-          
-          architectId: inquiry.architectId || '', 
-          architect_id_name: inquiry.architect_id_name || '',
-          
-          mobile_number: inquiry.mobile_number,
-          inquiry_date: new Date(inquiry.inquiry_date).toISOString().split('T')[0],
-          address: inquiry.address,
-          sales_person_id: inquiry.sales_person_id,
-          expected_final_date: inquiry.expected_final_date ? new Date(inquiry.expected_final_date).toISOString().split('T')[0] : '',
-      });
-      setIsEditOpen(true);
+    // Check if this inquiry uses a DB architect or Manual string
+    const hasDbArch = !!inquiry.architectId;
+    setUseArchDb(hasDbArch);
+
+    setEditForm({
+      client_name: inquiry.client_name,
+
+      architectId: inquiry.architectId || '',
+      architect_id_name: inquiry.architect_id_name || '',
+
+      mobile_number: inquiry.mobile_number,
+      inquiry_date: new Date(inquiry.inquiry_date).toISOString().split('T')[0],
+      address: inquiry.address,
+      sales_person_id: inquiry.sales_person_id,
+      expected_final_date: inquiry.expected_final_date ? new Date(inquiry.expected_final_date).toISOString().split('T')[0] : '',
+    });
+    setIsEditOpen(true);
   };
 
   const handleUpdate = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!selectedInquiry) return;
-      setFormLoading(true);
+    e.preventDefault();
+    if (!selectedInquiry) return;
+    setFormLoading(true);
 
-      const payload = { ...editForm };
-      
-      // Clean payload based on Toggle selection
-      if (useArchDb) {
-         payload.architect_id_name = ''; // Clear manual if using DB
-      } else {
-         payload.architectId = '';       // Clear ID if using manual
-      }
+    const payload = { ...editForm };
 
-      try {
-          await api.put(`/inquiries/${selectedInquiry.id}`, payload);
-          toast({ title: 'Success', description: 'Inquiry updated.' });
-          setIsEditOpen(false);
-          fetchData();
-      } catch (err: any) {
-          toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
-      } finally {
-          setFormLoading(false);
-      }
+    // Clean payload based on Toggle selection
+    if (useArchDb) {
+      payload.architect_id_name = ''; // Clear manual if using DB
+    } else {
+      payload.architectId = '';       // Clear ID if using manual
+    }
+
+    try {
+      await api.put(`/inquiries/${selectedInquiry.id}`, payload);
+      toast({ title: 'Success', description: 'Inquiry updated.' });
+      setIsEditOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
+    } finally {
+      setFormLoading(false);
+    }
   };
 
   const handleDeleteOpen = (inquiry: Inquiry) => {
-      setSelectedInquiry(inquiry);
-      setIsDeleteOpen(true);
+    setSelectedInquiry(inquiry);
+    setIsDeleteOpen(true);
   };
 
   const handleDelete = async () => {
-      if (!selectedInquiry) return;
-      setFormLoading(true);
-      try {
-          await api.delete(`/inquiries/${selectedInquiry.id}`);
-          toast({ title: 'Deleted', description: 'Inquiry removed.' });
-          setIsDeleteOpen(false);
-          fetchData();
-      } catch (err: any) {
-          toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
-      } finally {
-          setFormLoading(false);
-      }
+    if (!selectedInquiry) return;
+    setFormLoading(true);
+    try {
+      await api.delete(`/inquiries/${selectedInquiry.id}`);
+      toast({ title: 'Deleted', description: 'Inquiry removed.' });
+      setIsDeleteOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
+    } finally {
+      setFormLoading(false);
+    }
   };
 
   const filteredInquiries = inquiries.filter((inquiry) => {
@@ -215,11 +215,11 @@ const Inquiries: React.FC = () => {
         <div className="card-premium p-4 mb-6">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              placeholder="Search client, number, or mobile..." 
-              value={searchQuery} 
-              onChange={(e) => setSearchQuery(e.target.value)} 
-              className="pl-10" 
+            <Input
+              placeholder="Search client, number, or mobile..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
             />
           </div>
         </div>
@@ -227,54 +227,54 @@ const Inquiries: React.FC = () => {
         {/* MOBILE CARD VIEW (< md) */}
         <div className="md:hidden space-y-4 mb-6">
           {loading ? (
-             Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="card-premium p-4 h-32 animate-pulse bg-muted/20" />
-             ))
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="card-premium p-4 h-32 animate-pulse bg-muted/20" />
+            ))
           ) : filteredInquiries.length === 0 ? (
-             <div className="text-center p-8 text-muted-foreground bg-muted/20 rounded-lg">No inquiries found.</div>
+            <div className="text-center p-8 text-muted-foreground bg-muted/20 rounded-lg">No inquiries found.</div>
           ) : (
             filteredInquiries.map((inquiry) => (
               <div key={inquiry.id} className="card-premium p-4 flex flex-col gap-3">
-                 <div className="flex justify-between items-start">
-                    <div>
-                       <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">
-                         {inquiry.inquiry_number}
-                       </span>
-                       <h3 className="font-bold text-lg mt-1">{inquiry.client_name}</h3>
-                    </div>
-                    <div className="flex gap-1">
-                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditOpen(inquiry)}>
-                         <Pencil className="h-4 w-4 text-muted-foreground" />
-                       </Button>
-                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteOpen(inquiry)}>
-                         <Trash2 className="h-4 w-4 text-destructive" />
-                       </Button>
-                    </div>
-                 </div>
-                 
-                 <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                       <Phone className="h-3 w-3" /> {inquiry.mobile_number}
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <User className="h-3 w-3" /> {inquiry.profiles?.name || '—'}
-                    </div>
-                    {(inquiry.architect || inquiry.architect_id_name) && (
-                        <div className="flex items-center gap-2 col-span-2">
-                            <Briefcase className="h-3 w-3" /> 
-                            {inquiry.architect?.name || inquiry.architect_id_name}
-                        </div>
-                    )}
-                    <div className="flex items-center gap-2 col-span-2">
-                       <Calendar className="h-3 w-3" /> {format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}
-                    </div>
-                 </div>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">
+                      {inquiry.inquiry_number}
+                    </span>
+                    <h3 className="font-bold text-lg mt-1">{inquiry.client_name}</h3>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditOpen(inquiry)}>
+                      <Pencil className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteOpen(inquiry)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                </div>
 
-                 {inquiry.selections?.length > 0 && (
-                   <div className="mt-1 pt-2 border-t text-xs font-medium text-primary">
-                      {inquiry.selections.length} Selection(s) Created
-                   </div>
-                 )}
+                <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-3 w-3" /> {inquiry.mobile_number}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <User className="h-3 w-3" /> {inquiry.profiles?.name || '—'}
+                  </div>
+                  {(inquiry.architect || inquiry.architect_id_name) && (
+                    <div className="flex items-center gap-2 col-span-2">
+                      <Briefcase className="h-3 w-3" />
+                      {inquiry.architect?.name || inquiry.architect_id_name}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 col-span-2">
+                    <Calendar className="h-3 w-3" /> {format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}
+                  </div>
+                </div>
+
+                {inquiry.selections?.length > 0 && (
+                  <div className="mt-1 pt-2 border-t text-xs font-medium text-primary">
+                    {inquiry.selections.length} Selection(s) Created
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -300,29 +300,29 @@ const Inquiries: React.FC = () => {
                     <tr key={i}><td colSpan={6} className="px-6 py-4"><div className="h-5 bg-muted rounded animate-pulse" /></td></tr>
                   ))
                 ) : filteredInquiries.map((inquiry) => (
-                    <tr key={inquiry.id} className="border-b border-border hover:bg-muted/50 transition-colors">
-                      <td className="px-6 py-4"><span className="font-medium">{inquiry.inquiry_number}</span></td>
-                      <td className="px-6 py-4">
-                        <div><p className="font-medium">{inquiry.client_name}</p><p className="text-sm text-muted-foreground">{inquiry.mobile_number}</p></div>
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">
-                        {inquiry.architect?.name || inquiry.architect_id_name || '—'}
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">{inquiry.profiles?.name || '—'}</td>
-                      <td className="px-6 py-4 text-muted-foreground">{format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}</td>
-                      <td className="px-6 py-4">
-                          <div className="flex gap-2">
-                             <Button variant="ghost" size="icon" onClick={() => handleEditOpen(inquiry)}><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
-                             <Button variant="ghost" size="icon" onClick={() => handleDeleteOpen(inquiry)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
-                          </div>
-                      </td>
-                    </tr>
+                  <tr key={inquiry.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                    <td className="px-6 py-4"><span className="font-medium">{inquiry.inquiry_number}</span></td>
+                    <td className="px-6 py-4">
+                      <div><p className="font-medium">{inquiry.client_name}</p><p className="text-sm text-muted-foreground">{inquiry.mobile_number}</p></div>
+                    </td>
+                    <td className="px-6 py-4 text-muted-foreground">
+                      {inquiry.architect?.name || inquiry.architect_id_name || '—'}
+                    </td>
+                    <td className="px-6 py-4 text-muted-foreground">{inquiry.profiles?.name || '—'}</td>
+                    <td className="px-6 py-4 text-muted-foreground">{format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="icon" onClick={() => handleEditOpen(inquiry)}><Pencil className="h-4 w-4 text-muted-foreground hover:text-primary" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteOpen(inquiry)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-        
+
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-2 md:px-6 py-4 mt-4 bg-card rounded-lg border border-border">
@@ -336,91 +336,91 @@ const Inquiries: React.FC = () => {
 
         {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-           <DialogContent className="max-w-[95vw] md:max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>Edit Inquiry</DialogTitle></DialogHeader>
-              
-              {/* FIXED: Removed space-y-4 to fix alignment issue */}
-              <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
-                 
-                 <div className="col-span-1 space-y-2">
-                    <Label>Client Name</Label>
-                    <Input value={editForm.client_name} onChange={e => setEditForm({...editForm, client_name: e.target.value})} />
-                 </div>
-                 
-                 <div className="col-span-1 space-y-2">
-                    <Label>Mobile</Label>
-                    <Input value={editForm.mobile_number} onChange={e => setEditForm({...editForm, mobile_number: e.target.value})} />
-                 </div>
-                 
-                 {/* Architect Section */}
-                 <div className="col-span-1 md:col-span-2 card-premium p-4 border border-border">
-                    <div className="flex justify-between items-center mb-2">
-                        <Label>Architect / Designer</Label>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">{useArchDb ? 'Select Existing' : 'Enter Manually'}</span>
-                            <Switch checked={useArchDb} onCheckedChange={setUseArchDb} />
-                        </div>
-                    </div>
-                    
-                    {useArchDb ? (
-                        <Select value={editForm.architectId} onValueChange={(val) => setEditForm({...editForm, architectId: val})}>
-                            <SelectTrigger><SelectValue placeholder="Select Architect..." /></SelectTrigger>
-                            <SelectContent>
-                                {architects.map(arch => (
-                                    <SelectItem key={arch.id} value={arch.id}>{arch.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    ) : (
-                        <Input 
-                            placeholder="Type Architect Name..." 
-                            value={editForm.architect_id_name} 
-                            onChange={e => setEditForm({...editForm, architect_id_name: e.target.value})} 
-                        />
-                    )}
-                 </div>
+          <DialogContent className="max-w-[95vw] md:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Edit Inquiry</DialogTitle></DialogHeader>
 
-                 <div className="col-span-1 space-y-2">
-                    <Label>Inquiry Date</Label>
-                    <Input type="date" value={editForm.inquiry_date} onChange={e => setEditForm({...editForm, inquiry_date: e.target.value})} />
-                 </div>
-                 
-                 <div className="col-span-1 space-y-2">
-                    <Label>Expected Date</Label>
-                    <Input type="date" value={editForm.expected_final_date} onChange={e => setEditForm({...editForm, expected_final_date: e.target.value})} />
-                 </div>
-                 
-                 <div className="col-span-1 md:col-span-2 space-y-2">
-                    <Label>Sales Person</Label>
-                    <Select value={editForm.sales_person_id} onValueChange={v => setEditForm({...editForm, sales_person_id: v})}>
-                        <SelectTrigger><SelectValue/></SelectTrigger>
-                        <SelectContent>{salesPeople.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
-                    </Select>
-                 </div>
-                 
-                 <div className="col-span-1 md:col-span-2 space-y-2">
-                    <Label>Address</Label>
-                    <Textarea value={editForm.address} onChange={e => setEditForm({...editForm, address: e.target.value})} />
-                 </div>
-                 
-                 <div className="col-span-1 md:col-span-2 flex justify-end gap-2 pt-4">
-                    <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
-                    <Button type="submit" variant="accent" disabled={formLoading}>Save Changes</Button>
-                 </div>
-              </form>
-           </DialogContent>
+            {/* FIXED: Removed space-y-4 to fix alignment issue */}
+            <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+
+              <div className="col-span-1 space-y-2">
+                <Label>Client Name</Label>
+                <Input value={editForm.client_name} onChange={e => setEditForm({ ...editForm, client_name: e.target.value })} />
+              </div>
+
+              <div className="col-span-1 space-y-2">
+                <Label>Mobile</Label>
+                <Input value={editForm.mobile_number} onChange={e => setEditForm({ ...editForm, mobile_number: e.target.value })} />
+              </div>
+
+              {/* Architect Section */}
+              <div className="col-span-1 md:col-span-2 card-premium p-4 border border-border">
+                <div className="flex justify-between items-center mb-2">
+                  <Label>Architect / Designer</Label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{useArchDb ? 'Select Existing' : 'Enter Manually'}</span>
+                    <Switch checked={useArchDb} onCheckedChange={setUseArchDb} />
+                  </div>
+                </div>
+
+                {useArchDb ? (
+                  <Select value={editForm.architectId} onValueChange={(val) => setEditForm({ ...editForm, architectId: val })}>
+                    <SelectTrigger><SelectValue placeholder="Select Architect..." /></SelectTrigger>
+                    <SelectContent>
+                      {architects.map(arch => (
+                        <SelectItem key={arch.id} value={arch.id}>{arch.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    placeholder="Type Architect Name..."
+                    value={editForm.architect_id_name}
+                    onChange={e => setEditForm({ ...editForm, architect_id_name: e.target.value })}
+                  />
+                )}
+              </div>
+
+              <div className="col-span-1 space-y-2">
+                <Label>Inquiry Date</Label>
+                <Input type="date" value={editForm.inquiry_date} onChange={e => setEditForm({ ...editForm, inquiry_date: e.target.value })} />
+              </div>
+
+              <div className="col-span-1 space-y-2">
+                <Label>Expected Date</Label>
+                <Input type="date" value={editForm.expected_final_date} onChange={e => setEditForm({ ...editForm, expected_final_date: e.target.value })} />
+              </div>
+
+              <div className="col-span-1 md:col-span-2 space-y-2">
+                <Label>Sales Person</Label>
+                <Select value={editForm.sales_person_id} onValueChange={v => setEditForm({ ...editForm, sales_person_id: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{salesPeople.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+
+              <div className="col-span-1 md:col-span-2 space-y-2">
+                <Label>Address</Label>
+                <Textarea value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} />
+              </div>
+
+              <div className="col-span-1 md:col-span-2 flex justify-end gap-2 pt-4">
+                <Button type="button" variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+                <Button type="submit" variant="accent" disabled={formLoading}>Save Changes</Button>
+              </div>
+            </form>
+          </DialogContent>
         </Dialog>
 
         {/* Delete Dialog */}
         <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-           <DialogContent className="max-w-[90vw] md:max-w-md">
-              <DialogHeader><DialogTitle>Delete Inquiry</DialogTitle></DialogHeader>
-              <DialogDescription>Are you sure you want to delete this inquiry? This cannot be undone.</DialogDescription>
-              <DialogFooter className="gap-2 sm:gap-0">
-                 <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>Cancel</Button>
-                 <Button variant="destructive" onClick={handleDelete} disabled={formLoading}>Delete</Button>
-              </DialogFooter>
-           </DialogContent>
+          <DialogContent className="max-w-[90vw] md:max-w-md">
+            <DialogHeader><DialogTitle>Delete Inquiry</DialogTitle></DialogHeader>
+            <DialogDescription>Are you sure you want to delete this inquiry? This cannot be undone.</DialogDescription>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleDelete} disabled={formLoading}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
         </Dialog>
       </div>
     </DashboardLayout>

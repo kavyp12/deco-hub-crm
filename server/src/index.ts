@@ -1229,7 +1229,7 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
     const newInquiry = await prisma.inquiry.create({
       data: {
         inquiry_number: inquiryNumber,
-        client_name,
+      client_name,
         architect_id_name, // Manual name
         architectId: architectId || null, // Linked ID
         mobile_number,
@@ -3706,11 +3706,6 @@ app.get('/api/users/all', authenticateToken, async (req: Request, res: Response)
 });
 
 // ==========================================
-// DAILY REPORT ROUTES — Add to index.ts
-// ==========================================
-// Paste these routes BEFORE the app.listen() line.
-
-// ==========================================
 // HELPER: Get report window boundaries
 // Report day = 6PM previous day → 6PM current day
 // ==========================================
@@ -3718,6 +3713,11 @@ app.get('/api/users/all', authenticateToken, async (req: Request, res: Response)
 const getReportWindow = (dateInput?: string) => {
   // If no date given, use "today"
   const base = dateInput ? new Date(dateInput) : new Date();
+
+  // 🚨 FIX: If it is past 6:00 PM (18:00), shift to tomorrow's report cycle
+  if (!dateInput && base.getHours() >= 18) {
+    base.setDate(base.getDate() + 1);
+  }
 
   // Normalize to just the date portion
   const year = base.getFullYear();
@@ -3734,6 +3734,80 @@ const getReportWindow = (dateInput?: string) => {
   return { windowStart, windowEnd, reportDate: windowEnd };
 };
 
+
+// ==========================================
+// ADMIN & EMPLOYEE: Inquiry Timeline
+// GET /api/daily-reports/inquiry/:inquiryId/timeline
+// ==========================================
+app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // 🚨 Admin check removed so employees can see history of their own inquiries
+
+    const entries = await (prisma as any).dailyReportEntry.findMany({
+      where: { inquiryId: req.params.inquiryId },
+      include: {
+        dailyReport: {
+          include: { user: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const inquiry = await prisma.inquiry.findUnique({
+      where: { id: req.params.inquiryId },
+      select: {
+        id: true,
+        inquiry_number: true,
+        client_name: true,
+        stage: true,
+        sales_person: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json({ inquiry, timeline: entries });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch timeline' });
+  }
+});
+
+// ==========================================
+// EMPLOYEE: Get My History
+// GET /api/daily-reports/my-history
+// ==========================================
+app.get('/api/daily-reports/my-history', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const entries = await (prisma as any).dailyReportEntry.findMany({
+      where: {
+        dailyReport: {
+          userId: req.user.id
+        }
+      },
+      include: {
+        inquiry: {
+          select: {
+            id: true,
+            inquiry_number: true,
+            client_name: true,
+            stage: true
+          }
+        },
+        dailyReport: {
+          select: {
+            reportDate: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc' // Newest first
+      }
+    });
+
+    res.json(entries);
+  } catch (error) {
+    console.error('My history error:', error);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
 
 // ==========================================
 // EMPLOYEE: Submit / Update Daily Report
@@ -3843,17 +3917,21 @@ app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: 
       },
     });
 
-    // Flag inquiries inactive (no update in 3+ days)
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    // Flag inquiries inactive (2 days = yellow, 3+ days = red)
+    const nowMs = Date.now();
     const enriched = inquiries.map((inq: any) => {
       const lastEntry = inq.reportEntries?.[0];
       const lastUpdate = lastEntry ? new Date(lastEntry.createdAt) : null;
-      const isInactive = !lastUpdate || lastUpdate < threeDaysAgo;
+      
+      const daysInactive = lastUpdate ? Math.floor((nowMs - lastUpdate.getTime()) / (1000 * 60 * 60 * 24)) : 999;
+      const isInactive = daysInactive >= 3; 
+
       return {
         ...inq,
         lastStatus: lastEntry?.status || null,
         lastWorkDone: lastEntry?.workDone || null,
         lastUpdatedAt: lastUpdate,
+        daysInactive,
         isInactive,
       };
     });
@@ -3873,7 +3951,6 @@ app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: 
 // ==========================================
 // ADMIN: Get all daily reports (filterable)
 // GET /api/daily-reports/admin
-// Query: ?date=YYYY-MM-DD&userId=&inquiryId=&status=
 // ==========================================
 app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -3883,30 +3960,22 @@ app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Res
 
     const { date, userId, inquiryId, status } = req.query as any;
 
-    const { reportDate } = date ? getReportWindow(date) : getReportWindow();
-
     // Build where clause for entries
     const entryWhere: any = {};
     if (inquiryId) entryWhere.inquiryId = inquiryId;
     if (status) entryWhere.status = status;
 
-    // Get all sales users for "missing report" detection
-    const salesUsers = await prisma.user.findMany({
-      where: { role: { in: ['sales', 'accounting', 'admin_hr'] } },
-      select: { id: true, name: true, role: true, email: true },
-    });
-
-    // Filter to specific user if requested
-    const targetUsers = userId
-      ? salesUsers.filter((u: any) => u.id === userId)
-      : salesUsers;
-
-    // Fetch submitted reports
+    // 🚨 FIX: Only apply the reportDate filter if a date is actually passed
     const reportWhere: any = {
-      reportDate,
       ...(userId ? { userId } : {}),
     };
 
+    if (date) {
+      const { reportDate } = getReportWindow(date);
+      reportWhere.reportDate = reportDate;
+    }
+
+    // Fetch submitted reports
     const reports = await (prisma as any).dailyReport.findMany({
       where: reportWhere,
       include: {
@@ -3930,13 +3999,22 @@ app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Res
       orderBy: { submittedAt: 'desc' },
     });
 
-    // Identify who is missing
-    const submittedUserIds = new Set(reports.map((r: any) => r.userId));
-    const missingUsers = targetUsers
-      .filter((u: any) => !submittedUserIds.has(u.id))
-      .map((u: any) => ({ ...u, status: 'MISSING' }));
+    // 🚨 FIX: Only calculate "Missing Users" if a specific date is selected
+    let missingUsers: any[] = [];
+    if (date) {
+      const salesUsers = await prisma.user.findMany({
+        where: { role: { in: ['sales', 'accounting', 'admin_hr'] } },
+        select: { id: true, name: true, role: true, email: true },
+      });
+      const targetUsers = userId ? salesUsers.filter((u: any) => u.id === userId) : salesUsers;
+      const submittedUserIds = new Set(reports.map((r: any) => r.userId));
+      
+      missingUsers = targetUsers
+        .filter((u: any) => !submittedUserIds.has(u.id))
+        .map((u: any) => ({ ...u, status: 'MISSING' }));
+    }
 
-    res.json({ reports, missingUsers, reportDate });
+    res.json({ reports, missingUsers, reportDate: date ? getReportWindow(date).reportDate : null });
   } catch (error) {
     console.error('Admin reports error:', error);
     res.status(500).json({ error: 'Failed to fetch reports' });
@@ -3958,7 +4036,7 @@ app.get('/api/daily-reports/analytics', authenticateToken, async (req: any, res:
     const { date } = req.query as any;
     const { reportDate } = date ? getReportWindow(date) : getReportWindow();
 
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000); // Adjusted to 2 days
 
     const [
       totalEmployees,
@@ -3973,12 +4051,12 @@ app.get('/api/daily-reports/analytics', authenticateToken, async (req: any, res:
         where: { dailyReport: { reportDate } },
         select: { status: true, inquiryId: true },
       }),
-      // Inquiries with no report entry in last 3 days
+      // Inquiries with no report entry in last 2+ days
       prisma.inquiry.findMany({
         where: {
           reportEntries: {
             none: {
-              createdAt: { gte: threeDaysAgo },
+              createdAt: { gte: twoDaysAgo },
             },
           },
         },
@@ -4062,21 +4140,6 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
   }
 });
 
-// ==========================================
-// NOTIFICATIONS ROUTE
-// Paste this block into server/src/index.ts
-// BEFORE the app.listen() line
-// ==========================================
-
-// ─── GET /api/notifications ──────────────────────────────────────────────────
-// Returns role-aware notifications for the logged-in user.
-// Each notification has: id, type, title, message, link, severity, createdAt
-//
-// Roles and what they see:
-//   super_admin / admin_hr  → missing daily reports, inactive inquiries, pending leaves
-//   sales                   → own daily report status, own inactive inquiries, birthdays/anniversaries today
-//   accounting              → pending selections, pending quotations
-
 app.get('/api/notifications', authenticateToken, async (req: any, res: Response) => {
   try {
     const userId = req.user.id;
@@ -4087,12 +4150,9 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
     const todayAt6PM = new Date(now);
     todayAt6PM.setHours(18, 0, 0, 0);
 
-    // Window start = 6PM yesterday
-    const yesterdayAt6PM = new Date(todayAt6PM);
-    yesterdayAt6PM.setDate(yesterdayAt6PM.getDate() - 1);
-
     const reportDate = todayAt6PM; // canonical report date
 
+    const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
@@ -4128,10 +4188,10 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
         });
       }
 
-      // 2. Inactive inquiries (3+ days no update)
+      // 2. Inactive inquiries (2+ days no update)
       const inactiveInquiries = await prisma.inquiry.findMany({
         where: {
-          reportEntries: { none: { createdAt: { gte: threeDaysAgo } } },
+          reportEntries: { none: { createdAt: { gte: twoDaysAgo } } },
         },
         select: { id: true, inquiry_number: true, client_name: true },
         take: 5,
@@ -4142,7 +4202,7 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
           id: 'inactive-inquiries',
           type: 'inactive_inquiry',
           title: `${inactiveInquiries.length} Inactive Inquir${inactiveInquiries.length > 1 ? 'ies' : 'y'}`,
-          message: `No update for 3+ days: ${inactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${inactiveInquiries.length > 2 ? ` +${inactiveInquiries.length - 2} more` : ''}.`,
+          message: `No update for 2+ days: ${inactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${inactiveInquiries.length > 2 ? ` +${inactiveInquiries.length - 2} more` : ''}.`,
           link: '/daily-reports/admin?tab=inactive',
           severity: 'error',
           createdAt: now.toISOString(),
@@ -4221,23 +4281,23 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
           notifications.push({
             id: 'own-report-missing',
             type: 'missing_report',
-            title: `Daily Report Pending`,
-            message: `You haven't submitted today's report. ${hoursLeft}h ${minsLeft}m left before the window closes.`,
+            title: `🚨 Compulsory Daily Report Pending`,
+            message: `You MUST submit your report. ${hoursLeft}h ${minsLeft}m left before the window closes. If no work was done, submit an empty update.`,
             link: '/daily-report',
-            severity: 'warning',
+            severity: 'error',
             createdAt: now.toISOString(),
           });
         }
       }
 
-      // 2. Own inactive inquiries (3+ days)
+      // 2. Own inactive inquiries (2+ days)
       const myInactiveInquiries = await prisma.inquiry.findMany({
         where: {
           OR: [
             { sales_person_id: userId },
             { sales_persons: { some: { id: userId } } },
           ],
-          reportEntries: { none: { createdAt: { gte: threeDaysAgo } } },
+          reportEntries: { none: { createdAt: { gte: twoDaysAgo } } },
         },
         select: { id: true, inquiry_number: true, client_name: true },
       });
@@ -4246,7 +4306,7 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
           id: 'my-inactive-inquiries',
           type: 'inactive_inquiry',
           title: `${myInactiveInquiries.length} Inactive Inquir${myInactiveInquiries.length > 1 ? 'ies' : 'y'}`,
-          message: `No update in 3+ days: ${myInactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${myInactiveInquiries.length > 2 ? ` +${myInactiveInquiries.length - 2} more` : ''}.`,
+          message: `Action needed! No update in 2+ days: ${myInactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}.`,
           link: '/daily-report',
           severity: 'error',
           createdAt: now.toISOString(),
