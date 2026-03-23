@@ -4,9 +4,10 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { 
   MessageSquare, CheckSquare, Plus, Activity, Search, 
   X, AlignLeft, Image as ImageIcon, Check, Pencil, Monitor, FileText, IndianRupee,
-  MoreHorizontal, PlusCircle, Trash2
+  MoreHorizontal, PlusCircle, Trash2, Clock, ClipboardList
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -109,6 +110,30 @@ const COLORS_LIST = [
   "border-pink-500", "border-rose-500"
 ];
 
+const STATUS_LABELS: Record<string, string> = {
+  contacted:         '📞 Contacted',
+  follow_up:         '🔄 Follow-up',
+  meeting_scheduled: '📅 Meeting Scheduled',
+  proposal_sent:     '📄 Proposal Sent',
+  negotiation:       '🤝 Negotiation',
+  closed_won:        '✅ Closed Won',
+  closed_lost:       '❌ Closed Lost',
+  no_response:       '🔇 No Response',
+  on_hold:           '⏸️ On Hold',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  contacted:         'bg-blue-100 text-blue-700 border-blue-200',
+  follow_up:         'bg-yellow-100 text-yellow-700 border-yellow-200',
+  meeting_scheduled: 'bg-purple-100 text-purple-700 border-purple-200',
+  proposal_sent:     'bg-indigo-100 text-indigo-700 border-indigo-200',
+  negotiation:       'bg-orange-100 text-orange-700 border-orange-200',
+  closed_won:        'bg-green-100 text-green-700 border-green-200',
+  closed_lost:       'bg-red-100 text-red-700 border-red-200',
+  no_response:       'bg-gray-100 text-gray-600 border-gray-200',
+  on_hold:           'bg-slate-100 text-slate-600 border-slate-200',
+};
+
 // --- HELPER: Consistent Member Colors ---
 const getMemberColor = (name: string) => {
   const colors = [
@@ -146,8 +171,7 @@ const Pipeline: React.FC = () => {
   // --- QUICK CREATE CARD STATE ---
   const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
-  const [newCardAssignee, setNewCardAssignee] = useState<string>('');
-
+  const [newCardAssignees, setNewCardAssignees] = useState<string[]>([]);
   // Modal State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
@@ -179,6 +203,10 @@ const Pipeline: React.FC = () => {
   const [sidebarWidth, setSidebarWidth] = useState(350); 
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
+
+  // Timeline State
+  const [timelineData, setTimelineData] = useState<any[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   useEffect(() => {
     fetchPipeline();
@@ -260,48 +288,71 @@ const Pipeline: React.FC = () => {
   // --- MANUAL CARD ACTIONS ---
 
   const handleQuickCreateCard = async (stageId: string) => {
-      if (!newCardTitle.trim()) return;
-      
-      try {
-          // Creating a minimal inquiry
-          const payload = {
-              client_name: newCardTitle,
-              mobile_number: "0000000000",
-              inquiry_date: new Date().toISOString(),
-              address: "Manual Entry",
-              sales_person_id: newCardAssignee || allUsers[0]?.id, 
-          };
+    if (!newCardTitle.trim()) return;
+    
+    try {
+        // Fallback to the first user if none selected
+        const primaryAssignee = newCardAssignees.length > 0 ? newCardAssignees[0] : allUsers[0]?.id;
 
-          const { data: newInquiry } = await api.post('/inquiries', payload);
-          
-          // Move to correct stage immediately if not default
-          if (stageId !== "Inquiry") {
-              await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
-              newInquiry.stage = stageId; 
-          }
+        // 1. Create minimal inquiry
+        const payload = {
+            client_name: newCardTitle,
+            mobile_number: "0000000000",
+            inquiry_date: new Date().toISOString(),
+            address: "Manual Entry",
+            sales_person_id: primaryAssignee, 
+        };
 
-          const assignedUser = allUsers.find(u => u.id === payload.sales_person_id);
-          
-          const newTask: Task = {
-              ...newInquiry,
-              sales_person: assignedUser ? { id: assignedUser.id, name: assignedUser.name } : undefined,
-              stage: stageId,
-              labels: [],
-              comments: [],
-              checklists: [],
-              selections: []
-          };
+        const { data: newInquiry } = await api.post('/inquiries', payload);
+        
+        let assignedUsers = allUsers.filter(u => u.id === primaryAssignee);
 
-          setTasks(prev => [newTask, ...prev]);
-          setNewCardTitle('');
-          setNewCardAssignee('');
-          setAddingCardToColumn(null);
-          toast({ title: "Card Created", description: "New card added successfully." });
+        // 2. If multiple assignees, link them via the assign endpoint
+        if (newCardAssignees.length > 1) {
+            await api.put(`/inquiries/${newInquiry.id}/assign`, { userIds: newCardAssignees });
+            assignedUsers = allUsers.filter(u => newCardAssignees.includes(u.id));
+        }
 
-      } catch (error) {
-          console.error(error);
-          toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
-      }
+        // 3. Move to correct stage immediately if not default
+        if (stageId !== "Inquiry") {
+            await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
+            newInquiry.stage = stageId; 
+        }
+
+        // 4. Construct local task for immediate UI update
+        const newTask: Task = {
+            ...newInquiry,
+            sales_person: assignedUsers[0] ? { id: assignedUsers[0].id, name: assignedUsers[0].name } : undefined,
+            sales_persons: assignedUsers.map(u => ({ id: u.id, name: u.name })), // Attach all assigned users
+            stage: stageId,
+            labels: [],
+            comments: [],
+            checklists: [],
+            selections: []
+        };
+
+        setTasks(prev => [newTask, ...prev]);
+        setNewCardTitle('');
+        setNewCardAssignees([]); // Reset array
+        setAddingCardToColumn(null);
+        toast({ title: "Card Created", description: "New card added successfully." });
+
+    } catch (error) {
+        console.error(error);
+        toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
+    }
+};
+
+  const fetchTimeline = async (inquiryId: string) => {
+    setTimelineLoading(true);
+    try {
+      const { data } = await api.get(`/daily-reports/inquiry/${inquiryId}/timeline`);
+      setTimelineData(data.timeline || []);
+    } catch {
+      // ignore
+    } finally {
+      setTimelineLoading(false);
+    }
   };
 
   const handleTaskClick = (task: Task) => {
@@ -309,6 +360,7 @@ const Pipeline: React.FC = () => {
     setDescription(task.description || '');
     setIsEditingDesc(false);
     setEditingCommentId(null);
+    fetchTimeline(task.id);
   };
 
   // --- ACTIONS ---
@@ -532,30 +584,25 @@ const Pipeline: React.FC = () => {
  // ✅ CORRECT FILTERING LOGIC
  const getTasksByStage = (stage: string) => {
     return tasks.filter(t => {
+      // 1. PRIORITY: If the card's stage exactly matches this column, show it here!
+      // This fixes the issue of cards disappearing when manually added to a column.
+      if (t.stage === stage) return true;
+
+      // 2. FALLBACK: Data-Driven Auto-Routing (For older logic where stage is still 'Inquiry')
       const linkedQuote = getLinkedQuote(t);
       const linkedSelection = getLinkedSelection(t);
 
-      // 1. Completed Column: always wins if specifically marked
-      if (t.stage === 'Completed') return stage === 'Completed';
-
-      // 2. Quotation Column: Data Driven (Has Quote?)
-      if (stage === "Quotation Submitted") return !!linkedQuote;
-
-      // 3. Ongoing Projects: Data Driven (Has Selection? No Quote?)
-      if (stage === "Ongoing Projects") return !!linkedSelection && !linkedQuote;
-
-      // 4. Inquiry Column: Default (No Data, No Custom Stage)
-      //    We only show here if it doesn't have Selection/Quote AND 
-      //    the stage in DB is strictly 'Inquiry' (so moving it to "Queries" hides it here)
-      if (stage === "Inquiry") {
-         return !linkedSelection && !linkedQuote && t.stage === 'Inquiry';
+      if (t.stage === 'Inquiry' || !t.stage) {
+          if (stage === "Quotation Submitted" && linkedQuote) return true;
+          if (stage === "Ongoing Projects" && linkedSelection && !linkedQuote) return true;
+          if (stage === "Inquiry" && !linkedSelection && !linkedQuote) return true;
       }
 
-      // 5. Custom Columns (Queries, Pending Works, etc.)
-      return t.stage === stage;
+      // If it doesn't match explicitly and doesn't match fallbacks, hide it from this column.
+      return false;
     })
     .filter(t => t.client_name.toLowerCase().includes(search.toLowerCase()) || t.inquiry_number.toLowerCase().includes(search.toLowerCase()));
-  };
+};
   
   return (
     <DashboardLayout>
@@ -723,37 +770,61 @@ const Pipeline: React.FC = () => {
                         {provided.placeholder}
 
                         {/* --- QUICK ADD CARD BUTTON --- */}
-                        {addingCardToColumn === column.id ? (
-                            <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
-                                <Input 
-                                    placeholder="Client Name / Task Title" 
-                                    value={newCardTitle} 
-                                    onChange={(e) => setNewCardTitle(e.target.value)} 
-                                    className="mb-2 h-8 text-sm"
-                                    autoFocus
-                                />
-                                <select 
-                                    className="w-full mb-2 text-xs border rounded p-1.5 bg-background"
-                                    value={newCardAssignee}
-                                    onChange={(e) => setNewCardAssignee(e.target.value)}
-                                >
-                                    <option value="">Assign to...</option>
-                                    {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                </select>
-                                <div className="flex gap-2">
-                                    <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                    <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => setAddingCardToColumn(null)}>Cancel</Button>
-                                </div>
-                            </div>
-                        ) : (
-                            <Button 
-                                variant="ghost" 
-                                className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
-                                onClick={() => setAddingCardToColumn(column.id)}
+{addingCardToColumn === column.id ? (
+    <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
+        <Input 
+            placeholder="Client Name / Task Title" 
+            value={newCardTitle} 
+            onChange={(e) => setNewCardTitle(e.target.value)} 
+            className="mb-2 h-8 text-sm"
+            autoFocus
+        />
+        
+        {/* NEW Multi-Select Assignee UI */}
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full mb-2 h-8 text-xs justify-start text-muted-foreground bg-background">
+                    {newCardAssignees.length > 0
+                        ? `${newCardAssignees.length} member(s) assigned`
+                        : "Assign to..."}
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-60 p-2" align="start">
+                <ScrollArea className="h-40">
+                    {allUsers.map(u => {
+                        const isSelected = newCardAssignees.includes(u.id);
+                        return (
+                            <div key={u.id} 
+                                className={cn("flex items-center gap-2 p-1.5 hover:bg-accent rounded cursor-pointer text-sm", isSelected && "bg-accent/50")}
+                                onClick={() => {
+                                    setNewCardAssignees(prev => 
+                                        prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id]
+                                    );
+                                }}
                             >
-                                <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
-                            </Button>
-                        )}
+                                <Checkbox checked={isSelected} className="h-3 w-3" />
+                                {u.name}
+                            </div>
+                        );
+                    })}
+                </ScrollArea>
+            </PopoverContent>
+        </Popover>
+
+        <div className="flex gap-2">
+            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); }}>Cancel</Button>
+        </div>
+    </div>
+) : (
+    <Button 
+        variant="ghost" 
+        className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
+        onClick={() => setAddingCardToColumn(column.id)}
+    >
+        <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
+    </Button>
+)}
 
                     </div>
                   )}
@@ -1059,99 +1130,143 @@ const Pipeline: React.FC = () => {
                       {/* RIGHT COLUMN (Activity Stream) - Resizable */}
                       <div style={{ width: typeof window !== 'undefined' && window.innerWidth < 768 ? '100%' : sidebarWidth }} className="flex-shrink-0 bg-muted/10 flex flex-col md:h-full min-h-[500px] relative border-t md:border-t-0" ref={sidebarRef}>
                           
-                          {/* Activity Header */}
-                          <div className="p-4 pb-2 border-b border-border bg-background">
-                              <h3 className="font-semibold flex items-center gap-2"><Activity className="h-4 w-4 text-muted-foreground" /> Activity</h3>
-                          </div>
-
-                          <ScrollArea className="flex-1 p-4">
-                               {/* Input Area */}
-                              <div className="bg-background border border-border rounded-lg shadow-sm p-3 mb-6 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                                  <Textarea 
-                                      placeholder="Write a comment..." 
-                                      value={newComment} 
-                                      onChange={e => setNewComment(e.target.value)} 
-                                      className="min-h-[40px] border-none focus-visible:ring-0 p-0 resize-none text-sm shadow-none"
-                                  />
-                                  
-                                  {commentAttachment && (
-                                      <div className="mt-3 flex items-start gap-3 bg-muted/30 p-2 rounded-md border border-border/50">
-                                          <div className="relative h-16 w-24 rounded overflow-hidden border border-border bg-background flex items-center justify-center group">
-                                              <img src={getFileUrl(commentAttachment)} className="w-full h-full object-cover" />
-                                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setCommentAttachment(null)}>
-                                                  <X className="text-white h-5 w-5 drop-shadow-md" />
-                                              </div>
-                                          </div>
-                                          <div className="text-xs text-muted-foreground flex flex-col justify-center h-16">
-                                              <span className="font-medium text-foreground">Image attached</span>
-                                              <span>Click Save to post</span>
-                                          </div>
-                                      </div>
-                                  )}
-
-                                  <div className="flex justify-between items-center pt-3 mt-2 border-t border-border/50">
-                                      <div className="flex gap-1">
-                                          <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-                                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-foreground" onClick={() => fileInputRef.current?.click()}>
-                                              <ImageIcon className="h-4 w-4 mr-1.5" /> Attach
-                                          </Button>
-                                      </div>
-                                      <Button size="sm" onClick={handleAddComment} disabled={!newComment.trim() && !commentAttachment} className="h-7 px-4">Save</Button>
-                                  </div>
+                          <Tabs defaultValue="comments" className="flex-1 flex flex-col h-full overflow-hidden">
+                              <div className="px-4 pt-3 pb-2 border-b border-border bg-background">
+                                  <TabsList className="w-full bg-muted/50 p-1">
+                                      <TabsTrigger value="comments" className="flex-1 text-xs py-1.5"><MessageSquare className="w-3.5 h-3.5 mr-2" /> Comments</TabsTrigger>
+                                      <TabsTrigger value="reports" className="flex-1 text-xs py-1.5"><ClipboardList className="w-3.5 h-3.5 mr-2" /> Reports</TabsTrigger>
+                                  </TabsList>
                               </div>
 
-                              {/* Stream */}
-                              <div className="space-y-5">
-                                  {(selectedTask.comments || []).map((comment) => (
-                                      <div key={comment.id} className="flex gap-3 group">
-                                          <div className={cn("w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-bold text-xs text-white border border-border mt-0.5", getMemberColor(comment.user.name))}>
-                                              {getInitials(comment.user.name)}
-                                          </div>
-                                          <div className="flex-1">
-                                              <div className="flex items-center gap-2 mb-1 justify-between">
-                                                  <div className="flex items-center gap-2">
-                                                    <span className="font-semibold text-sm">{comment.user.name}</span>
-                                                    <span className="text-[10px] text-muted-foreground">{format(parseISO(comment.createdAt), 'MMM d, p')}</span>
-                                                  </div>
-                                                  {/* Edit Button */}
-                                                  {editingCommentId !== comment.id && (
-                                                    <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100" onClick={() => { setEditingCommentId(comment.id); setEditingCommentText(comment.content); }}>
-                                                        <Pencil className="h-3 w-3 text-muted-foreground" />
-                                                    </Button>
-                                                  )}
-                                              </div>
-                                              
-                                              {editingCommentId === comment.id ? (
-                                                  <div className="space-y-2">
-                                                      <Textarea 
-                                                          value={editingCommentText} 
-                                                          onChange={e => setEditingCommentText(e.target.value)} 
-                                                          className="min-h-[60px] text-sm"
-                                                      />
-                                                      <div className="flex gap-2">
-                                                          <Button size="sm" className="h-7" onClick={() => handleEditComment(comment.id)}>Save</Button>
-                                                          <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditingCommentId(null)}>Cancel</Button>
+                              <TabsContent value="comments" className="m-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=inactive]:hidden flex-col">
+                                  <ScrollArea className="flex-1 p-4">
+                                      {/* Input Area */}
+                                      <div className="bg-background border border-border rounded-lg shadow-sm p-3 mb-6 focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                                          <Textarea 
+                                              placeholder="Write a comment..." 
+                                              value={newComment} 
+                                              onChange={e => setNewComment(e.target.value)} 
+                                              className="min-h-[40px] border-none focus-visible:ring-0 p-0 resize-none text-sm shadow-none"
+                                          />
+                                          
+                                          {commentAttachment && (
+                                              <div className="mt-3 flex items-start gap-3 bg-muted/30 p-2 rounded-md border border-border/50">
+                                                  <div className="relative h-16 w-24 rounded overflow-hidden border border-border bg-background flex items-center justify-center group">
+                                                      <img src={getFileUrl(commentAttachment)} className="w-full h-full object-cover" />
+                                                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setCommentAttachment(null)}>
+                                                          <X className="text-white h-5 w-5 drop-shadow-md" />
                                                       </div>
                                                   </div>
-                                              ) : (
-                                                  <div className="text-sm text-foreground/90 bg-white dark:bg-card p-2.5 rounded-lg border border-border shadow-sm inline-block min-w-[200px]">
-                                                      {comment.content}
-                                                      
-                                                      {comment.attachmentUrl && (
-                                                        <div className="mt-2 group/img cursor-pointer">
-                                                            <div className="rounded-md overflow-hidden border border-border relative">
-                                                                <img src={getFileUrl(comment.attachmentUrl)} alt="Attachment" className="max-w-full max-h-[200px] object-contain bg-muted/20" />
-                                                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
-                                                            </div>
-                                                        </div>
-                                                      )}
+                                                  <div className="text-xs text-muted-foreground flex flex-col justify-center h-16">
+                                                      <span className="font-medium text-foreground">Image attached</span>
+                                                      <span>Click Save to post</span>
                                                   </div>
-                                              )}
+                                              </div>
+                                          )}
+
+                                          <div className="flex justify-between items-center pt-3 mt-2 border-t border-border/50">
+                                              <div className="flex gap-1">
+                                                  <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-foreground" onClick={() => fileInputRef.current?.click()}>
+                                                      <ImageIcon className="h-4 w-4 mr-1.5" /> Attach
+                                                  </Button>
+                                              </div>
+                                              <Button size="sm" onClick={handleAddComment} disabled={!newComment.trim() && !commentAttachment} className="h-7 px-4">Save</Button>
                                           </div>
                                       </div>
-                                  ))}
-                              </div>
-                          </ScrollArea>
+
+                                      {/* Stream */}
+                                      <div className="space-y-5">
+                                          {(selectedTask.comments || []).map((comment) => (
+                                              <div key={comment.id} className="flex gap-3 group">
+                                                  <div className={cn("w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-bold text-xs text-white border border-border mt-0.5", getMemberColor(comment.user.name))}>
+                                                      {getInitials(comment.user.name)}
+                                                  </div>
+                                                  <div className="flex-1">
+                                                      <div className="flex items-center gap-2 mb-1 justify-between">
+                                                          <div className="flex items-center gap-2">
+                                                            <span className="font-semibold text-sm">{comment.user.name}</span>
+                                                            <span className="text-[10px] text-muted-foreground">{format(parseISO(comment.createdAt), 'MMM d, p')}</span>
+                                                          </div>
+                                                          {/* Edit Button */}
+                                                          {editingCommentId !== comment.id && (
+                                                            <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100" onClick={() => { setEditingCommentId(comment.id); setEditingCommentText(comment.content); }}>
+                                                                <Pencil className="h-3 w-3 text-muted-foreground" />
+                                                            </Button>
+                                                          )}
+                                                      </div>
+                                                      
+                                                      {editingCommentId === comment.id ? (
+                                                          <div className="space-y-2">
+                                                              <Textarea 
+                                                                  value={editingCommentText} 
+                                                                  onChange={e => setEditingCommentText(e.target.value)} 
+                                                                  className="min-h-[60px] text-sm"
+                                                              />
+                                                              <div className="flex gap-2">
+                                                                  <Button size="sm" className="h-7" onClick={() => handleEditComment(comment.id)}>Save</Button>
+                                                                  <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditingCommentId(null)}>Cancel</Button>
+                                                              </div>
+                                                          </div>
+                                                      ) : (
+                                                          <div className="text-sm text-foreground/90 bg-white dark:bg-card p-2.5 rounded-lg border border-border shadow-sm inline-block min-w-[200px]">
+                                                              {comment.content}
+                                                              
+                                                              {comment.attachmentUrl && (
+                                                                <div className="mt-2 group/img cursor-pointer">
+                                                                    <div className="rounded-md overflow-hidden border border-border relative">
+                                                                        <img src={getFileUrl(comment.attachmentUrl)} alt="Attachment" className="max-w-full max-h-[200px] object-contain bg-muted/20" />
+                                                                        <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
+                                                                    </div>
+                                                                </div>
+                                                              )}
+                                                          </div>
+                                                      )}
+                                                  </div>
+                                              </div>
+                                          ))}
+                                      </div>
+                                  </ScrollArea>
+                              </TabsContent>
+
+                              <TabsContent value="reports" className="m-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=inactive]:hidden flex-col">
+                                  <ScrollArea className="flex-1 p-4">
+                                      {timelineLoading ? (
+                                          <div className="text-center py-10 text-muted-foreground text-sm">Loading reports...</div>
+                                      ) : (!timelineData || timelineData.length === 0) ? (
+                                          <div className="text-center py-10 text-muted-foreground text-sm">No daily reports recorded yet.</div>
+                                      ) : (
+                                          <div className="relative pb-2 pl-4">
+                                              <div className="absolute left-6 top-1 bottom-0 w-px bg-border" />
+                                              <div className="space-y-6">
+                                                  {timelineData.map((entry: any, i: number) => (
+                                                      <div key={entry.id} className="flex gap-4 relative">
+                                                          <div className={cn(
+                                                              'w-4 h-4 rounded-full border-[3px] border-background flex-shrink-0 z-10',
+                                                              i === 0 ? 'bg-accent' : 'bg-muted-foreground/50'
+                                                          )} />
+                                                          <div className="flex-1 pb-2">
+                                                              <div className="flex items-center justify-between mb-1.5 gap-2">
+                                                                  <span className="text-sm font-semibold">{entry.dailyReport?.user?.name || "Unknown"}</span>
+                                                                  <span className="text-xs text-muted-foreground">
+                                                                      {format(new Date(entry.createdAt), 'dd MMM yyyy')}
+                                                                  </span>
+                                                              </div>
+                                                              <span className={cn('text-[10px] px-2 py-0.5 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                                                                  {STATUS_LABELS[entry.status] || entry.status}
+                                                              </span>
+                                                              <div className="text-sm text-foreground/90 bg-muted/40 rounded-lg p-3 whitespace-pre-wrap leading-relaxed shadow-sm border border-border/50">
+                                                                  {entry.workDone}
+                                                              </div>
+                                                          </div>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          </div>
+                                      )}
+                                  </ScrollArea>
+                              </TabsContent>
+                          </Tabs>
                       </div>
                   </div>
                 </div>

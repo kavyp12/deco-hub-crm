@@ -1173,20 +1173,19 @@ app.put('/api/catalogs/return/:movementId', authenticateToken, async (req: any, 
 // ==========================================
 
 // [EDITED] GET ALL INQUIRIES (With Role Filtering)
-app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => { // <--- Change Request to any
-
+// Find this route in src/index.ts
+app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => { 
   try {
-    // 1. Role Check: Admin sees all, Sales sees only theirs
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
     const whereClause = isAdmin ? {} : { sales_person_id: req.user.id };
 
     const inquiries = await prisma.inquiry.findMany({
-      where: whereClause, // <--- Added Filter
+      where: whereClause, 
       include: {
         sales_person: { select: { name: true } },
+        sales_persons: { select: { id: true, name: true } }, // <--- ADD THIS LINE
         architect: { select: { id: true, name: true } },
         selections: { select: { id: true, selection_number: true, status: true } },
-        // Includes badges for list view
         _count: { select: { comments: true } }
       },
       orderBy: { created_at: 'desc' }
@@ -1195,7 +1194,7 @@ app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => 
     const formatted = inquiries.map((i: any) => ({
       ...i,
       profiles: i.sales_person,
-      // Ensure stage/priority are passed (they are by default, but good to be explicit mentally)
+      sales_persons: i.sales_persons, // <--- ADD THIS LINE
       stage: i.stage,
       priority: i.priority
     }));
@@ -1268,6 +1267,11 @@ app.put('/api/inquiries/:id', authenticateToken, async (req: any, res: Response)
 
   if (data.client_anniversary_date) data.client_anniversary_date = new Date(data.client_anniversary_date);
   else if (data.client_anniversary_date === '') data.client_anniversary_date = null;
+
+  // Fix: Assign architectId to null if empty string to avoid Prisma 500 error on UUID
+  if (data.architectId === '') {
+    data.architectId = null;
+  }
 
   delete data.product_category;
 

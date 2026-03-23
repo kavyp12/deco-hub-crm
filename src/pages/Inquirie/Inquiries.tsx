@@ -32,12 +32,9 @@ interface Inquiry {
   id: string;
   inquiry_number: string;
   client_name: string;
-
-  // Architect Fields
-  architect_id_name: string | null; // Manual Name
-  architectId: string | null;       // DB ID
-  architect: { id: string; name: string } | null; // Relation
-
+  architect_id_name: string | null; 
+  architectId: string | null;       
+  architect: { id: string; name: string } | null; 
   mobile_number: string;
   inquiry_date: string;
   address: string;
@@ -46,6 +43,7 @@ interface Inquiry {
   created_at: string;
   profiles: { name: string } | null;
   selections: any[];
+  sales_persons?: { id: string, name: string }[]; // <--- ADD THIS LINE
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -197,6 +195,16 @@ const Inquiries: React.FC = () => {
 
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
 
+  // Helper to format multiple names
+  const renderSalesPersons = (inquiry: Inquiry) => {
+    const uniqueMembers = [
+        ...(inquiry.profiles ? [inquiry.profiles] : []),
+        ...(inquiry.sales_persons || [])
+    ].filter((p, i, self) => self.findIndex(m => m.name === p.name) === i);
+    
+    return uniqueMembers.length > 0 ? uniqueMembers.map(m => m.name).join(', ') : '—';
+  };
+
   return (
     <DashboardLayout>
       <div className="animate-fade-in">
@@ -257,7 +265,7 @@ const Inquiries: React.FC = () => {
                     <Phone className="h-3 w-3" /> {inquiry.mobile_number}
                   </div>
                   <div className="flex items-center gap-2">
-                    <User className="h-3 w-3" /> {inquiry.profiles?.name || '—'}
+                    <User className="h-3 w-3" /> {renderSalesPersons(inquiry)}
                   </div>
                   {(inquiry.architect || inquiry.architect_id_name) && (
                     <div className="flex items-center gap-2 col-span-2">
@@ -308,7 +316,9 @@ const Inquiries: React.FC = () => {
                     <td className="px-6 py-4 text-muted-foreground">
                       {inquiry.architect?.name || inquiry.architect_id_name || '—'}
                     </td>
-                    <td className="px-6 py-4 text-muted-foreground">{inquiry.profiles?.name || '—'}</td>
+                    <td className="px-6 py-4 text-muted-foreground">
+                      {renderSalesPersons(inquiry)}
+                    </td>
                     <td className="px-6 py-4 text-muted-foreground">{format(new Date(inquiry.inquiry_date), 'MMM d, yyyy')}</td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
