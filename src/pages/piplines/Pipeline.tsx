@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { 
   MessageSquare, CheckSquare, Plus, Activity, Search, 
   X, AlignLeft, Image as ImageIcon, Check, Pencil, Monitor, FileText, IndianRupee,
-  MoreHorizontal, PlusCircle, Trash2, Clock, ClipboardList
+  MoreHorizontal, PlusCircle, Trash2, Clock, ClipboardList,Filter
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -208,10 +208,38 @@ const Pipeline: React.FC = () => {
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
+
+// --- FILTER STATE ---
+const [filterUser, setFilterUser] = useState<string>('all');
+const [filterLabel, setFilterLabel] = useState<string>('all');
+const [filterDate, setFilterDate] = useState<string>('');
+const [filterStage, setFilterStage] = useState<string>('all');
+const [filterSearch, setFilterSearch] = useState<string>(''); // unified with search
+const [isFilterOpen, setIsFilterOpen] = useState(false); // controls fixed panel
+
+const [filterActivity, setFilterActivity] = useState<string>('all');
+const [filterChecklist, setFilterChecklist] = useState<string>('all');
+
+
   useEffect(() => {
     fetchPipeline();
     fetchUsers();
   }, []);
+
+
+  const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevents the card modal from opening when you click the trash icon
+    if (!confirm('Are you sure you want to delete this card?')) return;
+    
+    try {
+      await api.delete(`/inquiries/${taskId}`);
+      setTasks(prev => prev.filter(t => t.id !== taskId));
+      toast({ title: "Deleted", description: "Card deleted successfully." });
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to delete card", variant: "destructive" });
+    }
+  };
+
 
   const fetchPipeline = async () => {
     try {
@@ -529,10 +557,24 @@ const Pipeline: React.FC = () => {
   };
 
   const onDragEnd = async (result: any) => {
-    const { destination, source, draggableId } = result;
+    const { destination, source, draggableId, type } = result;
+    
+    // Dropped outside the list
     if (!destination) return;
+    
+    // Dropped in the same place
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
     
+    // --- HANDLE COLUMN DRAGGING ---
+    if (type === 'column') {
+        const newColumns = Array.from(columns);
+        const [movedColumn] = newColumns.splice(source.index, 1);
+        newColumns.splice(destination.index, 0, movedColumn);
+        setColumns(newColumns);
+        return;
+    }
+
+    // --- HANDLE CARD DRAGGING ---
     const realId = draggableId.split('::')[1]; 
 
     const updatedTasks = tasks.map(t => 
@@ -546,7 +588,6 @@ const Pipeline: React.FC = () => {
       fetchPipeline(); 
     }
   };
-
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     mouseDownEvent.preventDefault();
     setIsResizing(true);
@@ -582,26 +623,61 @@ const Pipeline: React.FC = () => {
   };
 
  // ✅ CORRECT FILTERING LOGIC
- const getTasksByStage = (stage: string) => {
-    return tasks.filter(t => {
-      // 1. PRIORITY: If the card's stage exactly matches this column, show it here!
-      // This fixes the issue of cards disappearing when manually added to a column.
-      if (t.stage === stage) return true;
+const getTasksByStage = (stage: string) => {
+  return tasks.filter(t => {
+    if (t.stage === stage) return true;
+    const linkedQuote = getLinkedQuote(t);
+    const linkedSelection = getLinkedSelection(t);
+    if (t.stage === 'Inquiry' || !t.stage) {
+      if (stage === "Quotation Submitted" && linkedQuote) return true;
+      if (stage === "Ongoing Projects" && linkedSelection && !linkedQuote) return true;
+      if (stage === "Inquiry" && !linkedSelection && !linkedQuote) return true;
+    }
+    return false;
+  })
+  .filter(t => {
+    const matchesSearch = t.client_name.toLowerCase().includes(search.toLowerCase()) ||
+                          t.inquiry_number.toLowerCase().includes(search.toLowerCase());
 
-      // 2. FALLBACK: Data-Driven Auto-Routing (For older logic where stage is still 'Inquiry')
-      const linkedQuote = getLinkedQuote(t);
-      const linkedSelection = getLinkedSelection(t);
+    let matchesUser = true;
+    if (filterUser !== 'all') {
+      const members = [
+        ...(t.sales_person ? [t.sales_person] : []),
+        ...(t.sales_persons || [])
+      ];
+      matchesUser = members.some(m => m.id === filterUser);
+    }
 
-      if (t.stage === 'Inquiry' || !t.stage) {
-          if (stage === "Quotation Submitted" && linkedQuote) return true;
-          if (stage === "Ongoing Projects" && linkedSelection && !linkedQuote) return true;
-          if (stage === "Inquiry" && !linkedSelection && !linkedQuote) return true;
-      }
+    let matchesLabel = true;
+    if (filterLabel !== 'all') {
+      matchesLabel = (t.labels || []).some((l: any) => l.text === filterLabel);
+    }
 
-      // If it doesn't match explicitly and doesn't match fallbacks, hide it from this column.
-      return false;
-    })
-    .filter(t => t.client_name.toLowerCase().includes(search.toLowerCase()) || t.inquiry_number.toLowerCase().includes(search.toLowerCase()));
+    let matchesDate = true;
+    if (filterDate) {
+      matchesDate = (t.updated_at || '').startsWith(filterDate);
+    }
+
+    // NEW: filter by has/no comments
+    let matchesActivity = true;
+    if (filterActivity === 'has_comments') {
+      matchesActivity = (t.comments || []).length > 0;
+    } else if (filterActivity === 'no_comments') {
+      matchesActivity = (t.comments || []).length === 0;
+    }
+
+    // NEW: filter by has/no checklist
+    let matchesChecklist = true;
+    if (filterChecklist === 'has_checklist') {
+      matchesChecklist = (t.checklists || []).length > 0;
+    } else if (filterChecklist === 'incomplete') {
+      matchesChecklist = (t.checklists || []).some(cl =>
+        cl.items.some(item => !item.isCompleted)
+      );
+    }
+
+    return matchesSearch && matchesUser && matchesLabel && matchesDate && matchesActivity && matchesChecklist;
+  });
 };
   
   return (
@@ -612,6 +688,204 @@ const Pipeline: React.FC = () => {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 px-1">
           <div><h1 className="text-2xl font-bold">Sales Pipeline</h1><p className="text-muted-foreground">Manage inquiries & quotations</p></div>
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+             
+          {/* FILTER TOGGLE BUTTON */}
+<div className="relative">
+  <Button
+    variant="outline"
+    className={cn("gap-2 bg-background border border-border", isFilterOpen && "ring-2 ring-primary")}
+    onClick={() => setIsFilterOpen(prev => !prev)}
+  >
+    <Filter className="h-4 w-4" /> Filters
+    {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all') && (
+      <span className="ml-1 h-2 w-2 rounded-full bg-primary inline-block" />
+    )}
+  </Button>
+</div>
+
+{/* FIXED FILTER PANEL — renders outside the header flow */}
+{isFilterOpen && (
+  <>
+    {/* Backdrop */}
+    <div
+      className="fixed inset-0 z-40"
+      onClick={() => setIsFilterOpen(false)}
+    />
+
+    {/* Fixed Panel */}
+    <div className="fixed top-20 right-6 z-50 w-[340px] bg-background border border-border rounded-xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200">
+      
+      {/* Header */}
+      <div className="flex justify-between items-center px-4 py-3 border-b border-border bg-muted/30 rounded-t-xl">
+        <h4 className="font-semibold text-sm">Filter Cards</h4>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+            onClick={() => {
+              setFilterUser('all');
+              setFilterLabel('all');
+              setFilterDate('');
+              setFilterActivity('all');
+              setFilterChecklist('all');
+            }}
+          >
+            Clear all
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 rounded-full"
+            onClick={() => setIsFilterOpen(false)}
+          >
+            <X className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Filter Body */}
+      <div className="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
+
+        {/* 1. Assigned User */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            👤 Assigned User
+          </label>
+          <select
+            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            value={filterUser}
+            onChange={e => setFilterUser(e.target.value)}
+          >
+            <option value="all">All Users</option>
+            {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
+
+        {/* 2. Label */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            🏷️ Label
+          </label>
+          <select
+            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            value={filterLabel}
+            onChange={e => setFilterLabel(e.target.value)}
+          >
+            <option value="all">All Labels</option>
+            {getUniqueLabels().map((l: any, i) => (
+              <option key={i} value={l.text}>{l.text}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 3. Month */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            📅 Month
+          </label>
+          <Input
+            type="month"
+            className="h-9 text-sm w-full bg-background"
+            value={filterDate}
+            onChange={e => setFilterDate(e.target.value)}
+          />
+        </div>
+
+        {/* 4. Activity / Comments */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            💬 Comments
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { value: 'all', label: 'Any' },
+              { value: 'has_comments', label: 'Has Comments' },
+              { value: 'no_comments', label: 'No Comments' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFilterActivity(opt.value)}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
+                  filterActivity === opt.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 5. Checklist */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            ✅ Checklist
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { value: 'all', label: 'Any' },
+              { value: 'has_checklist', label: 'Has Checklist' },
+              { value: 'incomplete', label: 'Has Incomplete' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setFilterChecklist(opt.value)}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
+                  filterChecklist === opt.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 6. Stage Quick-jump */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+            📌 Stage
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            {['all', ...columns.map(c => c.id)].map(stageId => (
+              <button
+                key={stageId}
+                onClick={() => setFilterStage(stageId)}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
+                  filterStage === stageId
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                {stageId === 'all' ? 'All Stages' : columns.find(c => c.id === stageId)?.title || stageId}
+              </button>
+            ))}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-3 border-t border-border bg-muted/20 rounded-b-xl flex justify-between items-center">
+        <span className="text-xs text-muted-foreground">
+          {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all' || filterStage !== 'all')
+            ? '🔵 Filters active'
+            : 'No filters applied'}
+        </span>
+        <Button size="sm" className="h-7 px-4 text-xs" onClick={() => setIsFilterOpen(false)}>
+          Done
+        </Button>
+      </div>
+    </div>
+  </>
+)}
+
              {/* ADD STAGE DROPDOWN */}
              <Popover>
                 <PopoverTrigger asChild>
@@ -642,196 +916,199 @@ const Pipeline: React.FC = () => {
 
         {/* Board */}
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex-1 flex gap-4 overflow-x-auto pb-4 px-1">
-            {columns.map((column) => (
-              <div key={column.id} className="flex-shrink-0 w-80 flex flex-col rounded-xl bg-muted/40 border border-border/50 group/col relative">
-                
-                {/* Column Header */}
-                <div className={`p-3 font-semibold text-xs flex justify-between items-center bg-background rounded-t-xl border-b ${column.color} border-t-4`}>
-                  <span className="flex items-center gap-2">
-                      {column.title}
-                      <Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge>
-                  </span>
-                  
-                  {/* Delete Option for Custom Columns ONLY */}
-                  {!column.isSystem && (
-                      <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover/col:opacity-100 transition-opacity">
-                                  <MoreHorizontal className="h-3 w-3" />
-                              </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteColumn(column.id)}>
-                                  <Trash2 className="h-3 w-3 mr-2" /> Delete Stage
-                              </DropdownMenuItem>
-                          </DropdownMenuContent>
-                      </DropdownMenu>
-                  )}
-                </div>
-
-                {/* Droppable Area */}
-                <Droppable droppableId={column.id}>
-                  {(provided, snapshot) => (
-                    <div {...provided.droppableProps} ref={provided.innerRef} className={cn("flex-1 p-2 overflow-y-auto space-y-2 min-h-[100px]", snapshot.isDraggingOver ? "bg-muted/50" : "")}>
+          <Droppable droppableId="all-columns" direction="horizontal" type="column">
+            {(provided) => (
+              <div 
+                {...provided.droppableProps} 
+                ref={provided.innerRef} 
+                className="flex-1 flex gap-4 overflow-x-auto pb-4 px-1"
+              >
+                {columns.map((column, columnIndex) => (
+                  <Draggable key={column.id} draggableId={`col-${column.id}`} index={columnIndex}>
+                    {(provided) => (
+                      <div 
+                        ref={provided.innerRef} 
+                        {...provided.draggableProps} 
+                        className="flex-shrink-0 w-80 flex flex-col rounded-xl bg-muted/40 border border-border/50 group/col relative"
+                      >
                         
-                        {getTasksByStage(column.id).map((task, index) => {
-                            // Link Logic
-                            const linkedQuote = getLinkedQuote(task);
-                            const linkedSelection = getLinkedSelection(task); 
-                            const isQuoteStage = column.id === 'Quotation Submitted';
-                            const isOngoingStage = column.id === 'Ongoing Projects'; 
-                            const uniqueDraggableId = `${column.id}::${task.id}`;
+                        {/* Column Header - Drag Handle is attached here */}
+                        <div 
+                          {...provided.dragHandleProps} 
+                          className={`p-3 font-semibold text-xs flex justify-between items-center bg-background rounded-t-xl border-b ${column.color} border-t-4`}
+                        >
+                          <span className="flex items-center gap-2">
+                              {column.title}
+                              <Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge>
+                          </span>
+                          
+                          {/* Delete Option for Custom Columns ONLY */}
+                          {!column.isSystem && (
+                              <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover/col:opacity-100 transition-opacity">
+                                          <MoreHorizontal className="h-3 w-3" />
+                                      </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => handleDeleteColumn(column.id)}>
+                                          <Trash2 className="h-3 w-3 mr-2" /> Delete Stage
+                                      </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                              </DropdownMenu>
+                          )}
+                        </div>
 
-                            return (
-                            <Draggable key={uniqueDraggableId} draggableId={uniqueDraggableId} index={index}>
-                                {(provided, snapshot) => (
-                                <div 
-                                    ref={provided.innerRef} 
-                                    {...provided.draggableProps} 
-                                    {...provided.dragHandleProps} 
-                                    onClick={() => handleTaskClick(task)}
-                                    className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
-                                >
-                                    {(task.labels || []).length > 0 && (
-                                    <div className="flex gap-1 mb-1.5 flex-wrap">
-                                        {task.labels!.map((l:any) => (
-                                        <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
-                                        ))}
-                                    </div>
-                                    )}
-                                    
-                                    <div className="mb-1 flex justify-between items-start">
-                                    <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1 rounded border leading-none py-0.5">
-                                        {isQuoteStage && linkedQuote ? linkedQuote.quotation_number : 
-                                        isOngoingStage && linkedSelection ? linkedSelection.selection_number : 
-                                        task.inquiry_number}
-                                    </span>
-                                    
-                                    {(isQuoteStage && linkedQuote) && (
-                                        <span className="text-[10px] font-bold text-green-600 flex items-center">
-                                        <IndianRupee className="w-2 h-2 mr-0.5" />
-                                        {linkedQuote.grandTotal.toLocaleString()}
-                                        </span>
-                                    )}
+                        {/* Droppable Area for Cards */}
+                        <Droppable droppableId={column.id} type="task">
+                          {(provided, snapshot) => (
+                            <div 
+                                {...provided.droppableProps} 
+                                ref={provided.innerRef} 
+                                className={cn("flex-1 p-2 overflow-y-auto space-y-2 min-h-[100px]", snapshot.isDraggingOver ? "bg-muted/50" : "")}
+                            >
+                                
+                                {getTasksByStage(column.id).map((task, index) => {
+                                    const linkedQuote = getLinkedQuote(task);
+                                    const linkedSelection = getLinkedSelection(task); 
+                                    const isQuoteStage = column.id === 'Quotation Submitted';
+                                    const isOngoingStage = column.id === 'Ongoing Projects'; 
+                                    const uniqueDraggableId = `${column.id}::${task.id}`;
 
-                                    {(isOngoingStage && linkedSelection) && (
-                                        <span className={cn(
-                                        "text-[9px] px-1.5 py-0.5 rounded border font-medium uppercase",
-                                        linkedSelection.status === 'pending' ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-                                        linkedSelection.status === 'confirmed' ? "bg-blue-100 text-blue-700 border-blue-200" :
-                                        "bg-gray-100 text-gray-600 border-gray-200"
-                                        )}>
-                                        {linkedSelection.status}
-                                        </span>
-                                    )}
-                                    </div>
-                                    
-                                    <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
-                                    
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex -space-x-1.5">
-                                            {(() => {
-                                                const uniqueMembers = [
-                                                    ...(task.sales_person ? [task.sales_person] : []),
-                                                    ...(task.sales_persons || [])
-                                                ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
+                                    return (
+                                    <Draggable key={uniqueDraggableId} draggableId={uniqueDraggableId} index={index}>
+                                        {(provided, snapshot) => (
+                                        <div 
+                                            ref={provided.innerRef} 
+                                            {...provided.draggableProps} 
+                                            {...provided.dragHandleProps} 
+                                            onClick={() => handleTaskClick(task)}
+                                            className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group relative", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
+                                        >
+                                            
+                                            {/* DELETE BUTTON (Shows on Hover) */}
+                                            <Button 
+                                                variant="destructive" 
+                                                size="icon" 
+                                                className="absolute -top-2 -right-2 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-md hover:scale-110"
+                                                onClick={(e) => handleDeleteTask(task.id, e)}
+                                            >
+                                                <Trash2 className="h-3 w-3" />
+                                            </Button>
 
-                                                return uniqueMembers.length > 0 ? (
-                                                    uniqueMembers.map(person => (
-                                                        <div key={person.id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(person.name))} title={person.name}>
-                                                            {getInitials(person.name)}
+                                            {(task.labels || []).length > 0 && (
+                                            <div className="flex gap-1 mb-1.5 flex-wrap">
+                                                {task.labels!.map((l:any) => (
+                                                <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
+                                                ))}
+                                            </div>
+                                            )}
+                                            
+                                            <div className="mb-1 flex justify-between items-start">
+                                            <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1 rounded border leading-none py-0.5">
+                                                {isQuoteStage && linkedQuote ? linkedQuote.quotation_number : 
+                                                isOngoingStage && linkedSelection ? linkedSelection.selection_number : 
+                                                task.inquiry_number}
+                                            </span>
+                                            
+                                            {(isQuoteStage && linkedQuote) && (
+                                                <span className="text-[10px] font-bold text-green-600 flex items-center">
+                                                <IndianRupee className="w-2 h-2 mr-0.5" />
+                                                {linkedQuote.grandTotal.toLocaleString()}
+                                                </span>
+                                            )}
+
+                                            {(isOngoingStage && linkedSelection) && (
+                                                <span className={cn(
+                                                "text-[9px] px-1.5 py-0.5 rounded border font-medium uppercase",
+                                                linkedSelection.status === 'pending' ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
+                                                linkedSelection.status === 'confirmed' ? "bg-blue-100 text-blue-700 border-blue-200" :
+                                                "bg-gray-100 text-gray-600 border-gray-200"
+                                                )}>
+                                                {linkedSelection.status}
+                                                </span>
+                                            )}
+                                            </div>
+                                            
+                                            <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
+                                            
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex -space-x-1.5">
+                                                    {(() => {
+                                                        const uniqueMembers = [
+                                                            ...(task.sales_person ? [task.sales_person] : []),
+                                                            ...(task.sales_persons || [])
+                                                        ].filter((p, i, self) => self.findIndex(m => m.id === p.id) === i);
+
+                                                        return uniqueMembers.length > 0 ? (
+                                                            uniqueMembers.map(person => (
+                                                                <div key={person.id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(person.name))} title={person.name}>
+                                                                    {getInitials(person.name)}
+                                                                </div>
+                                                            ))
+                                                        ) : ( <div className="h-5"></div> );
+                                                    })()}
+                                                </div>
+
+                                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                                    {((task.comments || []).length > 0 || (task.checklists || []).length > 0) && (
+                                                        <div className="flex items-center gap-1.5 bg-muted/50 px-1 py-0.5 rounded">
+                                                            {(task.comments || []).length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-2.5 w-2.5" />{task.comments!.length}</span>}
+                                                            {(task.checklists || []).length > 0 && (
+                                                                <span className="flex items-center gap-0.5">
+                                                                    <CheckSquare className="h-2.5 w-2.5" />
+                                                                    {task.checklists!.reduce((acc, cl) => acc + cl.items.filter(i => i.isCompleted).length, 0)}/
+                                                                    {task.checklists!.reduce((acc, cl) => acc + cl.items.length, 0)}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                    ))
-                                                ) : ( <div className="h-5"></div> );
-                                            })()}
-                                        </div>
-
-                                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                            {((task.comments || []).length > 0 || (task.checklists || []).length > 0) && (
-                                                <div className="flex items-center gap-1.5 bg-muted/50 px-1 py-0.5 rounded">
-                                                    {(task.comments || []).length > 0 && <span className="flex items-center gap-0.5"><MessageSquare className="h-2.5 w-2.5" />{task.comments!.length}</span>}
-                                                    {(task.checklists || []).length > 0 && (
-                                                        <span className="flex items-center gap-0.5">
-                                                            <CheckSquare className="h-2.5 w-2.5" />
-                                                            {task.checklists!.reduce((acc, cl) => acc + cl.items.filter(i => i.isCompleted).length, 0)}/
-                                                            {task.checklists!.reduce((acc, cl) => acc + cl.items.length, 0)}
-                                                        </span>
                                                     )}
                                                 </div>
-                                            )}
+                                            </div>
+                                        </div>
+                                        )}
+                                    </Draggable>
+                                    );
+                                })}
+                                {provided.placeholder}
+
+                                {/* --- QUICK ADD CARD BUTTON GOES HERE --- */}
+                                {addingCardToColumn === column.id ? (
+                                    /* Keep your existing input field block here */
+                                    <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
+                                        <Input 
+                                            placeholder="Client Name / Task Title" 
+                                            value={newCardTitle} 
+                                            onChange={(e) => setNewCardTitle(e.target.value)} 
+                                            className="mb-2 h-8 text-sm"
+                                            autoFocus
+                                        />
+                                        <div className="flex gap-2">
+                                            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+                                            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); }}>Cancel</Button>
                                         </div>
                                     </div>
-                                </div>
+                                ) : (
+                                    <Button 
+                                        variant="ghost" 
+                                        className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
+                                        onClick={() => setAddingCardToColumn(column.id)}
+                                    >
+                                        <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
+                                    </Button>
                                 )}
-                            </Draggable>
-                            );
-                        })}
-                        {provided.placeholder}
 
-                        {/* --- QUICK ADD CARD BUTTON --- */}
-{addingCardToColumn === column.id ? (
-    <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
-        <Input 
-            placeholder="Client Name / Task Title" 
-            value={newCardTitle} 
-            onChange={(e) => setNewCardTitle(e.target.value)} 
-            className="mb-2 h-8 text-sm"
-            autoFocus
-        />
-        
-        {/* NEW Multi-Select Assignee UI */}
-        <Popover>
-            <PopoverTrigger asChild>
-                <Button variant="outline" className="w-full mb-2 h-8 text-xs justify-start text-muted-foreground bg-background">
-                    {newCardAssignees.length > 0
-                        ? `${newCardAssignees.length} member(s) assigned`
-                        : "Assign to..."}
-                </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-60 p-2" align="start">
-                <ScrollArea className="h-40">
-                    {allUsers.map(u => {
-                        const isSelected = newCardAssignees.includes(u.id);
-                        return (
-                            <div key={u.id} 
-                                className={cn("flex items-center gap-2 p-1.5 hover:bg-accent rounded cursor-pointer text-sm", isSelected && "bg-accent/50")}
-                                onClick={() => {
-                                    setNewCardAssignees(prev => 
-                                        prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id]
-                                    );
-                                }}
-                            >
-                                <Checkbox checked={isSelected} className="h-3 w-3" />
-                                {u.name}
                             </div>
-                        );
-                    })}
-                </ScrollArea>
-            </PopoverContent>
-        </Popover>
-
-        <div className="flex gap-2">
-            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); }}>Cancel</Button>
-        </div>
-    </div>
-) : (
-    <Button 
-        variant="ghost" 
-        className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
-        onClick={() => setAddingCardToColumn(column.id)}
-    >
-        <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
-    </Button>
-)}
-
-                    </div>
-                  )}
-                </Droppable>
+                          )}
+                        </Droppable>
+                      </div>
+                    )}
+                  </Draggable>
+                ))}
+                {provided.placeholder}
               </div>
-            ))}
-          </div>
+            )}
+          </Droppable>
         </DragDropContext>
 
         {/* --- DETAIL MODAL (Unchanged) --- */}
