@@ -1203,7 +1203,7 @@ app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => 
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch inquiries' });
   }
-});
+}); 
 
 // UPDATE POST /api/inquiries
 app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) => {

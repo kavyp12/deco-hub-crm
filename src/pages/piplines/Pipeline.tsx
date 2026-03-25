@@ -96,10 +96,11 @@ const LABEL_COLORS = [
 
 // ✅ CORRECTED PERMANENT COLUMNS (Only the 4 you requested)
 const DEFAULT_COLUMNS: ColumnDef[] = [
-  { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500", isSystem: true }, 
-  { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
+  { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500", isSystem: true },
   { id: "Quotation Submitted", title: "Quotation Submitted", color: "border-t-4 border-purple-500", isSystem: true },
-  { id: "Completed", title: "Completed", color: "border-t-4 border-green-500", isSystem: true }
+  { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
+  { id: "Completed", title: "Completed", color: "border-t-4 border-green-500", isSystem: true },
+  { id: "Complaints", title: "Complaints", color: "border-t-4 border-red-500", isSystem: true },
 ];
 
 const COLORS_LIST = [
@@ -556,38 +557,43 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
   };
 
-  const onDragEnd = async (result: any) => {
-    const { destination, source, draggableId, type } = result;
-    
-    // Dropped outside the list
-    if (!destination) return;
-    
-    // Dropped in the same place
-    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
-    
-    // --- HANDLE COLUMN DRAGGING ---
-    if (type === 'column') {
-        const newColumns = Array.from(columns);
-        const [movedColumn] = newColumns.splice(source.index, 1);
-        newColumns.splice(destination.index, 0, movedColumn);
-        setColumns(newColumns);
-        return;
+ const onDragEnd = async (result: any) => {
+  const { destination, source, draggableId, type } = result;
+
+  if (!destination) return;
+  if (destination.droppableId === source.droppableId && destination.index === source.index) return;
+
+  // --- HANDLE COLUMN DRAGGING ---
+  if (type === 'column') {
+    const movingColumn = columns[source.index];
+
+    // Block: if source OR destination index is within system columns range
+    const systemCount = DEFAULT_COLUMNS.length;
+    if (source.index < systemCount || destination.index < systemCount) {
+      return; // System columns are frozen — do nothing
     }
 
-    // --- HANDLE CARD DRAGGING ---
-    const realId = draggableId.split('::')[1]; 
+    const newColumns = Array.from(columns);
+    const [movedColumn] = newColumns.splice(source.index, 1);
+    newColumns.splice(destination.index, 0, movedColumn);
+    setColumns(newColumns);
+    return;
+  }
 
-    const updatedTasks = tasks.map(t => 
-      t.id === realId ? { ...t, stage: destination.droppableId, updated_at: new Date().toISOString() } : t
-    );
-    setTasks(updatedTasks);
-    
-    try { 
-      await api.put(`/inquiries/${realId}/stage`, { stage: destination.droppableId }); 
-    } catch (error) { 
-      fetchPipeline(); 
-    }
-  };
+  // --- HANDLE CARD DRAGGING (unchanged) ---
+  const realId = draggableId.split('::')[1];
+
+  const updatedTasks = tasks.map(t =>
+    t.id === realId ? { ...t, stage: destination.droppableId, updated_at: new Date().toISOString() } : t
+  );
+  setTasks(updatedTasks);
+
+  try {
+    await api.put(`/inquiries/${realId}/stage`, { stage: destination.droppableId });
+  } catch (error) {
+    fetchPipeline();
+  }
+};
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     mouseDownEvent.preventDefault();
     setIsResizing(true);
@@ -924,7 +930,7 @@ const getTasksByStage = (stage: string) => {
                 className="flex-1 flex gap-4 overflow-x-auto pb-4 px-1"
               >
                 {columns.map((column, columnIndex) => (
-                  <Draggable key={column.id} draggableId={`col-${column.id}`} index={columnIndex}>
+                  <Draggable key={column.id} draggableId={`col-${column.id}`} index={columnIndex} isDragDisabled={!!column.isSystem}>
                     {(provided) => (
                       <div 
                         ref={provided.innerRef} 
