@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { format } from 'date-fns';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  format, parseISO,
+} from 'date-fns';
 import {
   ClipboardList, Send, AlertTriangle, CheckCircle2,
   Clock, Eye, Pencil, Info, Search, CalendarDays,
-  FileText
+  FileText,
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -18,6 +20,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
+import ReportCalendar from './ReportCalendar';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -98,7 +101,7 @@ const DailyReportPage: React.FC = () => {
   const win = getWindowInfo();
 
  // Tabs
-  const [activeTab, setActiveTab]           = useState<'today' | 'other_work' | 'history'>('today');
+  const [activeTab, setActiveTab] = useState<'today' | 'other_work' | 'history' | 'calendar'>('today');
 
   // Today State
   const [inquiries, setInquiries]           = useState<InquiryOption[]>([]);
@@ -194,15 +197,51 @@ const DailyReportPage: React.FC = () => {
     }
   };
 
-  const filteredHistory = historyEntries.filter(entry => {
+  // Group the raw history entries into structured reports (supports both flat arrays and nested arrays)
+  const groupedReports = useMemo(() => {
+    if (!historyEntries || historyEntries.length === 0) return [];
+
+    // If the backend already returns structured Report objects (with entries & otherWork)
+    if ('entries' in historyEntries[0] || 'otherWork' in historyEntries[0]) {
+      return historyEntries;
+    }
+
+    // Otherwise, assume it's returning a flat array of ReportEntries and group them by Date
+    const map = new Map();
+    historyEntries.forEach(entry => {
+      const dateStr = entry.dailyReport?.reportDate || format(new Date(entry.createdAt), 'yyyy-MM-dd');
+      if (!map.has(dateStr)) {
+        map.set(dateStr, {
+          id: entry.dailyReport?.id || dateStr,
+          reportDate: dateStr,
+          createdAt: entry.createdAt,
+          otherWork: entry.dailyReport?.otherWork || '',
+          entries: []
+        });
+      }
+      if (entry.inquiryId) {
+        map.get(dateStr).entries.push(entry);
+      }
+    });
+
+    return Array.from(map.values()).sort((a: any, b: any) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime());
+  }, [historyEntries]);
+
+  // Filter against grouped reports (checks date, other work text, and individual entries)
+  const filteredHistory = groupedReports.filter((report: any) => {
     if (!historySearch) return true;
     const q = historySearch.toLowerCase();
-    return (
-      entry.inquiry?.inquiry_number?.toLowerCase().includes(q) ||
-      entry.inquiry?.client_name?.toLowerCase().includes(q) ||
-      entry.workDone?.toLowerCase().includes(q) ||
-      (STATUSES.find(s => s.value === entry.status)?.label || '').toLowerCase().includes(q)
+    
+    const matchesDate = format(new Date(report.reportDate || report.createdAt), 'dd MMM yyyy').toLowerCase().includes(q);
+    const matchesOtherWork = report.otherWork?.toLowerCase().includes(q);
+    const matchesEntries = report.entries?.some((e: any) => 
+      e.inquiry?.inquiry_number?.toLowerCase().includes(q) ||
+      e.inquiry?.client_name?.toLowerCase().includes(q) ||
+      e.workDone?.toLowerCase().includes(q) ||
+      (STATUSES.find(s => s.value === e.status)?.label || '').toLowerCase().includes(q)
     );
+    
+    return matchesDate || matchesOtherWork || matchesEntries;
   });
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
@@ -286,7 +325,7 @@ const DailyReportPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
+        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
           <button
             onClick={() => setActiveTab('today')}
             className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'today' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
@@ -304,6 +343,12 @@ const DailyReportPage: React.FC = () => {
             className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
             📜 My History
+          </button>
+          <button
+            onClick={() => { setActiveTab('calendar'); if (historyEntries.length === 0) fetchHistory(); }}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'calendar' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+          >
+            📅 Calendar
           </button>
         </div>
 
@@ -540,16 +585,32 @@ const DailyReportPage: React.FC = () => {
           </div>
         )}
          
-         {/* ════════════════════════════════════════
+       {/* ════════════════════════════════════════
             TAB: OTHER WORK
         ════════════════════════════════════════ */}
         {activeTab === 'other_work' && (
           <div className="animate-fade-in space-y-4">
             <div className="card-premium p-6">
-              <h2 className="text-lg font-bold flex items-center gap-2 mb-2">
-                <FileText className="h-5 w-5 text-accent" />
-                General Activities & Assisting Others
-              </h2>
+              
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-accent" />
+                    General Activities & Assisting Others
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2 font-medium">
+                    <CalendarDays className="h-4 w-4" /> {win.reportLabel}
+                  </p>
+                </div>
+
+                {/* Edit Button right inside the Other Work tab */}
+                {submitted && !editMode && (
+                  <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={startEdit}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit Other Work
+                  </Button>
+                )}
+              </div>
+
               <p className="text-sm text-muted-foreground mb-4">
                 Did you assist another employee, do site visits, or perform general office work today? Log it here.
               </p>
@@ -594,7 +655,7 @@ const DailyReportPage: React.FC = () => {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search by inquiry number, client name, status, or work done..."
+                  placeholder="Search by date, inquiry number, client name, status, or other work..."
                   className="pl-9 h-9 text-sm"
                   value={historySearch}
                   onChange={(e) => setHistorySearch(e.target.value)}
@@ -615,51 +676,93 @@ const DailyReportPage: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div>
+              <div className="space-y-4">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                  Showing {filteredHistory.length} recorded entries
+                  Showing {filteredHistory.length} recorded days
                 </p>
                 
-                {/* 🚨 COMPACT LIST LAYOUT 🚨 */}
-                <div className="card-premium overflow-hidden divide-y divide-border/50">
-                  {filteredHistory.map((entry) => {
-                    const label = STATUSES.find((s) => s.value === entry.status)?.label || entry.status;
-                    return (
-                      <div key={entry.id} className="p-4 hover:bg-muted/20 transition-colors flex flex-col sm:flex-row gap-4 sm:items-start">
-                        
-                        {/* Left Side: Metadata (Inquiry, Date, Status) */}
-                        <div className="sm:w-64 flex-shrink-0 space-y-2.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
-                              {entry.inquiry?.inquiry_number}
-                            </span>
-                            <span className="text-sm font-semibold truncate">{entry.inquiry?.client_name}</span>
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={cn('text-[11px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                              {label}
-                            </span>
-                            <span className="text-xs text-muted-foreground flex items-center gap-1 whitespace-nowrap">
-                              <CalendarDays className="h-3 w-3 opacity-70" />
-                              {format(new Date(entry.createdAt), 'dd MMM yyyy')}
-                            </span>
-                          </div>
-                        </div>
+                {filteredHistory.map((report: any) => {
+                  const hasActivity = (report.entries?.length > 0) || (report.otherWork && report.otherWork.trim().length > 0);
+                  return (
+                  <div key={report.id} className="card-premium overflow-hidden divide-y divide-border/50">
+                    
+                    {/* Day Header — red if has entries */}
+                    <div className={cn(
+                      'px-4 py-3 flex items-center gap-2',
+                      hasActivity ? 'bg-red-50 border-b border-red-200' : 'bg-muted/30'
+                    )}>
+                      <CalendarDays className={cn('h-4 w-4', hasActivity ? 'text-red-500' : 'text-accent')} />
+                      <span className={cn('font-semibold text-sm', hasActivity && 'text-red-700')}>
+                        {format(new Date(report.reportDate || report.createdAt), 'EEEE, dd MMM yyyy')}
+                      </span>
+                      {hasActivity && (
+                        <span className="ml-auto text-xs bg-red-100 text-red-600 border border-red-200 px-2 py-0.5 rounded-full font-medium">
+                          {report.entries?.length || 0} {report.entries?.length === 1 ? 'entry' : 'entries'}{report.otherWork ? ' + other work' : ''}
+                        </span>
+                      )}
+                    </div>
 
-                        {/* Right Side: Work Done Text */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                            {entry.workDone}
-                          </p>
+                    {/* Inquiry Entries Loop */}
+                    {report.entries?.map((entry: any) => {
+                      const label = STATUSES.find((s) => s.value === entry.status)?.label || entry.status;
+                      return (
+                        <div key={entry.id} className="p-4 hover:bg-muted/20 transition-colors flex flex-col sm:flex-row gap-4 sm:items-start">
+                          <div className="sm:w-64 flex-shrink-0 space-y-2.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
+                                {entry.inquiry?.inquiry_number}
+                              </span>
+                              <span className="text-sm font-semibold truncate">{entry.inquiry?.client_name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={cn('text-[11px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                                {label}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                              {entry.workDone}
+                            </p>
+                          </div>
                         </div>
-                        
+                      );
+                    })}
+
+                    {/* Other Work Box */}
+                    {report.otherWork && report.otherWork.trim().length > 0 && (
+                      <div className="p-4 bg-muted/10">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5" /> Other Work / General Activities
+                        </p>
+                        <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                          {report.otherWork}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+
+                    {(!report.entries || report.entries.length === 0) && (!report.otherWork || report.otherWork.trim().length === 0) && (
+                      <div className="p-4 text-sm text-muted-foreground italic text-center">
+                        No activity recorded for this day.
+                      </div>
+                    )}
+                  </div>
+                  );
+                })}
               </div>
             )}
           </div>
+        )}
+
+        {/* ════════════════════════════════════════
+            TAB 4: CALENDAR
+        ════════════════════════════════════════ */}
+        {activeTab === 'calendar' && (
+          <ReportCalendar
+            reports={groupedReports}
+            loading={historyLoading}
+          />
         )}
 
         {/* ── Dialogs ── */}

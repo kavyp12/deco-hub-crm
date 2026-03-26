@@ -4000,35 +4000,34 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
 // EMPLOYEE: Get My History
 // GET /api/daily-reports/my-history
 // ==========================================
+
 app.get('/api/daily-reports/my-history', authenticateToken, async (req: any, res: Response) => {
   try {
-    const entries = await (prisma as any).dailyReportEntry.findMany({
+    // Fetch the parent DailyReport to ensure we get days with ONLY Other Work
+    const reports = await (prisma as any).dailyReport.findMany({
       where: {
-        dailyReport: {
-          userId: req.user.id
-        }
+        userId: req.user.id
       },
       include: {
-        inquiry: {
-          select: {
-            id: true,
-            inquiry_number: true,
-            client_name: true,
-            stage: true
-          }
-        },
-        dailyReport: {
-          select: {
-            reportDate: true
+        entries: {
+          include: {
+            inquiry: {
+              select: {
+                id: true,
+                inquiry_number: true,
+                client_name: true,
+                stage: true
+              }
+            }
           }
         }
       },
       orderBy: {
-        createdAt: 'desc' // Newest first
+        reportDate: 'desc' // Newest first
       }
     });
 
-    res.json(entries);
+    res.json(reports);
   } catch (error) {
     console.error('My history error:', error);
     res.status(500).json({ error: 'Failed to fetch history' });

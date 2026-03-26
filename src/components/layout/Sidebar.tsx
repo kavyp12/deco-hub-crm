@@ -28,8 +28,16 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   const { profile, role, signOut } = useAuth();
   const location = useLocation();
 
-  // Sales role only sees these pages
-  const SALES_ALLOWED_PAGES = ['/pipeline', '/inquiries', '/measurements', '/daily-report'];
+  // Sales role only sees these pages (in CRM flow order)
+  const SALES_ALLOWED_PAGES = ['/inquiries', '/pipeline', '/measurements', '/daily-report'];
+
+  // Sales-specific nav in CRM workflow order: Inquiry → Pipeline → Measurements → Daily Report
+  const salesNavigation = [
+    { name: 'Inquiries',     href: '/inquiries',         icon: FileText },
+    { name: 'Pipeline',      href: '/pipeline',          icon: Kanban },
+    { name: 'Measurements',  href: '/measurements',      icon: Ruler },
+    { name: 'Daily Report',  href: '/daily-report',      icon: ClipboardList },
+  ];
 
   const allNavigation = [
     { name: 'Dashboard',     href: '/dashboard',        icon: LayoutDashboard },
@@ -81,9 +89,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   }
 
   // Filter navigation based on role
-  const navigation = role === 'sales'
-    ? allNavigation.filter(item => SALES_ALLOWED_PAGES.includes(item.href))
-    : allNavigation;
+  // Sales agents use the CRM-flow-ordered salesNavigation array
+  const navigation = role === 'sales' ? salesNavigation : allNavigation;
 
   const getRoleLabel = (role: string | null | undefined) => {
     switch (role) {

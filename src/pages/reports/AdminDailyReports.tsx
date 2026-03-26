@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
 import EmployeeActivityReport from './EmployeeActivityReport';
+import ReportCalendar from './ReportCalendar';
 
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ const [date, setDate]                 = useState('');
   const [expandedIds, setExpandedIds]   = useState<Set<string>>(new Set());
 
   // ── UI ───────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'reports' | 'analytics' | 'inactive'>('reports');
+  const [tab, setTab] = useState<'reports' | 'analytics' | 'inactive' | 'calendar'>('reports');
 
   // ── Timeline ─────────────────────────────────────────────────────────────
   const [timelineOpen, setTimelineOpen]         = useState(false);
@@ -315,7 +316,7 @@ const [date, setDate]                 = useState('');
           </div>
         )}
 
-        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
+        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
           {(['reports', 'analytics', 'inactive'] as const).map(t => (
             <button
               key={t}
@@ -342,6 +343,15 @@ const [date, setDate]                 = useState('');
           >
             <Activity className="h-3.5 w-3.5 inline mr-1.5" />
             Employee Activity
+          </button>
+          <button
+            onClick={() => setTab('calendar')}
+            className={cn(
+              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              tab === 'calendar' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            📅 Calendar
           </button>
         </div>
         {/* ════════════════════════════════════════
@@ -890,6 +900,49 @@ const [date, setDate]                 = useState('');
         {tab === ('activity' as any) && (
           <EmployeeActivityReport />
         )}
+
+        {/* ════════════════════════════════════════
+            TAB: CALENDAR (Admin)
+        ════════════════════════════════════════ */}
+        {tab === 'calendar' && (() => {
+          // Flatten all reports into one consolidated grouped-by-date structure
+          // so the admin see a unified view of ALL employees on the calendar
+          const dateMap = new Map<string, any>();
+          reports.forEach((report: Report) => {
+            const key = format(new Date(report.reportDate), 'yyyy-MM-dd');
+            if (!dateMap.has(key)) {
+              dateMap.set(key, {
+                id: key,
+                reportDate: key,
+                entries: [],
+                otherWork: '',
+                users: [],
+              });
+            }
+            const slot = dateMap.get(key);
+            // Attach entries with user name injected
+            report.entries.forEach(e => {
+              slot.entries.push({ ...e, _userName: report.user.name });
+            });
+            if (report.otherWork?.trim()) {
+              slot.otherWork += (slot.otherWork ? '\n\n' : '') + `[${report.user.name}]: ${report.otherWork}`;
+            }
+            slot.users.push(report.user.name);
+          });
+          const calReports = Array.from(dateMap.values()).sort(
+            (a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime()
+          );
+          return (
+            <div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Showing activity from <strong>all employees</strong>.
+                {date ? ` Filtered to ${format(new Date(date), 'dd MMM yyyy')}.` : ' Showing all available data.'}
+                {' '}Click any highlighted date to see details.
+              </p>
+              <ReportCalendar reports={calReports} loading={loading} showUserName />
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Entry Detail Dialog ── */}
