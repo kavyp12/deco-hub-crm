@@ -870,6 +870,7 @@ model DailyReport {
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   status      String   @default("SUBMITTED")
+  otherWork   String?  @db.Text   // <--- ADD THIS LINE
   submittedAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
   entries     DailyReportEntry[]

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import {
   ClipboardList, Send, AlertTriangle, CheckCircle2,
-  Clock, Eye, Pencil, Info, Search, CalendarDays
+  Clock, Eye, Pencil, Info, Search, CalendarDays,
+  FileText
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -96,8 +97,8 @@ const DailyReportPage: React.FC = () => {
   const { toast } = useToast();
   const win = getWindowInfo();
 
-  // Tabs
-  const [activeTab, setActiveTab]           = useState<'today' | 'history'>('today');
+ // Tabs
+  const [activeTab, setActiveTab]           = useState<'today' | 'other_work' | 'history'>('today');
 
   // Today State
   const [inquiries, setInquiries]           = useState<InquiryOption[]>([]);
@@ -107,6 +108,11 @@ const DailyReportPage: React.FC = () => {
   const [editMode, setEditMode]             = useState(false);
   const [entries, setEntries]               = useState<Record<string, InquiryEntry>>({});
   const [savedEntries, setSavedEntries]     = useState<any[]>([]);
+  
+  // NEW: State for Other Work
+  const [otherWork, setOtherWork]           = useState('');
+  const [savedOtherWork, setSavedOtherWork] = useState('');
+
   
   // History State
   const [historyEntries, setHistoryEntries] = useState<any[]>([]);
@@ -122,25 +128,40 @@ const DailyReportPage: React.FC = () => {
 
   // ─── Fetch Today's Data ──────────────────────────────────────────────────
 
-  useEffect(() => {
+ useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get('/daily-reports/my-today');
         const inqs: InquiryOption[] = data.inquiries || [];
         setInquiries(inqs);
 
-        if (data.existingReport?.entries?.length) {
+        // Check if existingReport exists
+        if (data.existingReport) {
           setSubmitted(true);
-          setSavedEntries(data.existingReport.entries);
-          const map: Record<string, InquiryEntry> = {};
-          data.existingReport.entries.forEach((e: any) => {
-            map[e.inquiryId] = { inquiryId: e.inquiryId, status: e.status, workDone: e.workDone };
-          });
-          inqs.forEach(inq => {
-            if (!map[inq.id]) map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' };
-          });
-          setEntries(map);
+          
+          // Set saved other work
+          setSavedOtherWork(data.existingReport.otherWork || '');
+          setOtherWork(data.existingReport.otherWork || '');
+          
+          // Process inquiries if they exist
+          if (data.existingReport.entries?.length) {
+            setSavedEntries(data.existingReport.entries);
+            const map: Record<string, InquiryEntry> = {};
+            data.existingReport.entries.forEach((e: any) => {
+              map[e.inquiryId] = { inquiryId: e.inquiryId, status: e.status, workDone: e.workDone };
+            });
+            inqs.forEach(inq => {
+              if (!map[inq.id]) map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' };
+            });
+            setEntries(map);
+          } else {
+            // If they only submitted otherWork, setup empty inquiry map
+            const map: Record<string, InquiryEntry> = {};
+            inqs.forEach(inq => { map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' }; });
+            setEntries(map);
+          }
         } else {
+          // Completely new day
           const map: Record<string, InquiryEntry> = {};
           inqs.forEach(inq => { map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' }; });
           setEntries(map);
@@ -191,13 +212,15 @@ const DailyReportPage: React.FC = () => {
 
   const filledCount = Object.values(entries).filter(e => e.status && e.workDone.trim()).length;
 
-  const handleSubmit = async () => {
+ const handleSubmit = async () => {
     const toSubmit = Object.values(entries).filter(e => e.status || e.workDone.trim());
+    const hasOtherWork = otherWork.trim().length > 0;
 
-    if (toSubmit.length === 0) {
-      toast({ title: 'Nothing to submit', description: 'Please update at least one inquiry.', variant: 'destructive' });
+    if (toSubmit.length === 0 && !hasOtherWork) {
+      toast({ title: 'Nothing to submit', description: 'Please update an inquiry or log your other work.', variant: 'destructive' });
       return;
     }
+
     for (const e of toSubmit) {
       const inq = inquiries.find(i => i.id === e.inquiryId);
       if (!e.status)          { toast({ title: inq?.inquiry_number || 'Inquiry', description: 'Select a status.',    variant: 'destructive' }); return; }
@@ -206,16 +229,18 @@ const DailyReportPage: React.FC = () => {
 
     setSubmitting(true);
     try {
-      await api.post('/daily-reports', { entries: toSubmit });
+      await api.post('/daily-reports', { entries: toSubmit, otherWork });
+      
       const { data } = await api.get('/daily-reports/my-today');
       setSavedEntries(data.existingReport?.entries || []);
+      setSavedOtherWork(data.existingReport?.otherWork || '');
       setSubmitted(true);
       setEditMode(false);
-      // Refresh history silently if they switch tabs later
+      
       const historyData = await api.get('/daily-reports/my-history');
       setHistoryEntries(historyData.data);
       
-      toast({ title: '✅ Report Submitted', description: `${toSubmit.length} ${toSubmit.length === 1 ? 'inquiry' : 'inquiries'} updated.` });
+      toast({ title: '✅ Report Submitted', description: `Your daily activity has been logged.` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
     } finally {
@@ -264,19 +289,19 @@ const DailyReportPage: React.FC = () => {
         <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
           <button
             onClick={() => setActiveTab('today')}
-            className={cn(
-              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              activeTab === 'today' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            )}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'today' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
             📋 Today's Report
           </button>
           <button
+            onClick={() => setActiveTab('other_work')}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'other_work' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+          >
+            📝 Other Work
+          </button>
+          <button
             onClick={() => setActiveTab('history')}
-            className={cn(
-              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              activeTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            )}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
             📜 My History
           </button>
@@ -514,7 +539,51 @@ const DailyReportPage: React.FC = () => {
             )}
           </div>
         )}
+         
+         {/* ════════════════════════════════════════
+            TAB: OTHER WORK
+        ════════════════════════════════════════ */}
+        {activeTab === 'other_work' && (
+          <div className="animate-fade-in space-y-4">
+            <div className="card-premium p-6">
+              <h2 className="text-lg font-bold flex items-center gap-2 mb-2">
+                <FileText className="h-5 w-5 text-accent" />
+                General Activities & Assisting Others
+              </h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Did you assist another employee, do site visits, or perform general office work today? Log it here.
+              </p>
 
+              {submitted && !editMode ? (
+                <div className="bg-muted/40 border border-border/50 rounded-xl p-4 min-h-[150px] whitespace-pre-wrap text-sm leading-relaxed">
+                  {savedOtherWork ? savedOtherWork : <span className="text-muted-foreground italic">No other work logged for today.</span>}
+                </div>
+              ) : (
+                <Textarea
+                  placeholder="Example: Went on site visit with Rahul for Inquiry #1024, completed weekly inventory check..."
+                  className="min-h-[150px] resize-none text-sm p-4"
+                  value={otherWork}
+                  onChange={(e) => setOtherWork(e.target.value)}
+                />
+              )}
+            </div>
+
+            {(!submitted || editMode) && (
+              <div className="flex justify-end">
+                <Button
+                  variant="default"
+                  onClick={handleSubmit}
+                  disabled={submitting || (filledCount === 0 && otherWork.trim().length === 0)}
+                  className="gap-2 px-8 h-10"
+                >
+                  <Send className="h-4 w-4" />
+                  {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+        
         {/* ════════════════════════════════════════
             TAB 2: MY HISTORY
         ════════════════════════════════════════ */}

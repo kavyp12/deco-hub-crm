@@ -39,6 +39,8 @@ interface Log {
   entityId: string;
   details: string;
   createdAt: string;
+  clientName?: string | null;
+  inquiryNumber?: string | null;
 }
 
 const ActivityLogs = () => {
@@ -268,9 +270,24 @@ const ActivityLogs = () => {
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-slate-600">
-                      {log.details}
+                      <div>{log.details}</div>
+                      
+                      {/* Context Pill */}
+                      {(log.clientName || log.inquiryNumber) && (
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          {log.inquiryNumber && (
+                            <span className="font-mono bg-indigo-50 border border-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                              {log.inquiryNumber}
+                            </span>
+                          )}
+                          {log.clientName && (
+                            <span className="text-xs font-medium text-indigo-600 truncate">{log.clientName}</span>
+                          )}
+                        </div>
+                      )}
+
                       {log.entityId && (
-                         <span className="text-[10px] text-slate-400 font-mono ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <span className="text-[10px] text-slate-400 font-mono mt-1 block opacity-0 group-hover:opacity-100 transition-opacity">
                            ID: {log.entityId}
                          </span>
                       )}

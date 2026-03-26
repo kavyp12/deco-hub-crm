@@ -120,6 +120,61 @@ app.post('/api/companies', authenticateToken, async (req: any, res) => {
 // ==========================================
 
 
+// ── Helper Function to Enrich Logs with Client context ──
+async function enrichLogsWithContext(logs: any[]) {
+  const INQUIRY_ENTITIES = new Set(['INQUIRY', 'INQUIRY_STAGE', 'INQUIRY_MEMBERS', 'INQUIRY_OWNER']);
+  const QUOTATION_ENTITIES = new Set(['QUOTATION']);
+
+  const inquiryIds = [...new Set(logs.filter(l => INQUIRY_ENTITIES.has(l.entity) && l.entityId).map(l => l.entityId as string))];
+  const quotationIds = [...new Set(logs.filter(l => QUOTATION_ENTITIES.has(l.entity) && l.entityId).map(l => l.entityId as string))];
+
+  const infoMap = new Map<string, { clientName: string; refNumber: string }>();
+
+  if (inquiryIds.length > 0) {
+    const inqs = await prisma.inquiry.findMany({
+      where: { id: { in: inquiryIds } },
+      select: { id: true, client_name: true, inquiry_number: true },
+    });
+    inqs.forEach(i => infoMap.set(i.id, { clientName: i.client_name, refNumber: i.inquiry_number }));
+  }
+
+  if (quotationIds.length > 0) {
+    const quotes = await prisma.quotation.findMany({
+      where: { id: { in: quotationIds } },
+      select: { id: true, clientName: true, quotation_number: true },
+    });
+    quotes.forEach(q => infoMap.set(q.id, { clientName: q.clientName, refNumber: q.quotation_number }));
+  }
+
+  // Pre-fetch users for mapping
+  const userIds = [...new Set(logs.map(l => l.userId))];
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true }
+  });
+  const userMap = new Map(users.map(u => [u.id, u.name]));
+
+  return logs.map(log => {
+    let clientName = null;
+    let inquiryNumber = null;
+
+    if (INQUIRY_ENTITIES.has(log.entity) && log.entityId) {
+      const info = infoMap.get(log.entityId);
+      if (info) { clientName = info.clientName; inquiryNumber = info.refNumber; }
+    } else if (QUOTATION_ENTITIES.has(log.entity) && log.entityId) {
+      const info = infoMap.get(log.entityId);
+      if (info) { clientName = info.clientName; inquiryNumber = info.refNumber; }
+    }
+
+    return {
+      ...log,
+      userName: userMap.get(log.userId) || 'Unknown User',
+      clientName,
+      inquiryNumber
+    };
+  });
+}
+
 // GET LOGS (Missing Route)
 app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -133,15 +188,7 @@ app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
       take: 500 // Increased limit for better visibility
     });
 
-    // Fetch users to map names
-    const users = await prisma.user.findMany({ select: { id: true, name: true } });
-    const userMap = new Map(users.map(u => [u.id, u.name]));
-
-    // Attach user names to logs
-    const enrichedLogs = logs.map(log => ({
-      ...log,
-      userName: userMap.get(log.userId) || 'Unknown User'
-    }));
+    const enrichedLogs = await enrichLogsWithContext(logs);
 
     res.json(enrichedLogs);
   } catch (error) {
@@ -175,14 +222,16 @@ app.get('/api/logs/employee/:userId', authenticateToken, async (req: any, res: R
       orderBy: { createdAt: 'asc' },
     });
 
+    const enrichedLogs = await enrichLogsWithContext(logs);
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, name: true, role: true, email: true },
     });
 
     // Group logs by date for day-by-day structure
-    const groupedByDate: Record<string, typeof logs> = {};
-    for (const log of logs) {
+    const groupedByDate: Record<string, any[]> = {};
+    for (const log of enrichedLogs) {
       const day = new Date(log.createdAt).toISOString().split('T')[0];
       if (!groupedByDate[day]) groupedByDate[day] = [];
       groupedByDate[day].push(log);
@@ -193,10 +242,10 @@ app.get('/api/logs/employee/:userId', authenticateToken, async (req: any, res: R
       .map(([date, entries]) => ({
         date,
         totalActions: entries.length,
-        creates: entries.filter(e => e.action === 'CREATE').length,
-        updates: entries.filter(e => e.action === 'UPDATE').length,
-        deletes: entries.filter(e => e.action === 'DELETE').length,
-        logins: entries.filter(e => e.action === 'LOGIN').length,
+        creates: entries.filter((e: any) => e.action === 'CREATE').length,
+        updates: entries.filter((e: any) => e.action === 'UPDATE').length,
+        deletes: entries.filter((e: any) => e.action === 'DELETE').length,
+        logins:  entries.filter((e: any) => e.action === 'LOGIN').length,
         entries,
       }));
 
@@ -506,10 +555,11 @@ app.post('/api/companies', authenticateToken, requireRole(['super_admin', 'admin
 
 app.delete('/api/companies/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
   try {
+    const company = await prisma.company.findUnique({ where: { id: req.params.id } });
     await prisma.company.delete({ where: { id: req.params.id } });
 
     // [LOG]
-    await logActivity(req.user.id, 'DELETE', 'COMPANY', req.params.id, `Deleted Company ID: ${req.params.id}`);
+    await logActivity(req.user.id, 'DELETE', 'COMPANY', req.params.id, `Deleted Company: ${company?.name || req.params.id}`);
 
     res.json({ message: 'Company and all data deleted' });
   } catch { res.status(500).json({ error: 'Failed to delete company' }); }
@@ -636,7 +686,8 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
       response.message += ` (${errors.length} errors)`;
     }
 
-    await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company ID ${companyId}. Processed ${productsCreated} products.`);
+    const company = await prisma.company.findUnique({ where: { id: companyId } });
+    await logActivity(req.user.id, 'UPLOAD', 'CATALOG', null, `Uploaded catalog for company: ${company?.name || companyId}. Processed ${productsCreated} products.`);
     res.json(response);
 
   } catch (error) {
@@ -3988,18 +4039,26 @@ app.get('/api/daily-reports/my-history', authenticateToken, async (req: any, res
 // EMPLOYEE: Submit / Update Daily Report
 // POST /api/daily-reports
 // ==========================================
+// ==========================================
+// EMPLOYEE: Submit / Update Daily Report
+// POST /api/daily-reports
+// ==========================================
 app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { entries, reportDate: reportDateStr } = req.body;
-    // entries: Array of { inquiryId, workDone, status }
+    // 1. Extract entries AND otherWork from the request
+    const { entries, otherWork, reportDate: reportDateStr } = req.body;
 
-    if (!entries || !Array.isArray(entries) || entries.length === 0) {
-      return res.status(400).json({ error: 'At least one entry is required' });
+    // 2. Validate: They must submit EITHER inquiry entries OR otherWork text
+    const hasEntries = entries && Array.isArray(entries) && entries.length > 0;
+    const hasOtherWork = otherWork && typeof otherWork === 'string' && otherWork.trim().length > 0;
+
+    if (!hasEntries && !hasOtherWork) {
+      return res.status(400).json({ error: 'Please update inquiries or log other work' });
     }
 
     const { reportDate } = getReportWindow(reportDateStr);
 
-    // Upsert the DailyReport record (one per user per day)
+    // 3. Upsert the DailyReport record (Include otherWork here)
     const report = await (prisma as any).dailyReport.upsert({
       where: {
         userId_reportDate: {
@@ -4009,6 +4068,7 @@ app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response
       },
       update: {
         status: 'SUBMITTED',
+        otherWork: otherWork || null, // <--- ADDED THIS
         submittedAt: new Date(),
         updatedAt: new Date(),
       },
@@ -4016,30 +4076,32 @@ app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response
         userId: req.user.id,
         reportDate,
         status: 'SUBMITTED',
+        otherWork: otherWork || null, // <--- ADDED THIS
       },
     });
 
-    // Delete old entries and recreate (simple upsert strategy)
+    // 4. Handle Inquiry Entries (if any exist)
     await (prisma as any).dailyReportEntry.deleteMany({
       where: { dailyReportId: report.id },
     });
 
-    await (prisma as any).dailyReportEntry.createMany({
-      data: entries.map((e: any) => ({
-        dailyReportId: report.id,
-        inquiryId: e.inquiryId,
-        workDone: e.workDone,
-        status: e.status,
-      })),
-    });
+    if (hasEntries) {
+      await (prisma as any).dailyReportEntry.createMany({
+        data: entries.map((e: any) => ({
+          dailyReportId: report.id,
+          inquiryId: e.inquiryId,
+          workDone: e.workDone,
+          status: e.status,
+        })),
+      });
+    }
 
-    const inquiryIds = entries.map((e: any) => e.inquiryId);
-    const inquiryRecords = await prisma.inquiry.findMany({
-      where: { id: { in: inquiryIds } },
-      select: { inquiry_number: true }
-    });
-    const inqNums = inquiryRecords.map((i: any) => i.inquiry_number).join(', ');
-    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, `Submitted daily report — ${entries.length} inquiries updated: ${inqNums}`);
+    // 5. Activity Logging
+    const entryCount = hasEntries ? entries.length : 0;
+    let logMessage = `Submitted daily report. Updated ${entryCount} inquiries.`;
+    if (hasOtherWork) logMessage += ` Included other work activities.`;
+
+    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, logMessage);
 
     res.json({ success: true, reportId: report.id });
   } catch (error) {
@@ -4047,7 +4109,6 @@ app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response
     res.status(500).json({ error: 'Failed to submit report' });
   }
 });
-
 
 // ==========================================
 // EMPLOYEE: Get today's assigned inquiries + existing report

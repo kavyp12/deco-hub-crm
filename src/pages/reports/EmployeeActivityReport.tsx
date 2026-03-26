@@ -39,6 +39,8 @@ interface LogEntry {
   entityId: string | null;
   details: string;
   createdAt: string;
+  clientName?: string | null;
+  inquiryNumber?: string | null;
 }
 
 interface DayTimeline {
@@ -495,6 +497,19 @@ const EmployeeActivityReport = () => {
                                       <p className="text-sm text-slate-700 font-medium leading-snug">
                                         {headline}
                                       </p>
+                                      {/* ── Client / Inquiry context pill ── */}
+                                      {(entry.clientName || entry.inquiryNumber) && (
+                                        <p className="text-xs font-medium text-indigo-600 mt-0.5 flex items-center gap-1 flex-wrap">
+                                          {entry.inquiryNumber && (
+                                            <span className="font-mono bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px]">
+                                              {entry.inquiryNumber}
+                                            </span>
+                                          )}
+                                          {entry.clientName && (
+                                            <span className="truncate">{entry.clientName}</span>
+                                          )}
+                                        </p>
+                                      )}
                                       {subtext && (
                                         <p className="text-xs text-slate-400 mt-0.5 truncate" title={subtext}>
                                           {subtext}

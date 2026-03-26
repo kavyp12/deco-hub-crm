@@ -7,6 +7,7 @@ import {
   Clock, ChevronDown, ChevronUp, Search, TrendingUp,
   Activity, FileWarning, Eye, Filter, X, RefreshCw,
   CalendarDays, User, Hash, Tag, ChevronRight,
+  FileText,
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -66,6 +67,7 @@ interface Report {
   reportDate: string;
   status: string;
   submittedAt: string;
+  otherWork?: string; // <--- ADD THIS LINE
   user: { id: string; name: string; role: string };
   entries: ReportEntry[];
 }
@@ -231,6 +233,7 @@ const [date, setDate]                 = useState('');
     const q = searchQuery.toLowerCase();
     return (
       r.user.name.toLowerCase().includes(q) ||
+      (r.otherWork && r.otherWork.toLowerCase().includes(q)) || // <--- Allows searching Other Work text
       r.entries.some(e =>
         e.inquiry.client_name.toLowerCase().includes(q) ||
         e.inquiry.inquiry_number.toLowerCase().includes(q) ||
@@ -647,6 +650,17 @@ const [date, setDate]                 = useState('');
                               </div>
                             ))}
                           </div>
+                          {/* NEW: Display Other Work if it exists */}
+                          {report.otherWork && report.otherWork.trim().length > 0 && (
+                            <div className="bg-muted/10 px-5 py-4 border-t border-border/50">
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                                <FileText className="h-3.5 w-3.5" /> Other Work / General Activities
+                              </p>
+                              <div className="text-sm text-foreground/80 bg-background border border-border/50 rounded-lg px-4 py-3 whitespace-pre-wrap leading-relaxed shadow-sm">
+                                {report.otherWork}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
