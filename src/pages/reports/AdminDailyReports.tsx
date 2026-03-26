@@ -20,6 +20,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
+import EmployeeActivityReport from './EmployeeActivityReport';
+
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -310,7 +312,6 @@ const [date, setDate]                 = useState('');
           </div>
         )}
 
-        {/* ── Tabs ── */}
         <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
           {(['reports', 'analytics', 'inactive'] as const).map(t => (
             <button
@@ -329,8 +330,17 @@ const [date, setDate]                 = useState('');
               )}
             </button>
           ))}
+          <button
+            onClick={() => setTab('activity' as any)}
+            className={cn(
+              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              tab === ('activity' as any) ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Activity className="h-3.5 w-3.5 inline mr-1.5" />
+            Employee Activity
+          </button>
         </div>
-
         {/* ════════════════════════════════════════
             TAB: REPORTS
         ════════════════════════════════════════ */}
@@ -858,6 +868,13 @@ const [date, setDate]                 = useState('');
               </>
             )}
           </div>
+        )}
+
+        {/* ════════════════════════════════════════
+            TAB: EMPLOYEE ACTIVITY
+        ════════════════════════════════════════ */}
+        {tab === ('activity' as any) && (
+          <EmployeeActivityReport />
         )}
       </div>
 

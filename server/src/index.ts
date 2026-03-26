@@ -9,6 +9,7 @@ import multer from 'multer';
 import * as xlsx from 'xlsx';
 import { authenticateToken, requireRole } from './middleware/authMiddleware';
 import path from 'path';
+import { format } from 'date-fns';
 import fs from 'fs';
 
 dotenv.config();
@@ -149,6 +150,132 @@ app.get('/api/logs', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
+
+// GET /api/logs/employee/:userId — Full day-by-day activity timeline for one employee
+app.get('/api/logs/employee/:userId', authenticateToken, async (req: any, res: Response): Promise<void> => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      res.status(403).json({ error: 'Access Denied' });
+      return;
+    }
+
+    const { userId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    const where: any = { userId };
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(new Date(endDate as string).setHours(23, 59, 59, 999)),
+      };
+    }
+
+    const logs = await prisma.activityLog.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, role: true, email: true },
+    });
+
+    // Group logs by date for day-by-day structure
+    const groupedByDate: Record<string, typeof logs> = {};
+    for (const log of logs) {
+      const day = new Date(log.createdAt).toISOString().split('T')[0];
+      if (!groupedByDate[day]) groupedByDate[day] = [];
+      groupedByDate[day].push(log);
+    }
+
+    const timeline = Object.entries(groupedByDate)
+      .sort(([a], [b]) => b.localeCompare(a)) // latest first
+      .map(([date, entries]) => ({
+        date,
+        totalActions: entries.length,
+        creates: entries.filter(e => e.action === 'CREATE').length,
+        updates: entries.filter(e => e.action === 'UPDATE').length,
+        deletes: entries.filter(e => e.action === 'DELETE').length,
+        logins: entries.filter(e => e.action === 'LOGIN').length,
+        entries,
+      }));
+
+    res.json({ user, timeline });
+  } catch (error) {
+    console.error('Employee log error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
+// GET /api/logs/employees-summary — Activity summary for ALL employees (for report section)
+app.get('/api/logs/employees-summary', authenticateToken, async (req: any, res: Response): Promise<void> => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      res.status(403).json({ error: 'Access Denied' });
+      return;
+    }
+
+    const { startDate, endDate } = req.query;
+
+    const where: any = {};
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(new Date(endDate as string).setHours(23, 59, 59, 999)),
+      };
+    }
+
+    const [logs, users] = await Promise.all([
+      prisma.activityLog.findMany({ where, orderBy: { createdAt: 'desc' } }),
+      prisma.user.findMany({ select: { id: true, name: true, role: true, email: true } }),
+    ]);
+
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    // Group by userId
+    const byUser: Record<string, any> = {};
+    for (const log of logs) {
+      if (!byUser[log.userId]) {
+        const u = userMap.get(log.userId);
+        byUser[log.userId] = {
+          userId: log.userId,
+          userName: u?.name || 'Unknown',
+          userRole: u?.role || 'Unknown',
+          totalActions: 0,
+          creates: 0,
+          updates: 0,
+          deletes: 0,
+          logins: 0,
+          lastActive: null,
+          activeDays: new Set<string>(),
+        };
+      }
+      const entry = byUser[log.userId];
+      entry.totalActions++;
+      if (log.action === 'CREATE') entry.creates++;
+      if (log.action === 'UPDATE') entry.updates++;
+      if (log.action === 'DELETE') entry.deletes++;
+      if (log.action === 'LOGIN') entry.logins++;
+      if (!entry.lastActive || new Date(log.createdAt) > new Date(entry.lastActive)) {
+        entry.lastActive = log.createdAt;
+      }
+      entry.activeDays.add(new Date(log.createdAt).toISOString().split('T')[0]);
+    }
+
+    const summary = Object.values(byUser).map((e: any) => ({
+      ...e,
+      activeDays: e.activeDays.size, // convert Set to count
+    })).sort((a: any, b: any) => b.totalActions - a.totalActions);
+
+    res.json(summary);
+  } catch (error) {
+    console.error('Employee summary error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+
 // 2. EXCEL EXPORT ENDPOINT (NEW)
 app.get('/api/logs/export', authenticateToken, async (req: any, res: Response): Promise<void> => {
   try {
@@ -242,6 +369,7 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
     const { password: _, ...userInfo } = user;
 
     console.log('✅ Login successful'); // Add logging
+    await logActivity(user.id, 'LOGIN', 'AUTH', null, `${user.name} logged in`);
     res.json({ token, user: userInfo });
   } catch (error) {
     console.error('❌ Login error:', error); // Add logging
@@ -572,17 +700,14 @@ app.get('/api/products/all', authenticateToken, async (req: Request, res: Respon
     res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
-app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: Request, res: Response) => {
+app.put('/api/products/:id', authenticateToken, requireRole(['super_admin', 'admin_hr']), async (req: any, res: Response) => {
   const { price, imageUrl, name } = req.body;
   try {
     const product = await prisma.product.update({
       where: { id: req.params.id },
-      data: {
-        price: price,
-        imageUrl,
-        name
-      }
+      data: { price, imageUrl, name }
     });
+    await logActivity(req.user.id, 'UPDATE', 'PRODUCT', req.params.id, `Updated product: ${product.name}`);
     res.json(product);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update product' });
@@ -962,6 +1087,7 @@ app.post('/api/leaves', authenticateToken, async (req: any, res: Response) => {
         reason
       }
     });
+    await logActivity(req.user.id, 'CREATE', 'LEAVE', leave.id, `Applied for ${type} leave from ${startDate} to ${endDate}`);
     res.json(leave);
   } catch (error) {
     res.status(500).json({ error: 'Failed to apply for leave' });
@@ -975,6 +1101,8 @@ app.put('/api/leaves/:id/status', authenticateToken, requireRole(['super_admin',
       where: { id: req.params.id },
       data: { status, reviewedBy: req.user.id }
     });
+    const leaveUser = await prisma.user.findUnique({ where: { id: leave.userId }, select: { name: true } });
+    await logActivity(req.user.id, 'UPDATE', 'LEAVE', req.params.id, `${status} leave request for ${leaveUser?.name || 'employee'} (${leave.type}, ${format(new Date(leave.startDate), 'dd MMM')} – ${format(new Date(leave.endDate), 'dd MMM')})`);
     res.json(leave);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update leave status' });
@@ -1653,15 +1781,15 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
     res.status(500).json({ error: 'Failed to update selection' });
   }
 });
-app.delete('/api/selections/:id', authenticateToken, async (req: Request, res: Response) => {
+app.delete('/api/selections/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     await prisma.selection.delete({ where: { id: req.params.id } });
+    await logActivity(req.user.id, 'DELETE', 'SELECTION', req.params.id, `Deleted Selection #${req.params.id}`);
     res.json({ message: 'Selection deleted' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete selection' });
   }
 });
-
 
 
 // caculation
@@ -1804,6 +1932,7 @@ app.post('/api/calculations', authenticateToken, async (req: any, res: Response)
       }
     });
 
+    await logActivity(req.user.id, 'CREATE', 'CALCULATION', calculation.id, `Saved standard calculation for Selection ${selectionId}`);
     res.json(calculation);
   } catch (error) {
     console.error('Calculation Save Error:', error);
@@ -2190,7 +2319,7 @@ app.get('/api/calculations/local/:selectionId', authenticateToken, async (req: R
 // ==========================================
 // FIX 2: SAVE LOCAL CALCULATION - Preserve measurements
 // ==========================================
-app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: Request, res: Response) => {
+app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: any, res: Response) => {
   const { selectionId } = req.params;
   const { items } = req.body;
 
@@ -2263,6 +2392,7 @@ app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: 
         }
       }
     });
+        await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved LOCAL calculation & measurements for Selection`);
 
     res.json(localCalc);
   } catch (error) {
@@ -2744,6 +2874,7 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
       }
     });
 
+  await logActivity(req.user.id, 'CREATE', 'QUOTATION', quotation.id, `Created Quotation #${quotation.quotation_number}`);
     res.json(quotation);
   } catch (error) {
     console.error(error);
@@ -2752,7 +2883,7 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
 });
 // ==========================================
 // QUOTATION ROUTES - CLEANED UP
-// ==========================================
+
 // [FILE: src/index.ts]
 
 // 1. LIST QUOTATIONS (Filtered by Role & Assignment)
@@ -3081,6 +3212,7 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
 
     console.log(`✅ Quotation ${quoteNumber} generated.`);
     res.json({ ...newQuote, subTotal, gstTotal, grandTotal });
+    await logActivity(req.user.id, 'CREATE', 'QUOTATION', newQuote.id, `Generated Quotation #${quoteNumber} automatically`);
 
   } catch (error: any) {
     console.error('❌ Quotation Generation Error:', error);
@@ -3356,7 +3488,8 @@ app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Res
     });
 
     // Log the movement for Admin visibility
-    await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Moved to ${stage}`);
+  await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Stage changed → "${stage}" for inquiry ${updated.inquiry_number}`);
+
 
     res.json(updated);
   } catch (error) {
@@ -3379,6 +3512,7 @@ app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res:
       },
       include: { user: { select: { name: true } } }
     });
+    await logActivity(req.user.id, 'CREATE', 'COMMENT', comment.id, `Added a comment to Inquiry`);
     res.json(comment);
   } catch (error) {
     res.status(500).json({ error: 'Failed to post comment' });
@@ -3426,6 +3560,7 @@ app.post('/api/checklists/:id/items', authenticateToken, async (req: any, res: R
         isCompleted: false
       }
     });
+    await logActivity(req.user.id, 'CREATE', 'CHECKLIST_ITEM', item.id, `Added item to checklist: ${req.body.text}`);
     res.json(item);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add item' });
@@ -3439,6 +3574,7 @@ app.put('/api/checklist-items/:id', authenticateToken, async (req: any, res: Res
       where: { id: req.params.id },
       data: { isCompleted: req.body.isCompleted }
     });
+    await logActivity(req.user.id, 'UPDATE', 'CHECKLIST_ITEM', req.params.id, `Toggled checklist item status to ${req.body.isCompleted ? 'Complete' : 'Incomplete'}`);
     res.json(item);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update item' });
@@ -3455,6 +3591,7 @@ app.post('/api/inquiries/:id/labels', authenticateToken, async (req: any, res: R
         inquiryId: req.params.id
       }
     });
+    await logActivity(req.user.id, 'CREATE', 'LABEL', label.id, `Added label [${req.body.text}] to Inquiry`);
     res.json(label);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add label' });
@@ -3529,6 +3666,7 @@ app.post('/api/quotations/:id/comments', authenticateToken, async (req: any, res
       },
       include: { user: { select: { name: true } } }
     });
+    await logActivity(req.user.id, 'CREATE', 'COMMENT', comment.id, `Added a comment to Quotation`);
     res.json(comment);
   } catch (error) {
     res.status(500).json({ error: 'Failed to post comment' });
@@ -3570,6 +3708,7 @@ app.post('/api/quotations/:id/checklists', authenticateToken, async (req: any, r
       },
       include: { items: true }
     });
+    await logActivity(req.user.id, 'CREATE', 'CHECKLIST', list.id, `Created checklist: ${req.body.title}`);
     res.json(list);
   } catch (error) {
     res.status(500).json({ error: 'Failed to create checklist' });
@@ -3601,6 +3740,8 @@ app.post('/api/quotation-checklists/:id/items', authenticateToken, async (req: a
         isCompleted: false
       }
     });
+
+    await logActivity(req.user.id, 'CREATE', 'CHECKLIST_ITEM', item.id, `Added quotation checklist item: ${req.body.text}`);
     res.json(item);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add item' });
@@ -3613,6 +3754,7 @@ app.put('/api/quotation-checklist-items/:id', authenticateToken, async (req: any
       where: { id: req.params.id },
       data: { isCompleted: req.body.isCompleted }
     });
+    await logActivity(req.user.id, 'UPDATE', 'CHECKLIST_ITEM', req.params.id, `Toggled quotation checklist item to ${req.body.isCompleted ? 'Complete' : 'Incomplete'}`);
     res.json(item);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update item' });
@@ -3637,6 +3779,7 @@ app.put('/api/inquiries/:id/description', authenticateToken, async (req: any, re
       where: { id: req.params.id },
       data: { description: req.body.description }
     });
+    await logActivity(req.user.id, 'UPDATE', 'INQUIRY', req.params.id, `Updated inquiry description`);
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update description' });
@@ -3665,7 +3808,8 @@ app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Re
           sales_persons: { select: { id: true, name: true } }
         }
       });
-      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Updated assigned members`);
+      const assignedNames = updated.sales_persons.map((u: any) => u.name).join(', ');
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Assigned members [${assignedNames}] to inquiry`);
       return res.json(updated);
     }
 
@@ -3675,7 +3819,8 @@ app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Re
         where: { id: req.params.id },
         data: { sales_person_id: userId }
       });
-      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_OWNER', req.params.id, `Reassigned inquiry owner`);
+      const newOwner = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_OWNER', req.params.id, `Transferred inquiry ownership to ${newOwner?.name || userId}`);
       return res.json(updated);
     }
 
@@ -3743,11 +3888,12 @@ const getReportWindow = (dateInput?: string) => {
 // ADMIN & EMPLOYEE: Inquiry Timeline
 // GET /api/daily-reports/inquiry/:inquiryId/timeline
 // ==========================================
+// Replace your existing /api/daily-reports/inquiry/:inquiryId/timeline route with this:
+
 app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, async (req: any, res: Response) => {
   try {
-    // 🚨 Admin check removed so employees can see history of their own inquiries
-
-    const entries = await (prisma as any).dailyReportEntry.findMany({
+    // 1. Fetch Manual Daily Report Entries
+    const manualEntries = await (prisma as any).dailyReportEntry.findMany({
       where: { inquiryId: req.params.inquiryId },
       include: {
         dailyReport: {
@@ -3756,6 +3902,32 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // 2. Fetch Automated Activity Logs for this Inquiry
+    const autoLogs = await prisma.activityLog.findMany({
+      where: { 
+        entityId: req.params.inquiryId,
+        entity: { in: ['INQUIRY', 'INQUIRY_STAGE', 'INQUIRY_OWNER', 'INQUIRY_MEMBERS', 'COMMENT', 'CHECKLIST', 'LABEL'] }
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Map autoLogs to look like manualEntries so the frontend timeline UI doesn't break
+    const formattedAutoLogs = autoLogs.map(log => ({
+      id: log.id,
+      workDone: `[System Log] ${log.details}`,
+      status: 'system_action', // You can map this to a custom color in STATUS_COLORS in frontend
+      createdAt: log.createdAt,
+      dailyReport: {
+        reportDate: log.createdAt,
+        user: { id: log.userId, name: 'System / Staff' } // Ideally you fetch the user's name here if needed
+      }
+    }));
+
+    // Combine and sort by date
+    const combinedTimeline = [...manualEntries, ...formattedAutoLogs].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
 
     const inquiry = await prisma.inquiry.findUnique({
       where: { id: req.params.inquiryId },
@@ -3768,12 +3940,11 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
       },
     });
 
-    res.json({ inquiry, timeline: entries });
+    res.json({ inquiry, timeline: combinedTimeline });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch timeline' });
   }
 });
-
 // ==========================================
 // EMPLOYEE: Get My History
 // GET /api/daily-reports/my-history
@@ -3862,7 +4033,13 @@ app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response
       })),
     });
 
-    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, `Submitted daily report with ${entries.length} entries`);
+    const inquiryIds = entries.map((e: any) => e.inquiryId);
+    const inquiryRecords = await prisma.inquiry.findMany({
+      where: { id: { in: inquiryIds } },
+      select: { inquiry_number: true }
+    });
+    const inqNums = inquiryRecords.map((i: any) => i.inquiry_number).join(', ');
+    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, `Submitted daily report — ${entries.length} inquiries updated: ${inqNums}`);
 
     res.json({ success: true, reportId: report.id });
   } catch (error) {
@@ -3876,6 +4053,8 @@ app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response
 // EMPLOYEE: Get today's assigned inquiries + existing report
 // GET /api/daily-reports/my-today
 // ==========================================
+
+
 app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: Response) => {
   try {
     const { windowStart, windowEnd, reportDate } = getReportWindow();
