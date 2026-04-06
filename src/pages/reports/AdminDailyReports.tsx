@@ -7,7 +7,7 @@ import {
   Clock, ChevronDown, ChevronUp, Search, TrendingUp,
   Activity, FileWarning, Eye, Filter, X, RefreshCw,
   CalendarDays, User, Hash, Tag, ChevronRight,
-  FileText,
+  FileText, FileOutput, Download, ChevronLeft
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -18,9 +18,16 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import EmployeeActivityReport from './EmployeeActivityReport';
 import ReportCalendar from './ReportCalendar';
 
@@ -253,6 +260,221 @@ const [date, setDate]                 = useState('');
   // Total entries across all reports
   const totalEntries = filteredReports.reduce((sum, r) => sum + r.entries.length, 0);
 
+  // ─── PDF Generation Utilities ──────────────────────────────────────────────
+
+  const buildPDF = (reportsToExport: Report[], title: string, subtitle: string) => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 14;
+
+    // ── Header band
+    doc.setFillColor(24, 24, 27);
+    doc.rect(0, 0, pageW, 28, 'F');
+
+    // Company / report title
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(15);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DECO HUB · Daily Reports', margin, 12);
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(200, 200, 200);
+    doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`, margin, 19);
+    doc.text(subtitle, pageW - margin, 19, { align: 'right' });
+
+    // ── Coloured title section
+    doc.setFillColor(245, 245, 250);
+    doc.rect(0, 28, pageW, 16, 'F');
+    doc.setTextColor(24, 24, 27);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, margin, 39);
+
+    let startY = 48;
+
+    if (reportsToExport.length === 0) {
+      doc.setFontSize(10);
+      doc.setTextColor(150, 150, 150);
+      doc.text('No data available for the selected filters.', margin, startY + 10);
+      doc.save(`Daily_Report_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+      return;
+    }
+
+    reportsToExport.forEach((report, rIdx) => {
+      // ── Per-employee block header
+      if (rIdx > 0) startY += 6;
+
+      // Employee name banner
+      doc.setFillColor(63, 63, 70);
+      doc.roundedRect(margin, startY, pageW - margin * 2, 10, 2, 2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.text(
+        `${report.user.name.toUpperCase()}  (${report.user.role.replace('_', ' ')})`,
+        margin + 4, startY + 7
+      );
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(
+        `Report Date: ${format(new Date(report.reportDate), 'dd MMM yyyy')}   Submitted: ${format(new Date(report.submittedAt), 'h:mm a')}`,
+        pageW - margin - 4, startY + 7, { align: 'right' }
+      );
+
+      startY += 13;
+
+      // ── Entries table
+      const tableRows: any[] = report.entries.map(entry => [
+        entry.inquiry.inquiry_number,
+        entry.inquiry.client_name,
+        entry.inquiry.stage || '—',
+        STATUS_LABELS[entry.status]?.replace(/^\S+\s/, '') || entry.status,
+        doc.splitTextToSize(entry.workDone, 72).join('\n'),
+      ]);
+
+      if (tableRows.length > 0) {
+        autoTable(doc, {
+          startY,
+          margin: { left: margin, right: margin },
+          head: [['Inquiry No', 'Client', 'Stage', 'Status', 'Work Done']],
+          body: tableRows,
+          styles: { fontSize: 7.5, cellPadding: 2.5, overflow: 'linebreak', valign: 'top' },
+          headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+          alternateRowStyles: { fillColor: [248, 248, 252] },
+          columnStyles: {
+            0: { cellWidth: 22, fontStyle: 'bold' },
+            1: { cellWidth: 35 },
+            2: { cellWidth: 24 },
+            3: { cellWidth: 26 },
+            4: { cellWidth: 'auto' },
+          },
+          didParseCell: (data: any) => {
+            if (data.section === 'body' && data.column.index === 3) {
+              const statusVal = report.entries[data.row.index]?.status;
+              const colorMap: Record<string, [number,number,number]> = {
+                closed_won:  [22, 163, 74],
+                closed_lost: [220, 38, 38],
+                follow_up:   [202, 138, 4],
+                contacted:   [37, 99, 235],
+              };
+              if (colorMap[statusVal]) data.cell.styles.textColor = colorMap[statusVal];
+            }
+          },
+        });
+        startY = (doc as any).lastAutoTable.finalY + 4;
+      }
+
+      // other work
+      if (report.otherWork?.trim()) {
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(100, 100, 120);
+        doc.text('OTHER WORK / GENERAL:', margin, startY + 4);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(50, 50, 60);
+        const lines = doc.splitTextToSize(report.otherWork, pageW - margin * 2 - 4);
+        doc.text(lines, margin + 4, startY + 9);
+        startY += 9 + lines.length * 4 + 2;
+      }
+
+      // Page overflow
+      if (startY > pageH - 20 && rIdx < reportsToExport.length - 1) {
+        doc.addPage();
+        startY = 14;
+      }
+    });
+
+    // ── Footer on each page
+    const pageCount = (doc.internal as any).getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(180, 180, 180);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Page ${i} of ${pageCount}  ·  Deco Hub CRM`, pageW / 2, pageH - 6, { align: 'center' });
+    }
+
+    return doc;
+  };
+
+  const downloadAllTime = () => {
+    const doc = buildPDF(
+      filteredReports,
+      `All Employee Reports (${filteredReports.length} reports · ${totalEntries} entries)`,
+      'All Time'
+    );
+    doc?.save(`DailyReports_AllTime_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+  };
+
+  const downloadByDate = () => {
+    if (!date) {
+      toast({ title: 'Select a date first', description: 'Pick a date from the filter to download date-wise report', variant: 'destructive' });
+      return;
+    }
+    const doc = buildPDF(
+      filteredReports,
+      `Reports for ${format(new Date(date), 'dd MMMM yyyy')} (${filteredReports.length} reports)`,
+      `Date: ${format(new Date(date), 'dd MMM yyyy')}`
+    );
+    doc?.save(`DailyReports_${format(new Date(date), 'dd_MMM_yyyy')}.pdf`);
+  };
+
+  const downloadIndividual = (report: Report) => {
+    const doc = buildPDF(
+      [report],
+      `${report.user.name} — ${format(new Date(report.reportDate), 'dd MMMM yyyy')}`,
+      `${report.user.role.replace('_', ' ')} · ${report.entries.length} entries`
+    );
+    doc?.save(`Report_${report.user.name.replace(/\s+/g, '_')}_${format(new Date(report.reportDate), 'dd_MMM_yyyy')}.pdf`);
+  };
+
+  // Fetch all-time data for a full all-employee download
+  const downloadAllEmployeesAllTime = async () => {
+    try {
+      toast({ title: 'Preparing PDF...', description: 'Fetching all records, please wait.' });
+      const res = await api.get('/daily-reports/admin', { params: {} });
+      const allReports: Report[] = res.data.reports || [];
+      const doc = buildPDF(
+        allReports,
+        `Complete Report — All Employees, All Time (${allReports.length} reports)`,
+        'All Employees · All Time'
+      );
+      doc?.save(`DailyReports_Complete_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+    } catch {
+      toast({ title: 'Error', description: 'Failed to fetch all data', variant: 'destructive' });
+    }
+  };
+
+  // Multi-select employee state for custom PDF download
+  const [selectedEmpIds, setSelectedEmpIds] = useState<Set<string>>(new Set());
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+
+  const toggleEmpSelect = (id: string) => {
+    setSelectedEmpIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const downloadSelected = () => {
+    if (selectedEmpIds.size === 0) {
+      toast({ title: 'No employee selected', description: 'Please check at least one employee', variant: 'destructive' });
+      return;
+    }
+    const subset = filteredReports.filter(r => selectedEmpIds.has(r.userId));
+    const names = subset.map(r => r.user.name).join(', ');
+    const doc = buildPDF(
+      subset,
+      `Selected Employees Report (${subset.length})`,
+      names.length > 40 ? names.slice(0, 40) + '…' : names
+    );
+    doc?.save(`DailyReports_Selected_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+    setDownloadMenuOpen(false);
+  };
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -269,14 +491,152 @@ const [date, setDate]                 = useState('');
               Track employee activity across all assigned inquiries
             </p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2 text-muted-foreground hover:text-foreground"
-            onClick={fetchAll}
-          >
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </Button>
+          <div className="flex gap-2">
+            {/* ── Download Report Dropdown ── */}
+            <DropdownMenu open={downloadMenuOpen} onOpenChange={open => { setDownloadMenuOpen(open); }}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Download className="h-4 w-4" />
+                  Download Report
+                  {selectedEmpIds.size > 0 && (
+                    <span className="bg-accent text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center ml-0.5">
+                      {selectedEmpIds.size}
+                    </span>
+                  )}
+                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-72 p-0"
+                onCloseAutoFocus={e => e.preventDefault()}
+                onInteractOutside={() => setDownloadMenuOpen(false)}
+              >
+                {/* Header */}
+                <div className="px-3 py-2.5 border-b border-border/50 flex items-center gap-2">
+                  <FileOutput className="h-3.5 w-3.5 text-accent" />
+                  <span className="text-xs font-semibold text-foreground">Export as PDF</span>
+                </div>
+
+                {/* Quick options */}
+                <div className="p-1.5 space-y-0.5">
+                  <button
+                    onClick={() => { downloadByDate(); setDownloadMenuOpen(false); }}
+                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium">📅 By Selected Date</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {date ? format(new Date(date), 'dd MMM yyyy') : 'Pick a date from filter first'}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => { downloadAllTime(); setDownloadMenuOpen(false); }}
+                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium">📋 Current View (All filters)</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {filteredReports.length} reports · {totalEntries} entries
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => { downloadAllEmployeesAllTime(); setDownloadMenuOpen(false); }}
+                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
+                  >
+                    <span className="text-sm font-medium">🗂️ All Time (Complete)</span>
+                    <span className="text-[11px] text-muted-foreground">All employees · full history</span>
+                  </button>
+                </div>
+
+                {/* Multi-select employee section */}
+                {filteredReports.length > 0 && (
+                  <>
+                    <div className="border-t border-border/50 px-3 py-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        Select Employees
+                      </span>
+                      <div className="flex gap-2 text-[11px]">
+                        <button
+                          className="text-accent hover:underline font-medium"
+                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set(filteredReports.map(r => r.userId))); }}
+                        >All</button>
+                        <span className="text-muted-foreground">·</span>
+                        <button
+                          className="text-muted-foreground hover:underline"
+                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set()); }}
+                        >None</button>
+                      </div>
+                    </div>
+
+                    {/* Scrollable employee checkboxes */}
+                    <div className="max-h-52 overflow-y-auto px-1.5 space-y-0.5 pb-1">
+                      {filteredReports.map(report => {
+                        const checked = selectedEmpIds.has(report.userId);
+                        return (
+                          <label
+                            key={report.id}
+                            className={cn(
+                              'flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors select-none',
+                              checked ? 'bg-accent/10 border border-accent/25' : 'hover:bg-muted/60'
+                            )}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleEmpSelect(report.userId)}
+                              className="rounded accent-accent w-4 h-4 cursor-pointer shrink-0"
+                            />
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-accent to-accent/60 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                              {report.user.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate leading-tight">{report.user.name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {format(new Date(report.reportDate), 'dd MMM')} · {report.entries.length} {report.entries.length === 1 ? 'entry' : 'entries'}
+                              </p>
+                            </div>
+                            <button
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); downloadIndividual(report); setDownloadMenuOpen(false); }}
+                              className="shrink-0 text-[10px] text-muted-foreground hover:text-accent px-1.5 py-1 rounded border border-border/60 hover:border-accent/40 transition-colors font-medium"
+                              title="Download only this employee"
+                            >PDF</button>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {/* Download Selected action */}
+                    <div className="border-t border-border/50 p-2">
+                      <button
+                        onClick={downloadSelected}
+                        disabled={selectedEmpIds.size === 0}
+                        className={cn(
+                          'w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all',
+                          selectedEmpIds.size > 0
+                            ? 'bg-accent text-white hover:bg-accent/90 shadow-sm cursor-pointer'
+                            : 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
+                        )}
+                      >
+                        <Download className="h-4 w-4" />
+                        {selectedEmpIds.size > 0
+                          ? `Download Selected (${selectedEmpIds.size} employee${selectedEmpIds.size > 1 ? 's' : ''})`
+                          : 'Select employees above'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground hover:text-foreground"
+              onClick={fetchAll}
+            >
+              <RefreshCw className="h-4 w-4" /> Refresh
+            </Button>
+          </div>
         </div>
 
         {/* ── Analytics Cards ── */}

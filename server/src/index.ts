@@ -3845,21 +3845,27 @@ app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Re
 
     // SCENARIO 1: Frontend sends a list of members (Collaborators)
     if (userIds && Array.isArray(userIds)) {
+      if (userIds.length === 0) {
+        return res.status(400).json({ error: "At least one member must be assigned." });
+      }
+      
+      const primaryOwnerId = userIds[0];
+      const collaborators = userIds.slice(1);
+
       const updated = await prisma.inquiry.update({
         where: { id: req.params.id },
         data: {
-          // This 'set' command replaces the current list with the new list
+          sales_person_id: primaryOwnerId,
           sales_persons: {
-            set: userIds.map((uid: string) => ({ id: uid }))
+            set: collaborators.map((uid: string) => ({ id: uid }))
           }
         },
-        // Return the updated data so frontend updates immediately
         include: {
           sales_person: { select: { id: true, name: true } },
           sales_persons: { select: { id: true, name: true } }
         }
       });
-      const assignedNames = updated.sales_persons.map((u: any) => u.name).join(', ');
+      const assignedNames = [updated.sales_person.name, ...updated.sales_persons.map((u: any) => u.name)].join(', ');
       await logActivity(req.user.id, 'UPDATE', 'INQUIRY_MEMBERS', req.params.id, `Assigned members [${assignedNames}] to inquiry`);
       return res.json(updated);
     }

@@ -171,6 +171,7 @@ const Pipeline: React.FC = () => {
   
   // --- QUICK CREATE CARD STATE ---
   const [addingCardToColumn, setAddingCardToColumn] = useState<string | null>(null);
+  const [insertAfterTaskId, setInsertAfterTaskId] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardAssignees, setNewCardAssignees] = useState<string[]>([]);
   // Modal State
@@ -360,10 +361,21 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
             selections: []
         };
 
-        setTasks(prev => [newTask, ...prev]);
+        setTasks(prev => {
+            if (insertAfterTaskId) {
+                const index = prev.findIndex(t => t.id === insertAfterTaskId);
+                if (index !== -1) {
+                    const newArray = Array.from(prev);
+                    newArray.splice(index + 1, 0, newTask);
+                    return newArray;
+                }
+            }
+            return [...prev, newTask];
+        });
         setNewCardTitle('');
         setNewCardAssignees([]); // Reset array
         setAddingCardToColumn(null);
+        setInsertAfterTaskId(null);
         toast({ title: "Card Created", description: "New card added successfully." });
 
     } catch (error) {
@@ -407,18 +419,37 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
 
   const handleToggleMember = async (userId: string) => {
     if (!selectedTask) return;
-    const currentMembers = selectedTask.sales_persons || [];
-    const isAssigned = currentMembers.some(p => p.id === userId);
+    
+    // Combine primary owner and collaborators into one array
+    const currentMemberIds = [
+      ...(selectedTask.sales_person ? [selectedTask.sales_person.id] : []),
+      ...(selectedTask.sales_persons || []).map(p => p.id)
+    ];
+    
+    // Ensure unique IDs
+    const uniqueMembers = Array.from(new Set(currentMemberIds));
+    const isAssigned = uniqueMembers.includes(userId);
+    
     let newUserIds: string[];
     if (isAssigned) {
-        newUserIds = currentMembers.filter(p => p.id !== userId).map(p => p.id);
+        newUserIds = uniqueMembers.filter(id => id !== userId);
     } else {
-        newUserIds = [...currentMembers.map(p => p.id), userId];
+        newUserIds = [...uniqueMembers, userId];
     }
+
+    if (newUserIds.length === 0) {
+        toast({ title: "Error", description: "At least one member must be assigned.", variant: "destructive" });
+        return;
+    }
+
     try {
-      await api.put(`/inquiries/${selectedTask.id}/assign`, { userIds: newUserIds });
-      const newMembers = allUsers.filter(u => newUserIds.includes(u.id)).map(u => ({ id: u.id, name: u.name }));
-      const updatedTask = { ...selectedTask, sales_persons: newMembers };
+      const { data } = await api.put(`/inquiries/${selectedTask.id}/assign`, { userIds: newUserIds });
+      
+      const updatedTask = { 
+        ...selectedTask, 
+        sales_person: data.sales_person,
+        sales_persons: data.sales_persons 
+      };
       updateLocalTask(updatedTask);
     } catch(e) { console.error(e); }
   };
@@ -580,18 +611,43 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
     return;
   }
 
-  // --- HANDLE CARD DRAGGING (unchanged) ---
+  // --- HANDLE CARD DRAGGING ---
   const realId = draggableId.split('::')[1];
+  const destStage = destination.droppableId;
 
-  const updatedTasks = tasks.map(t =>
-    t.id === realId ? { ...t, stage: destination.droppableId, updated_at: new Date().toISOString() } : t
-  );
-  setTasks(updatedTasks);
+  // Let's get the currently ordered filtered list for the destination column
+  const currentDestTasks = getTasksByStage(destStage);
+  
+  // We need to place our realId task at `destination.index` in this visual list.
+  // We remove it from currentDestTasks first (if it's already there)
+  const destTasksWithoutMoved = currentDestTasks.filter(t => t.id !== realId);
+  
+  // Find the task that will be sitting right AFTER our moved task
+  const taskAfterMoved = destTasksWithoutMoved[destination.index];
 
-  try {
-    await api.put(`/inquiries/${realId}/stage`, { stage: destination.droppableId });
-  } catch (error) {
-    fetchPipeline();
+  // Now build the new full tasks array
+  let newTasks = tasks.map(t => t.id === realId ? { ...t, stage: destStage, updated_at: new Date().toISOString() } : t);
+  const movedTask = newTasks.find(t => t.id === realId);
+  
+  if (movedTask) {
+    newTasks = newTasks.filter(t => t.id !== realId);
+    if (taskAfterMoved) {
+        const insertIndex = newTasks.findIndex(t => t.id === taskAfterMoved.id);
+        newTasks.splice(insertIndex, 0, movedTask);
+    } else {
+        // If there is no task after it (it's at the end of the filtered list), we append it
+        newTasks.push(movedTask);
+    }
+  }
+
+  setTasks(newTasks);
+
+  if (source.droppableId !== destination.droppableId) {
+    try {
+      await api.put(`/inquiries/${realId}/stage`, { stage: destStage });
+    } catch (error) {
+      fetchPipeline();
+    }
   }
 };
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
@@ -988,19 +1044,35 @@ const getTasksByStage = (stage: string) => {
                                             ref={provided.innerRef} 
                                             {...provided.draggableProps} 
                                             {...provided.dragHandleProps} 
-                                            onClick={() => handleTaskClick(task)}
-                                            className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group relative", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
                                         >
-                                            
-                                            {/* DELETE BUTTON (Shows on Hover) */}
-                                            <Button 
-                                                variant="destructive" 
-                                                size="icon" 
-                                                className="absolute -top-2 -right-2 h-6 w-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-md hover:scale-110"
-                                                onClick={(e) => handleDeleteTask(task.id, e)}
+                                            <div 
+                                                onClick={() => handleTaskClick(task)}
+                                                className={cn("bg-background p-2 rounded-lg shadow-sm border border-border hover:border-primary/50 transition-all cursor-pointer group relative", snapshot.isDragging ? "shadow-xl ring-2 ring-primary rotate-1" : "")}
                                             >
-                                                <Trash2 className="h-3 w-3" />
-                                            </Button>
+                                            
+                                            {/* ACTIONS (Shows on Hover) */}
+                                            <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                                <Button 
+                                                    variant="outline" 
+                                                    size="icon" 
+                                                    className="h-6 w-6 rounded-full shadow-md hover:scale-110 bg-background"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setAddingCardToColumn(column.id);
+                                                        setInsertAfterTaskId(task.id);
+                                                    }}
+                                                >
+                                                    <Plus className="h-3 w-3 text-primary" />
+                                                </Button>
+                                                <Button 
+                                                    variant="destructive" 
+                                                    size="icon" 
+                                                    className="h-6 w-6 rounded-full shadow-md hover:scale-110"
+                                                    onClick={(e) => handleDeleteTask(task.id, e)}
+                                                >
+                                                    <Trash2 className="h-3 w-3" />
+                                                </Button>
+                                            </div>
 
                                             {(task.labels || []).length > 0 && (
                                             <div className="flex gap-1 mb-1.5 flex-wrap">
@@ -1071,6 +1143,25 @@ const getTasksByStage = (stage: string) => {
                                                     )}
                                                 </div>
                                             </div>
+                                            </div>
+                                            {addingCardToColumn === column.id && insertAfterTaskId === task.id && (
+                                                <div 
+                                                    className="bg-background pt-2 pb-2 rounded-lg border border-primary/20 shadow-sm mt-3 animate-in fade-in zoom-in-95 cursor-default" 
+                                                    onClick={e => e.stopPropagation()}
+                                                >
+                                                    <Input 
+                                                        placeholder="Client Name / Task Title" 
+                                                        value={newCardTitle} 
+                                                        onChange={(e) => setNewCardTitle(e.target.value)} 
+                                                        className="mb-2 h-8 text-sm"
+                                                        autoFocus
+                                                    />
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+                                                        <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                         )}
                                     </Draggable>
@@ -1079,7 +1170,7 @@ const getTasksByStage = (stage: string) => {
                                 {provided.placeholder}
 
                                 {/* --- QUICK ADD CARD BUTTON GOES HERE --- */}
-                                {addingCardToColumn === column.id ? (
+                                {addingCardToColumn === column.id && !insertAfterTaskId ? (
                                     /* Keep your existing input field block here */
                                     <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
                                         <Input 
@@ -1091,14 +1182,14 @@ const getTasksByStage = (stage: string) => {
                                         />
                                         <div className="flex gap-2">
                                             <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); }}>Cancel</Button>
+                                            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
                                         </div>
                                     </div>
-                                ) : (
+                                ) : addingCardToColumn !== column.id && (
                                     <Button 
                                         variant="ghost" 
                                         className="w-full text-muted-foreground hover:text-foreground hover:bg-muted/50 h-9 text-xs justify-start px-2"
-                                        onClick={() => setAddingCardToColumn(column.id)}
+                                        onClick={() => { setAddingCardToColumn(column.id); setInsertAfterTaskId(null); }}
                                     >
                                         <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
                                     </Button>

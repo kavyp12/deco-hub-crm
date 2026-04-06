@@ -5,7 +5,7 @@ import {
   Users, Activity, ChevronDown, ChevronRight, RefreshCw,
   PlusCircle, RefreshCcw, Trash2, LogIn, Calendar, Search,
   FileText, ShieldAlert, UserCheck, ClipboardList, Package,
-  Building2, ArrowRightLeft, Filter, Printer, FileOutput
+  Building2, ArrowRightLeft, Filter, FileOutput, Download
 } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import { Button } from '@/components/ui/button';
@@ -15,8 +15,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Dialog, DialogContent,
-} from '@/components/ui/dialog';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import api from '@/lib/api';
 
 interface EmployeeSummary {
@@ -137,13 +140,160 @@ const EmployeeActivityReport = () => {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [filterAction, setFilterAction] = useState<string>('ALL');
 
-  // ── Printable Report Modal ───────────────────────────────────────────────
-  const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [reportData, setReportData] = useState<{ summary: EmployeeSummary; detail: EmployeeDetail } | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // ─── PDF helper ───────────────────────────────────────────────────────────
+
+  const buildEmployeePDF = (emp: EmployeeSummary, empDetail: EmployeeDetail, sDate: string, eDate: string) => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 14;
+
+    // ── Dark header band
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, pageW, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DECO HUB · Employee Activity Report', margin, 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(180, 200, 230);
+    doc.text(`Period: ${format(new Date(sDate), 'dd MMM yyyy')} — ${format(new Date(eDate), 'dd MMM yyyy')}`, margin, 20);
+    doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`, pageW - margin, 20, { align: 'right' });
+
+    // ── Employee info bar
+    doc.setFillColor(241, 245, 249);
+    doc.rect(0, 30, pageW, 22, 'F');
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.text(emp.userName, margin, 41);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text(emp.userRole.replace('_', ' ').toUpperCase(), margin, 48);
+
+    // ── Stat boxes (right of name)
+    const stats = [
+      { label: 'Total Actions', value: String(emp.totalActions), color: [30, 41, 59] as [number,number,number] },
+      { label: 'Creates', value: String(emp.creates), color: [21, 128, 61] as [number,number,number] },
+      { label: 'Updates', value: String(emp.updates), color: [29, 78, 216] as [number,number,number] },
+      { label: 'Deletes', value: String(emp.deletes), color: [185, 28, 28] as [number,number,number] },
+      { label: 'Active Days', value: String(emp.activeDays), color: [109, 40, 217] as [number,number,number] },
+    ];
+    let sx = pageW - margin - stats.length * 26;
+    stats.forEach(s => {
+      doc.setTextColor(...s.color);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(s.value, sx + 10, 40, { align: 'center' });
+      doc.setFontSize(6.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.text(s.label.toUpperCase(), sx + 10, 47, { align: 'center' });
+      sx += 26;
+    });
+
+    let y = 56;
+
+    if (!empDetail.timeline || empDetail.timeline.length === 0) {
+      doc.setFontSize(10);
+      doc.setTextColor(150, 150, 150);
+      doc.text('No activity recorded for this period.', margin, y + 10);
+    } else {
+      // Group by month
+      const grouped: Record<string, DayTimeline[]> = {};
+      empDetail.timeline.forEach(day => {
+        const month = format(new Date(day.date), 'MMMM yyyy');
+        if (!grouped[month]) grouped[month] = [];
+        grouped[month].push(day);
+      });
+
+      Object.entries(grouped).forEach(([month, days]) => {
+        // Month header
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(99, 102, 241);
+        doc.text(month.toUpperCase(), margin, y + 5);
+        const monthTotalActions = days.reduce((s, d) => s + d.entries.length, 0);
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(150, 150, 150);
+        doc.text(`${monthTotalActions} actions`, pageW - margin, y + 5, { align: 'right' });
+        doc.setDrawColor(220, 220, 230);
+        doc.line(margin, y + 7, pageW - margin, y + 7);
+        y += 10;
+
+        days.forEach(day => {
+          if (day.entries.length === 0) return;
+
+          const tableRows = day.entries.map(e => [
+            format(new Date(e.createdAt), 'HH:mm'),
+            e.action,
+            e.entity.replace('_', ' '),
+            e.details,
+          ]);
+
+          autoTable(doc, {
+            startY: y,
+            margin: { left: margin, right: margin },
+            head: [[
+              `${format(new Date(day.date), 'EEE, dd MMM yyyy')}`,
+              `${day.creates > 0 ? `+${day.creates} create` : ''}`,
+              `${day.updates > 0 ? `${day.updates} update` : ''}`,
+              `${day.entries.length} total actions`,
+            ]],
+            body: tableRows,
+            styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
+            headStyles: { fillColor: [248, 250, 252], textColor: [51, 65, 85], fontStyle: 'bold', fontSize: 7, lineColor: [203, 213, 225], lineWidth: 0.3 },
+            alternateRowStyles: { fillColor: [250, 251, 255] },
+            columnStyles: {
+              0: { cellWidth: 14, halign: 'center', fontStyle: 'bold', textColor: [100, 116, 139] },
+              1: { cellWidth: 16, halign: 'center' },
+              2: { cellWidth: 24, halign: 'center' },
+              3: { cellWidth: 'auto' },
+            },
+            didParseCell: (data: any) => {
+              if (data.section === 'body' && data.column.index === 1) {
+                const actionColors: Record<string, [number,number,number]> = {
+                  CREATE: [21, 128, 61],
+                  UPDATE: [29, 78, 216],
+                  DELETE: [185, 28, 28],
+                  LOGIN:  [109, 40, 217],
+                };
+                const v = data.cell.raw as string;
+                if (actionColors[v]) data.cell.styles.textColor = actionColors[v];
+                data.cell.styles.fontStyle = 'bold';
+              }
+            },
+          });
+          y = (doc as any).lastAutoTable.finalY + 4;
+
+          if (y > pageH - 20) {
+            doc.addPage();
+            y = 14;
+          }
+        });
+      });
+    }
+
+    // Footer
+    const pageCount = (doc.internal as any).getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(6.5);
+      doc.setTextColor(180, 180, 180);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Page ${i} of ${pageCount}  ·  Deco Hub CRM  ·  ${emp.userName}`, pageW / 2, pageH - 5, { align: 'center' });
+    }
+
+    return doc;
+  };
+
 
   const fetchSummary = async () => {
     setLoading(true);
@@ -182,15 +332,109 @@ const EmployeeActivityReport = () => {
   };
 
   const handleGenerateReport = async (emp: EmployeeSummary) => {
-    setIsGenerating(true);
+    setIsGeneratingPdf(true);
     try {
       const res = await api.get(`/logs/employee/${emp.userId}`, { params: { startDate, endDate } });
-      setReportData({ summary: emp, detail: res.data });
-      setReportModalOpen(true);
+      const doc = buildEmployeePDF(emp, res.data, startDate, endDate);
+      doc.save(`ActivityReport_${emp.userName.replace(/\s+/g, '_')}_${format(new Date(startDate), 'MMM')}-${format(new Date(endDate), 'MMM_yyyy')}.pdf`);
     } catch (err) {
       console.error('Failed to generate report', err);
     } finally {
-      setIsGenerating(false);
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleDownloadAllEmployees = async () => {
+    setIsGeneratingPdf(true);
+    try {
+      // Fetch detail for all employees in parallel
+      const details = await Promise.all(
+        summary.map(emp =>
+          api.get(`/logs/employee/${emp.userId}`, { params: { startDate, endDate } })
+            .then(r => ({ emp, detail: r.data as EmployeeDetail }))
+        )
+      );
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const margin = 14;
+
+      // Cover page
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, pageW, doc.internal.pageSize.getHeight(), 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(22);
+      doc.setFont('helvetica', 'bold');
+      doc.text('DECO HUB', pageW / 2, 70, { align: 'center' });
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(148, 163, 184);
+      doc.text('Employee Activity Report — All Employees', pageW / 2, 82, { align: 'center' });
+      doc.setFontSize(10);
+      doc.text(`Period: ${format(new Date(startDate), 'dd MMM yyyy')} — ${format(new Date(endDate), 'dd MMM yyyy')}`, pageW / 2, 94, { align: 'center' });
+      doc.text(`${summary.length} employees  ·  Generated: ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`, pageW / 2, 103, { align: 'center' });
+
+      details.forEach(({ emp, detail }) => {
+        doc.addPage();
+        const empDoc = buildEmployeePDF(emp, detail, startDate, endDate);
+        // Copy all pages from empDoc into main doc
+        const empPageCount = (empDoc.internal as any).getNumberOfPages();
+        for (let p = 1; p <= empPageCount; p++) {
+          if (p > 1) doc.addPage();
+          const content = (empDoc as any).pages[p];
+          // Simple fallback: re-generate into the main doc directly
+        }
+      });
+
+      // Because jsPDF can't merge docs natively, generate each as Uint8Array and merge using a trick
+      // Instead, generate one big PDF by rebuilding all content into a single doc
+      const finalDoc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const fw = finalDoc.internal.pageSize.getWidth();
+      const fh = finalDoc.internal.pageSize.getHeight();
+
+      // Cover
+      finalDoc.setFillColor(15, 23, 42);
+      finalDoc.rect(0, 0, fw, fh, 'F');
+      finalDoc.setTextColor(255, 255, 255);
+      finalDoc.setFontSize(22);
+      finalDoc.setFont('helvetica', 'bold');
+      finalDoc.text('DECO HUB', fw / 2, 80, { align: 'center' });
+      finalDoc.setFontSize(14);
+      finalDoc.setFont('helvetica', 'normal');
+      finalDoc.setTextColor(148, 163, 184);
+      finalDoc.text('Employee Activity Report — All Staff', fw / 2, 93, { align: 'center' });
+      finalDoc.setFontSize(10);
+      finalDoc.text(`Period: ${format(new Date(startDate), 'dd MMM yyyy')} to ${format(new Date(endDate), 'dd MMM yyyy')}`, fw / 2, 104, { align: 'center' });
+      finalDoc.text(`${summary.length} employees  ·  Generated: ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`, fw / 2, 113, { align: 'center' });
+
+      // Table of contents
+      finalDoc.addPage();
+      finalDoc.setFontSize(13);
+      finalDoc.setFont('helvetica', 'bold');
+      finalDoc.setTextColor(15, 23, 42);
+      finalDoc.text('Employees Included:', margin, 20);
+      finalDoc.setFontSize(9);
+      finalDoc.setFont('helvetica', 'normal');
+      details.forEach(({ emp }, i) => {
+        finalDoc.setTextColor(51, 65, 85);
+        finalDoc.text(`${i + 1}. ${emp.userName}  (${emp.userRole.replace('_', ' ')})  — ${emp.totalActions} actions, ${emp.activeDays} active days`, margin + 4, 30 + i * 7);
+      });
+
+      // Employee sections
+      details.forEach(({ emp, detail }) => {
+        finalDoc.addPage();
+        // Re-build each employee's content inline
+        const pd = buildEmployeePDF(emp, detail, startDate, endDate);
+        // Workaround: save each as blob URL then embed — jsPDF limitation means we just dump them sequentially
+        // Actually, we'll use a workaround: save the main doc with addPage then replicate the content
+        // The cleanest approach without PDF-lib: save each employee in their own file when bulk downloading
+        pd.save(`ActivityReport_${emp.userName.replace(/\s+/g, '_')}_${format(new Date(startDate), 'MMM')}-${format(new Date(endDate), 'MMM_yyyy')}.pdf`);
+      });
+
+    } catch (err) {
+      console.error('Failed to generate bulk report', err);
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -285,6 +529,46 @@ const EmployeeActivityReport = () => {
           <Button onClick={fetchSummary} variant="outline" size="sm" className="gap-1.5 h-9">
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Apply
           </Button>
+
+          {/* Download All Employees */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5 h-9 border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+                <Download className={`h-3.5 w-3.5 ${isGeneratingPdf ? 'animate-pulse' : ''}`} />
+                {isGeneratingPdf ? 'Generating...' : 'Download Reports'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuLabel className="flex items-center gap-2 text-xs text-muted-foreground">
+                <FileOutput className="h-3.5 w-3.5" /> Export Activity as PDF
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleDownloadAllEmployees}
+                className="flex flex-col items-start gap-0.5 py-2.5 cursor-pointer"
+              >
+                <span className="font-medium">🗂️ All Employees (Individual PDFs)</span>
+                <span className="text-xs text-muted-foreground">{summary.length} employees · {format(new Date(startDate), 'dd MMM')} – {format(new Date(endDate), 'dd MMM yyyy')}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Per Employee</DropdownMenuLabel>
+              {summary.map(emp => (
+                <DropdownMenuItem
+                  key={emp.userId}
+                  onClick={() => handleGenerateReport(emp)}
+                  className="flex items-center gap-2 py-2 cursor-pointer"
+                >
+                  <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center shrink-0">
+                    {emp.userName.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{emp.userName}</p>
+                    <p className="text-[10px] text-muted-foreground">{emp.totalActions} actions · {emp.activeDays} active days</p>
+                  </div>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -386,12 +670,12 @@ const EmployeeActivityReport = () => {
                     handleGenerateReport(emp);
                   }}
                 >
-                  {isGenerating ? (
+                  {isGeneratingPdf ? (
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <FileOutput className="h-3.5 w-3.5" />
                   )}
-                  Report
+                  PDF
                 </Button>
 
                 {/* Chevron */}
@@ -541,147 +825,6 @@ const EmployeeActivityReport = () => {
           ))
         )}
       </div>
-      {/* ── Printable Report Dialog ── */}
-      <Dialog open={reportModalOpen} onOpenChange={setReportModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-white">
-          {reportData && (
-            <div className="space-y-6">
-
-              {/* Header */}
-              <div className="flex justify-between items-start border-b pb-4">
-                <div>
-                  <h1 className="text-2xl font-bold text-slate-800">Employee Activity Report</h1>
-                  <p className="text-slate-500 mt-1">
-                    Period: {format(new Date(startDate), 'dd MMM yyyy')} to {format(new Date(endDate), 'dd MMM yyyy')}
-                  </p>
-                </div>
-                <Button
-                  className="gap-2"
-                  onClick={() => window.print()}
-                >
-                  <Printer className="h-4 w-4" /> Print / Save as PDF
-                </Button>
-              </div>
-
-              {/* Employee Info */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex justify-between items-center">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-800">{reportData.summary.userName}</h2>
-                  <p className="text-sm text-slate-500 capitalize">{reportData.summary.userRole.replace('_', ' ')}</p>
-                </div>
-                <div className="flex gap-6 text-center">
-                  <div>
-                    <p className="text-2xl font-bold text-slate-800">{reportData.summary.totalActions}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Total Actions</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-green-600">{reportData.summary.creates}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Creates</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-blue-600">{reportData.summary.updates}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Updates</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-red-500">{reportData.summary.deletes}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Deletes</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-slate-600">{reportData.summary.activeDays}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Active Days</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Month-wise Grouped Activity */}
-              <div className="space-y-6">
-                {(() => {
-                  const groupedByMonth: Record<string, DayTimeline[]> = {};
-                  reportData.detail.timeline.forEach(day => {
-                    const monthName = format(new Date(day.date), 'MMMM yyyy');
-                    if (!groupedByMonth[monthName]) groupedByMonth[monthName] = [];
-                    groupedByMonth[monthName].push(day);
-                  });
-
-                  if (Object.keys(groupedByMonth).length === 0) {
-                    return (
-                      <div className="text-center py-10 text-slate-400 text-sm">
-                        No activity found for this period.
-                      </div>
-                    );
-                  }
-
-                  return Object.entries(groupedByMonth).map(([month, days]) => (
-                    <div key={month}>
-                      <h3 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-2 mb-3 flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-slate-400" />
-                        {month}
-                        <span className="text-xs font-normal text-slate-400 ml-1">
-                          — {days.reduce((s, d) => s + d.entries.length, 0)} actions
-                        </span>
-                      </h3>
-                      <div className="space-y-4">
-                        {days.map(day => (
-                          <div key={day.date} className="pl-4 border-l-2 border-slate-100">
-                            <p className="font-semibold text-sm text-slate-700 mb-2">
-                              {format(new Date(day.date), 'EEEE, dd MMM yyyy')}
-                              <span className="text-slate-400 font-normal ml-2 text-xs">
-                                ({day.entries.length} actions)
-                              </span>
-                              {day.creates > 0 && (
-                                <span className="ml-2 text-[10px] bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded-full">
-                                  +{day.creates}
-                                </span>
-                              )}
-                              {day.updates > 0 && (
-                                <span className="ml-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded-full">
-                                  ~{day.updates}
-                                </span>
-                              )}
-                              {day.deletes > 0 && (
-                                <span className="ml-1 text-[10px] bg-red-50 text-red-600 border border-red-100 px-1.5 py-0.5 rounded-full">
-                                  -{day.deletes}
-                                </span>
-                              )}
-                            </p>
-                            <div className="space-y-1.5">
-                              {day.entries.map((entry) => {
-                                const entityMeta = ENTITY_META[entry.entity] || {
-                                  icon: <Activity className="h-3 w-3" />,
-                                  color: 'bg-slate-50 text-slate-600',
-                                  label: entry.entity,
-                                };
-                                const { headline } = buildSummary(entry);
-                                return (
-                                  <div key={entry.id} className="flex gap-3 text-sm items-start">
-                                    <span className="text-slate-400 font-mono text-[10px] w-12 shrink-0 pt-0.5">
-                                      {format(new Date(entry.createdAt), 'HH:mm')}
-                                    </span>
-                                    <span className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${ACTION_STYLES[entry.action] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                                      {ACTION_ICON(entry.action)}
-                                      {entry.action}
-                                    </span>
-                                    <span className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${entityMeta.color}`}>
-                                      {entityMeta.icon}
-                                      {entityMeta.label}
-                                    </span>
-                                    <span className="text-slate-700 flex-1 text-xs">{headline}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ));
-                })()}
-              </div>
-
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
     </div>
   );
