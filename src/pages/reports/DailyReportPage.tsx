@@ -135,7 +135,7 @@ const DailyReportPage: React.FC = () => {
     (async () => {
       try {
         const { data } = await api.get('/daily-reports/my-today');
-        const inqs: InquiryOption[] = data.inquiries || [];
+        const inqs: InquiryOption[] = (data.inquiries || []).filter((i: InquiryOption) => i.stage !== 'Completed');
         setInquiries(inqs);
 
         // Check if existingReport exists
@@ -382,205 +382,263 @@ const DailyReportPage: React.FC = () => {
             </div>
 
             {/* View Mode: Already Submitted */}
-            {submitted && !editMode ? (
-              <>
-                <div className="space-y-3 mt-6">
-                  {savedEntries.map((entry: any, idx: number) => {
-                    const inq = inquiries.find(i => i.id === entry.inquiryId);
-                    const num   = inq?.inquiry_number || entry.inquiry?.inquiry_number || '—';
-                    const name  = inq?.client_name    || entry.inquiry?.client_name    || '—';
-                    const label = STATUSES.find(s => s.value === entry.status)?.label || entry.status;
-                    return (
-                      <div key={entry.id || idx} className="card-premium p-4 flex items-start gap-4">
-                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
-                          {idx + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{num}</span>
-                            <span className="text-sm font-semibold">{name}</span>
-                          </div>
-                          <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                            {label}
-                          </span>
-                          <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">{entry.workDone}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => openTimeline(entry.inquiryId)}>
-                            <Clock className="h-3 w-3" /> History
-                          </Button>
-                          <button
-                            onClick={() => { setPreviewItem({ entry, inq }); setPreviewOpen(true); }}
-                            className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-accent hover:bg-accent/10 transition-colors"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                        </div>
+            {submitted && !editMode ? (() => {
+              const activeSaved = savedEntries.filter((entry: any) => {
+                const inq = inquiries.find(i => i.id === entry.inquiryId);
+                return !(inq?.stage === 'Completed' || entry.status === 'closed_won' || entry.status === 'closed_lost');
+              });
+              const closedSaved = savedEntries.filter((entry: any) => {
+                const inq = inquiries.find(i => i.id === entry.inquiryId);
+                return (inq?.stage === 'Completed' || entry.status === 'closed_won' || entry.status === 'closed_lost');
+              });
+
+              const renderSavedEntry = (entry: any, startIdx: number) => {
+                const inq = inquiries.find(i => i.id === entry.inquiryId);
+                const num   = inq?.inquiry_number || entry.inquiry?.inquiry_number || '—';
+                const name  = inq?.client_name    || entry.inquiry?.client_name    || '—';
+                const label = STATUSES.find(s => s.value === entry.status)?.label || entry.status;
+                return (
+                  <div key={entry.id || startIdx} className="card-premium p-4 flex items-start gap-4">
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
+                      {startIdx}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{num}</span>
+                        <span className="text-sm font-semibold">{name}</span>
                       </div>
-                    );
-                  })}
-                </div>
+                      <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
+                        {label}
+                      </span>
+                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">{entry.workDone}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => openTimeline(entry.inquiryId)}>
+                        <Clock className="h-3 w-3" /> History
+                      </Button>
+                      <button
+                        onClick={() => { setPreviewItem({ entry, inq }); setPreviewOpen(true); }}
+                        className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-accent hover:bg-accent/10 transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              };
+
+              return (
+              <>
+                {activeSaved.length > 0 && (
+                  <div className="space-y-3 mt-6">
+                    {activeSaved.map((entry: any, idx: number) => renderSavedEntry(entry, idx + 1))}
+                  </div>
+                )}
+                {closedSaved.length > 0 && (
+                  <div className="mt-8">
+                    <div className="flex items-center gap-2 mb-4 border-b border-border/50 pb-2">
+                      <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Completed & Lost Inquiries</h3>
+                      <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{closedSaved.length}</span>
+                    </div>
+                    <div className="space-y-3 opacity-90">
+                      {closedSaved.map((entry: any, idx: number) => renderSavedEntry(entry, activeSaved.length + idx + 1))}
+                    </div>
+                  </div>
+                )}
                 <p className="text-center text-xs text-muted-foreground mt-5">
                   ✅ {savedEntries.length} {savedEntries.length === 1 ? 'inquiry' : 'inquiries'} updated · Visible to your manager
                 </p>
               </>
-            ) : (
+              );
+            })() : (
               /* Edit Mode / New Submission */
-              <>
-                {/* Warnings */}
-                {inquiries.filter(i => i.daysInactive >= 3).length > 0 && (
-                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-3 text-sm">
-                    <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-red-700">🚨 {inquiries.filter(i => i.daysInactive >= 3).length} Critical Inquiries</p>
-                      <p className="text-red-600 mt-0.5">No update for 3+ days. Action required immediately.</p>
-                    </div>
-                  </div>
-                )}
-                {inquiries.filter(i => i.daysInactive === 2).length > 0 && (
-                  <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-5 text-sm">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-yellow-700">⚠️ {inquiries.filter(i => i.daysInactive === 2).length} Warning Inquiries</p>
-                      <p className="text-yellow-700 mt-0.5">No update for 2 days. Please follow up today.</p>
-                    </div>
-                  </div>
-                )}
+              (() => {
+                const activeInqs = inquiries.filter(i => !(i.stage === 'Completed' || i.lastStatus === 'closed_won' || i.lastStatus === 'closed_lost'));
+                const closedInqs = inquiries.filter(i => {
+                  if (!(i.stage === 'Completed' || i.lastStatus === 'closed_won' || i.lastStatus === 'closed_lost')) return false;
+                  // Only show in "Edit Mode" today IF they actively marked it today
+                  const entry = entries[i.id];
+                  return !!(entry && (entry.status || entry.workDone.trim() !== ''));
+                });
+                const visibleInqs = [...activeInqs, ...closedInqs];
 
-                {inquiries.length === 0 ? (
-                  <div className="card-premium p-12 text-center text-muted-foreground">
-                    <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-25" />
-                    <p className="font-medium">No inquiries assigned to you</p>
-                    <p className="text-sm mt-1 opacity-70">Contact your manager to get inquiries assigned.</p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      Update all your assigned inquiries below. You can skip any inquiry with no activity today.
-                    </p>
+                const criticalInqs = activeInqs.filter(i => i.daysInactive >= 3);
+                const warningInqs = activeInqs.filter(i => i.daysInactive === 2);
 
-                    <div className="space-y-4">
-                      {inquiries.map((inq, idx) => {
-                        const entry = entries[inq.id] || { inquiryId: inq.id, status: '', workDone: '' };
-                        const isFilled = !!(entry.status && entry.workDone.trim());
+                const renderInquiryRow = (inq: InquiryOption, idx: number) => {
+                  const entry = entries[inq.id] || { inquiryId: inq.id, status: '', workDone: '' };
+                  const isFilled = !!(entry.status && entry.workDone.trim());
 
-                        let borderClass = 'border-l-transparent';
-                        if (isFilled) borderClass = 'border-l-green-400';
-                        else if (inq.daysInactive >= 3) borderClass = 'border-l-red-500 bg-red-50/40';
-                        else if (inq.daysInactive === 2) borderClass = 'border-l-yellow-400 bg-yellow-50/40';
+                  let borderClass = 'border-l-transparent';
+                  if (isFilled) borderClass = 'border-l-green-400';
+                  else if (inq.daysInactive >= 3) borderClass = 'border-l-red-500 bg-red-50/40';
+                  else if (inq.daysInactive === 2) borderClass = 'border-l-yellow-400 bg-yellow-50/40';
 
-                        return (
-                          <div
-                            key={inq.id}
-                            className={cn(
-                              'card-premium overflow-hidden transition-all duration-200 border-l-4',
-                              borderClass
+                  return (
+                    <div
+                      key={inq.id}
+                      className={cn(
+                        'card-premium overflow-hidden transition-all duration-200 border-l-4',
+                        borderClass
+                      )}
+                    >
+                      <div className="flex items-center gap-3 px-5 py-3.5 bg-muted/25 border-b border-border/50">
+                        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
+                          {idx}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
+                              {inq.inquiry_number}
+                            </span>
+                            <span className="text-sm font-semibold">{inq.client_name}</span>
+                            
+                            {inq.daysInactive >= 3 && (
+                              <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold border border-red-200">
+                                🚨 3+ Days Inactive
+                              </span>
                             )}
-                          >
-                            <div className="flex items-center gap-3 px-5 py-3.5 bg-muted/25 border-b border-border/50">
-                              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
-                                {idx + 1}
-                              </div>
+                            {inq.daysInactive === 2 && (
+                              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold border border-yellow-200">
+                                ⚠️ 2 Days Inactive
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
-                                    {inq.inquiry_number}
-                                  </span>
-                                  <span className="text-sm font-semibold">{inq.client_name}</span>
-                                  
-                                  {inq.daysInactive >= 3 && (
-                                    <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold border border-red-200">
-                                      🚨 3+ Days Inactive
-                                    </span>
-                                  )}
-                                  {inq.daysInactive === 2 && (
-                                    <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold border border-yellow-200">
-                                      ⚠️ 2 Days Inactive
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="flex-shrink-0 flex items-center gap-2">
-                                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => openTimeline(inq.id)}>
-                                  <Clock className="h-3 w-3" /> History
-                                </Button>
-                                
-                                {inq.lastStatus && (
-                                  <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                                    <Info className="h-3 w-3" />
-                                    <span className={cn('px-2 py-0.5 rounded-full border text-xs font-medium', STATUS_COLORS[inq.lastStatus])}>
-                                      {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
-                                    </span>
-                                  </div>
-                                )}
-                                {isFilled
-                                  ? <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                  : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
-                                }
-                              </div>
+                        <div className="flex-shrink-0 flex items-center gap-2">
+                          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => openTimeline(inq.id)}>
+                            <Clock className="h-3 w-3" /> History
+                          </Button>
+                          
+                          {inq.lastStatus && (
+                            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Info className="h-3 w-3" />
+                              <span className={cn('px-2 py-0.5 rounded-full border text-xs font-medium', STATUS_COLORS[inq.lastStatus])}>
+                                {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
+                              </span>
                             </div>
+                          )}
+                          {isFilled
+                            ? <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
+                          }
+                        </div>
+                      </div>
 
-                            <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                                  Today's Status
-                                </label>
-                                <Select
-                                  value={entry.status || undefined}
-                                  onValueChange={val => updateEntry(inq.id, 'status', val)}
-                                >
-                                  <SelectTrigger className="h-9 text-sm">
-                                    <SelectValue placeholder="Select status..." />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {STATUSES.map(s => (
-                                      <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
+                      <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            Today's Status
+                          </label>
+                          <Select
+                            value={entry.status || undefined}
+                            onValueChange={val => updateEntry(inq.id, 'status', val)}
+                          >
+                            <SelectTrigger className="h-9 text-sm">
+                              <SelectValue placeholder="Select status..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {STATUSES.map(s => (
+                                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                                  Work Done Today
-                                </label>
-                                <Textarea
-                                  placeholder="What did you do on this inquiry today? e.g. called client, sent samples, visited site..."
-                                  rows={3}
-                                  value={entry.workDone}
-                                  onChange={e => updateEntry(inq.id, 'workDone', e.target.value)}
-                                  className="resize-none text-sm"
-                                />
-                              </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            Work Done Today
+                          </label>
+                          <Textarea
+                            placeholder="What did you do on this inquiry today? e.g. called client, sent samples, visited site..."
+                            rows={3}
+                            value={entry.workDone}
+                            onChange={e => updateEntry(inq.id, 'workDone', e.target.value)}
+                            className="resize-none text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <>
+                    {/* Warnings */}
+                    {criticalInqs.length > 0 && (
+                      <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-3 text-sm">
+                        <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold text-red-700">🚨 {criticalInqs.length} Critical Inquiries</p>
+                          <p className="text-red-600 mt-0.5">No update for 3+ days. Action required immediately.</p>
+                        </div>
+                      </div>
+                    )}
+                    {warningInqs.length > 0 && (
+                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-5 text-sm">
+                        <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold text-yellow-700">⚠️ {warningInqs.length} Warning Inquiries</p>
+                          <p className="text-yellow-700 mt-0.5">No update for 2 days. Please follow up today.</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {visibleInqs.length === 0 ? (
+                      <div className="card-premium p-12 text-center text-muted-foreground">
+                        <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-25" />
+                        <p className="font-medium">No active inquiries assigned to you</p>
+                        <p className="text-sm mt-1 opacity-70">Contact your manager to get inquiries assigned.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Update all your active assigned inquiries below.
+                        </p>
+
+                        {activeInqs.length > 0 && (
+                          <div className="space-y-4">
+                            {activeInqs.map((inq, idx) => renderInquiryRow(inq, idx + 1))}
+                          </div>
+                        )}
+
+                        {closedInqs.length > 0 && (
+                          <div className="mt-8">
+                            <div className="flex items-center gap-2 mb-4 border-b border-border/50 pb-2">
+                              <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Completed & Lost Inquiries</h3>
+                              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{closedInqs.length}</span>
+                            </div>
+                            <div className="space-y-4 opacity-75 grayscale-[20%]">
+                              {closedInqs.map((inq, idx) => renderInquiryRow(inq, activeInqs.length + idx + 1))}
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
+                        )}
 
-                    <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
-                      <p className="text-sm text-muted-foreground">
-                        <span className={cn('font-semibold', filledCount > 0 ? 'text-green-600' : 'text-foreground')}>
-                          {filledCount}
-                        </span>
-                        <span className="text-muted-foreground">/{inquiries.length} filled</span>
-                      </p>
-                      <Button
-                        variant="default"
-                        size="lg"
-                        onClick={handleSubmit}
-                        disabled={submitting || filledCount === 0}
-                        className="gap-2 px-8"
-                      >
-                        <Send className="h-4 w-4" />
-                        {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
-                      </Button>
-                    </div>
+                        <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
+                          <p className="text-sm text-muted-foreground">
+                            <span className={cn('font-semibold', filledCount > 0 ? 'text-green-600' : 'text-foreground')}>
+                              {filledCount}
+                            </span>
+                            <span className="text-muted-foreground">/{visibleInqs.length} filled</span>
+                          </p>
+                          <Button
+                            variant="default"
+                            size="lg"
+                            onClick={handleSubmit}
+                            disabled={submitting || filledCount === 0}
+                            className="gap-2 px-8"
+                          >
+                            <Send className="h-4 w-4" />
+                            {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </>
-                )}
-              </>
+                );
+              })()
             )}
           </div>
         )}

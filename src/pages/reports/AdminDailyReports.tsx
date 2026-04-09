@@ -189,7 +189,12 @@ const [date, setDate]                 = useState('');
       ]);
       setReports(reportsRes.data.reports || []);
       setMissingUsers(reportsRes.data.missingUsers || []);
-      setAnalytics(analyticsRes.data);
+      const analyticsData = analyticsRes.data;
+      if (analyticsData && analyticsData.inactiveInquiries) {
+        analyticsData.inactiveInquiries = analyticsData.inactiveInquiries.filter((inq: any) => inq.stage !== 'Completed');
+        analyticsData.inactiveCount = analyticsData.inactiveInquiries.length;
+      }
+      setAnalytics(analyticsData);
     } catch {
       toast({ title: 'Error', description: 'Failed to load reports', variant: 'destructive' });
     } finally {
