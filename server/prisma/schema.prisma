@@ -78,6 +78,8 @@ model Inquiry {
   
   description         String?   @db.Text
 
+  orderIndex          Int       @default(0)
+
   sales_person_id String
   sales_person    User   @relation("SalesPerson", fields: [sales_person_id], references: [id])
   

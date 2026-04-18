@@ -245,7 +245,7 @@ app.get('/api/logs/employee/:userId', authenticateToken, async (req: any, res: R
         creates: entries.filter((e: any) => e.action === 'CREATE').length,
         updates: entries.filter((e: any) => e.action === 'UPDATE').length,
         deletes: entries.filter((e: any) => e.action === 'DELETE').length,
-        logins:  entries.filter((e: any) => e.action === 'LOGIN').length,
+        logins: entries.filter((e: any) => e.action === 'LOGIN').length,
         entries,
       }));
 
@@ -1353,13 +1353,13 @@ app.put('/api/catalogs/return/:movementId', authenticateToken, async (req: any, 
 
 // [EDITED] GET ALL INQUIRIES (With Role Filtering)
 // Find this route in src/index.ts
-app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => { 
+app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => {
   try {
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
     const whereClause = isAdmin ? {} : { sales_person_id: req.user.id };
 
     const inquiries = await prisma.inquiry.findMany({
-      where: whereClause, 
+      where: whereClause,
       include: {
         sales_person: { select: { name: true } },
         sales_persons: { select: { id: true, name: true } }, // <--- ADD THIS LINE
@@ -1382,14 +1382,15 @@ app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => 
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch inquiries' });
   }
-}); 
+});
 
 // UPDATE POST /api/inquiries
 app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) => {
   const {
     client_name, architect_id_name, architectId, mobile_number, inquiry_date, address,
     sales_person_id, expected_final_date,
-    client_birth_date, client_anniversary_date // <--- New Fields
+    client_birth_date, client_anniversary_date, // <--- New Fields
+    orderIndex: requestedOrderIndex // <--- Pipeline position
   } = req.body;
 
   try {
@@ -1404,20 +1405,31 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
 
     const inquiryNumber = `INQ-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
+    // Determine orderIndex: use provided value or place at end
+    let finalOrderIndex = requestedOrderIndex;
+if (finalOrderIndex === undefined || finalOrderIndex === null) {
+  const maxResult = await prisma.inquiry.aggregate({
+    where: { stage: req.body.stage || 'Inquiry' },  // scoped to that column
+    _max: { orderIndex: true }
+  });
+  finalOrderIndex = (maxResult._max.orderIndex ?? 0) + 1000;
+}
+
     const newInquiry = await prisma.inquiry.create({
       data: {
         inquiry_number: inquiryNumber,
-      client_name,
+        client_name,
         architect_id_name, // Manual name
         architectId: architectId || null, // Linked ID
         mobile_number,
         inquiry_date: new Date(inquiry_date),
         address,
-        sales_person_id,
+        sales_person_id: sales_person_id || req.user.id,
         expected_final_date: expected_final_date ? new Date(expected_final_date) : null,
         client_birth_date: client_birth_date ? new Date(client_birth_date) : null,
         client_anniversary_date: client_anniversary_date ? new Date(client_anniversary_date) : null,
         created_by_id: req.user.id,
+        orderIndex: finalOrderIndex,
       }
     });
 
@@ -2443,7 +2455,7 @@ app.post('/api/calculations/local/:selectionId', authenticateToken, async (req: 
         }
       }
     });
-        await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved LOCAL calculation & measurements for Selection`);
+    await logActivity(req.user.id, 'UPDATE', 'CALCULATION', selectionId, `Saved LOCAL calculation & measurements for Selection`);
 
     res.json(localCalc);
   } catch (error) {
@@ -2925,7 +2937,7 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
       }
     });
 
-  await logActivity(req.user.id, 'CREATE', 'QUOTATION', quotation.id, `Created Quotation #${quotation.quotation_number}`);
+    await logActivity(req.user.id, 'CREATE', 'QUOTATION', quotation.id, `Created Quotation #${quotation.quotation_number}`);
     res.json(quotation);
   } catch (error) {
     console.error(error);
@@ -3517,7 +3529,7 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
           }
         }
       },
-      orderBy: { updated_at: 'desc' }
+      orderBy: { orderIndex: 'asc' }
     });
 
     res.json(inquiries);
@@ -3527,20 +3539,24 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
-// 2. MOVE CARD (Update Stage)
+// 2. MOVE CARD (Update Stage and Position)
 app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { stage } = req.body; // e.g., "Quotation Submitted"
+  const { stage, orderIndex } = req.body; // e.g., "Quotation Submitted"
 
   try {
     const updated = await prisma.inquiry.update({
       where: { id },
-      data: { stage }
+      data: {
+        ...(stage !== undefined && { stage }),
+        ...(orderIndex !== undefined && { orderIndex })
+      }
     });
 
     // Log the movement for Admin visibility
-  await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Stage changed → "${stage}" for inquiry ${updated.inquiry_number}`);
-
+    if (stage !== undefined) {
+      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Stage changed → "${stage}" for inquiry ${updated.inquiry_number}`);
+    }
 
     res.json(updated);
   } catch (error) {
@@ -3848,7 +3864,7 @@ app.put('/api/inquiries/:id/assign', authenticateToken, async (req: any, res: Re
       if (userIds.length === 0) {
         return res.status(400).json({ error: "At least one member must be assigned." });
       }
-      
+
       const primaryOwnerId = userIds[0];
       const collaborators = userIds.slice(1);
 
@@ -3962,7 +3978,7 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
 
     // 2. Fetch Automated Activity Logs for this Inquiry
     const autoLogs = await prisma.activityLog.findMany({
-      where: { 
+      where: {
         entityId: req.params.inquiryId,
         entity: { in: ['INQUIRY', 'INQUIRY_STAGE', 'INQUIRY_OWNER', 'INQUIRY_MEMBERS', 'COMMENT', 'CHECKLIST', 'LABEL'] }
       },
@@ -4171,9 +4187,9 @@ app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: 
     const enriched = inquiries.map((inq: any) => {
       const lastEntry = inq.reportEntries?.[0];
       const lastUpdate = lastEntry ? new Date(lastEntry.createdAt) : null;
-      
+
       const daysInactive = lastUpdate ? Math.floor((nowMs - lastUpdate.getTime()) / (1000 * 60 * 60 * 24)) : 999;
-      const isInactive = daysInactive >= 3; 
+      const isInactive = daysInactive >= 3;
 
       return {
         ...inq,
@@ -4257,7 +4273,7 @@ app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Res
       });
       const targetUsers = userId ? salesUsers.filter((u: any) => u.id === userId) : salesUsers;
       const submittedUserIds = new Set(reports.map((r: any) => r.userId));
-      
+
       missingUsers = targetUsers
         .filter((u: any) => !submittedUserIds.has(u.id))
         .map((u: any) => ({ ...u, status: 'MISSING' }));
@@ -4392,8 +4408,8 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
 app.get('/api/notifications', authenticateToken, async (req: any, res: Response) => {
   try {
     const userId = req.user.id;
-    const role   = req.user.role;
-    const now    = new Date();
+    const role = req.user.role;
+    const now = new Date();
 
     // Reporting window end = 6PM today
     const todayAt6PM = new Date(now);

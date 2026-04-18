@@ -23,6 +23,7 @@ import api from '@/lib/api';
 import { format, parseISO } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 
 // --- TYPES ---
 interface Task {
@@ -160,6 +161,8 @@ const getFileUrl = (path: string | undefined) => {
 
 const Pipeline: React.FC = () => {
   const { toast } = useToast();
+  const { profile } = useAuth();
+  const currentUser = profile; // logged-in user (has id & name)
   const [tasks, setTasks] = useState<Task[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -317,43 +320,67 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
 
   // --- MANUAL CARD ACTIONS ---
 
-  const handleQuickCreateCard = async (stageId: string) => {
+const handleQuickCreateCard = async (stageId: string) => {
     if (!newCardTitle.trim()) return;
     
     try {
-        // Fallback to the first user if none selected
-        const primaryAssignee = newCardAssignees.length > 0 ? newCardAssignees[0] : allUsers[0]?.id;
+        // 1. Force the current user to be in the assignees list
+        const finalAssignees = currentUser 
+            ? Array.from(new Set([...newCardAssignees, currentUser.id]))
+            : newCardAssignees;
 
-        // 1. Create minimal inquiry
+        const primaryAssignee = finalAssignees.length > 0 ? finalAssignees[0] : null;
+
+        // 2. Calculate orderIndex using the UNFILTERED ordered task list
+        //    so active search/filter state can never corrupt the position.
+        let orderIndex: number;
+        const colTasks = getOrderedTasksByStage(stageId);
+
+        if (insertAfterTaskId) {
+            const afterTaskIndex = colTasks.findIndex(t => t.id === insertAfterTaskId);
+            const afterTask = colTasks[afterTaskIndex];
+            const nextTask = colTasks[afterTaskIndex + 1];
+
+            const afterIdx = (afterTask as any).orderIndex ?? 0;
+            const nextIdx = nextTask ? ((nextTask as any).orderIndex ?? afterIdx + 1000) : afterIdx + 1000;
+
+            orderIndex = Math.round((afterIdx + nextIdx) / 2);
+            if (orderIndex === afterIdx) orderIndex = afterIdx + 1;
+        } else {
+            // Adding at the bottom of the column
+            const maxIdx = colTasks.reduce((max, t) => Math.max(max, (t as any).orderIndex ?? 0), -1);
+            orderIndex = maxIdx + 1000;
+        }
+
         const payload = {
             client_name: newCardTitle,
             mobile_number: "0000000000",
             inquiry_date: new Date().toISOString(),
             address: "Manual Entry",
-            sales_person_id: primaryAssignee, 
+            stage: stageId,   // ← send stage so backend fallback scopes correctly
+            orderIndex,
+            ...(primaryAssignee && { sales_person_id: primaryAssignee }), 
         };
 
         const { data: newInquiry } = await api.post('/inquiries', payload);
         
-        let assignedUsers = allUsers.filter(u => u.id === primaryAssignee);
+        let assignedUsers = allUsers.filter(u => u.id === newInquiry.sales_person_id);
 
-        // 2. If multiple assignees, link them via the assign endpoint
-        if (newCardAssignees.length > 1) {
-            await api.put(`/inquiries/${newInquiry.id}/assign`, { userIds: newCardAssignees });
-            assignedUsers = allUsers.filter(u => newCardAssignees.includes(u.id));
+        if (finalAssignees.length > 0) {
+            await api.put(`/inquiries/${newInquiry.id}/assign`, { userIds: finalAssignees });
+            assignedUsers = allUsers.filter(u => finalAssignees.includes(u.id));
         }
 
-        // 3. Move to correct stage immediately if not default
         if (stageId !== "Inquiry") {
-            await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId });
+            await api.put(`/inquiries/${newInquiry.id}/stage`, { stage: stageId, orderIndex });
             newInquiry.stage = stageId; 
         }
 
-        // 4. Construct local task for immediate UI update
         const newTask: Task = {
             ...newInquiry,
+            orderIndex,  // ← always stamp the calculated orderIndex onto local task
             sales_person: assignedUsers[0] ? { id: assignedUsers[0].id, name: assignedUsers[0].name } : undefined,
-            sales_persons: assignedUsers.map(u => ({ id: u.id, name: u.name })), // Attach all assigned users
+            sales_persons: assignedUsers.map(u => ({ id: u.id, name: u.name })), 
             stage: stageId,
             labels: [],
             comments: [],
@@ -361,19 +388,11 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
             selections: []
         };
 
-        setTasks(prev => {
-            if (insertAfterTaskId) {
-                const index = prev.findIndex(t => t.id === insertAfterTaskId);
-                if (index !== -1) {
-                    const newArray = Array.from(prev);
-                    newArray.splice(index + 1, 0, newTask);
-                    return newArray;
-                }
-            }
-            return [...prev, newTask];
-        });
+        // Just append — getTasksByStage sorts by orderIndex so position is automatic
+        setTasks(prev => [...prev, newTask]);
+        
         setNewCardTitle('');
-        setNewCardAssignees([]); // Reset array
+        setNewCardAssignees(currentUser ? [currentUser.id] : []);
         setAddingCardToColumn(null);
         setInsertAfterTaskId(null);
         toast({ title: "Card Created", description: "New card added successfully." });
@@ -588,7 +607,7 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
   };
 
- const onDragEnd = async (result: any) => {
+const onDragEnd = async (result: any) => {
   const { destination, source, draggableId, type } = result;
 
   if (!destination) return;
@@ -596,13 +615,8 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
 
   // --- HANDLE COLUMN DRAGGING ---
   if (type === 'column') {
-    const movingColumn = columns[source.index];
-
-    // Block: if source OR destination index is within system columns range
     const systemCount = DEFAULT_COLUMNS.length;
-    if (source.index < systemCount || destination.index < systemCount) {
-      return; // System columns are frozen — do nothing
-    }
+    if (source.index < systemCount || destination.index < systemCount) return;
 
     const newColumns = Array.from(columns);
     const [movedColumn] = newColumns.splice(source.index, 1);
@@ -614,40 +628,63 @@ const [filterChecklist, setFilterChecklist] = useState<string>('all');
   // --- HANDLE CARD DRAGGING ---
   const realId = draggableId.split('::')[1];
   const destStage = destination.droppableId;
+  const srcStage = source.droppableId;
 
-  // Let's get the currently ordered filtered list for the destination column
-  const currentDestTasks = getTasksByStage(destStage);
-  
-  // We need to place our realId task at `destination.index` in this visual list.
-  // We remove it from currentDestTasks first (if it's already there)
-  const destTasksWithoutMoved = currentDestTasks.filter(t => t.id !== realId);
-  
-  // Find the task that will be sitting right AFTER our moved task
-  const taskAfterMoved = destTasksWithoutMoved[destination.index];
+  const currentDestTasks = getOrderedTasksByStage(destStage).filter(t => t.id !== realId);
 
-  // Now build the new full tasks array
-  let newTasks = tasks.map(t => t.id === realId ? { ...t, stage: destStage, updated_at: new Date().toISOString() } : t);
-  const movedTask = newTasks.find(t => t.id === realId);
-  
-  if (movedTask) {
-    newTasks = newTasks.filter(t => t.id !== realId);
-    if (taskAfterMoved) {
-        const insertIndex = newTasks.findIndex(t => t.id === taskAfterMoved.id);
-        newTasks.splice(insertIndex, 0, movedTask);
-    } else {
-        // If there is no task after it (it's at the end of the filtered list), we append it
-        newTasks.push(movedTask);
-    }
+  // Calculate the new orderIndex
+  let newOrderIndex = 0;
+  if (currentDestTasks.length === 0) {
+    newOrderIndex = 1000;
+  } else if (destination.index === 0) {
+    newOrderIndex = ((currentDestTasks[0] as any).orderIndex ?? 1000) - 1000;
+  } else if (destination.index >= currentDestTasks.length) {
+    newOrderIndex = ((currentDestTasks[currentDestTasks.length - 1] as any).orderIndex ?? 0) + 1000;
+  } else {
+    const prevIdx = (currentDestTasks[destination.index - 1] as any).orderIndex ?? 0;
+    const nextIdx = (currentDestTasks[destination.index] as any).orderIndex ?? 0;
+    newOrderIndex = Math.round((prevIdx + nextIdx) / 2);
+    if (newOrderIndex === prevIdx) newOrderIndex = prevIdx + 1;
   }
 
-  setTasks(newTasks);
+  // ✅ FIX: Physically reorder the tasks array so the rendered order
+  // matches immediately — prevents the snap-back flicker on re-render.
+  setTasks(prev => {
+    // 1. Pull out the moved task and stamp its new values
+    const movedTask = prev.find(t => t.id === realId);
+    if (!movedTask) return prev;
 
-  if (source.droppableId !== destination.droppableId) {
-    try {
-      await api.put(`/inquiries/${realId}/stage`, { stage: destStage });
-    } catch (error) {
-      fetchPipeline();
-    }
+    const updatedMovedTask = {
+      ...movedTask,
+      stage: destStage,
+      orderIndex: newOrderIndex,
+      updated_at: new Date().toISOString(),
+    };
+
+    // 2. Remove the moved task from the array
+    const rest = prev.filter(t => t.id !== realId);
+
+    // 3. Get the destination column tasks (excluding moved), sorted
+    const destColumnTasks = rest
+      .filter(t => t.stage === destStage)
+      .sort((a, b) => ((a as any).orderIndex ?? 0) - ((b as any).orderIndex ?? 0));
+
+    // 4. Insert the moved task at the exact destination index
+    destColumnTasks.splice(destination.index, 0, updatedMovedTask);
+
+    // 5. Rebuild: all tasks NOT in dest column + newly ordered dest column
+    const otherTasks = rest.filter(t => t.stage !== destStage);
+    return [...otherTasks, ...destColumnTasks];
+  });
+
+  // Persist to backend
+  try {
+    await api.put(`/inquiries/${realId}/stage`, {
+      stage: destStage,
+      orderIndex: newOrderIndex,
+    });
+  } catch (error) {
+    fetchPipeline(); // Rollback on failure
   }
 };
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
@@ -739,7 +776,27 @@ const getTasksByStage = (stage: string) => {
     }
 
     return matchesSearch && matchesUser && matchesLabel && matchesDate && matchesActivity && matchesChecklist;
-  });
+  })
+  
+};
+
+// NEW FUNCTION — add right after getTasksByStage
+// Used internally for orderIndex calculations — NO filters applied,
+// so drag/create positions are never thrown off by active search/filter state.
+const getOrderedTasksByStage = (stage: string) => {
+  return tasks
+    .filter(t => {
+      if (t.stage === stage) return true;
+      const linkedQuote = getLinkedQuote(t);
+      const linkedSelection = getLinkedSelection(t);
+      if (t.stage === 'Inquiry' || !t.stage) {
+        if (stage === "Quotation Submitted" && linkedQuote) return true;
+        if (stage === "Ongoing Projects" && linkedSelection && !linkedQuote) return true;
+        if (stage === "Inquiry" && !linkedSelection && !linkedQuote) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => ((a as any).orderIndex ?? 0) - ((b as any).orderIndex ?? 0));
 };
   
   return (
@@ -1146,21 +1203,70 @@ const getTasksByStage = (stage: string) => {
                                             </div>
                                             {addingCardToColumn === column.id && insertAfterTaskId === task.id && (
                                                 <div 
-                                                    className="bg-background pt-2 pb-2 rounded-lg border border-primary/20 shadow-sm mt-3 animate-in fade-in zoom-in-95 cursor-default" 
-                                                    onClick={e => e.stopPropagation()}
-                                                >
-                                                    <Input 
-                                                        placeholder="Client Name / Task Title" 
-                                                        value={newCardTitle} 
-                                                        onChange={(e) => setNewCardTitle(e.target.value)} 
-                                                        className="mb-2 h-8 text-sm"
-                                                        autoFocus
-                                                    />
-                                                    <div className="flex gap-2">
-                                                        <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                                        <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
-                                                    </div>
-                                                </div>
+    className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm mt-3 animate-in fade-in zoom-in-95 cursor-default" 
+    onClick={e => e.stopPropagation()}
+>
+    <Input 
+        placeholder="Client Name / Task Title" 
+        value={newCardTitle} 
+        onChange={(e) => setNewCardTitle(e.target.value)} 
+        className="mb-2 h-8 text-sm"
+        autoFocus
+    />
+    
+    {/* Show Selected Member Avatars */}
+    {newCardAssignees.length > 0 && (
+        <div className="flex -space-x-1.5 mb-2 px-1">
+            {newCardAssignees.map(id => {
+                const u = allUsers.find(x => x.id === id);
+                if(!u) return null;
+                return (
+                    <div key={id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(u.name))} title={u.name}>
+                        {getInitials(u.name)}
+                    </div>
+                )
+            })}
+        </div>
+    )}
+
+    <div className="flex gap-2 justify-between items-center">
+        <div className="flex gap-2">
+            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
+        </div>
+        
+        {/* Assign Members Popover */}
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full border border-dashed border-muted-foreground hover:border-foreground shrink-0">
+                    <Plus className="h-3 w-3 text-muted-foreground" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-2" align="end" onClick={e => e.stopPropagation()}>
+                <h4 className="text-xs font-bold text-muted-foreground mb-2 px-2">Assign Members</h4>
+                <ScrollArea className="h-48">
+                    {allUsers.map(user => {
+                        const isSelected = newCardAssignees.includes(user.id);
+                        return (
+                            <div key={user.id} 
+                                className={cn("flex items-center gap-2 p-2 hover:bg-accent rounded cursor-pointer text-sm", isSelected && "bg-accent/50")}
+                                onClick={() => {
+                                    setNewCardAssignees(prev => 
+                                        prev.includes(user.id) ? prev.filter(id => id !== user.id) : [...prev, user.id]
+                                    );
+                                }}
+                            >
+                                <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs text-white shrink-0", getMemberColor(user.name))}>{getInitials(user.name)}</div>
+                                <span className="truncate">{user.name}</span>
+                                {isSelected && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                            </div>
+                        );
+                    })}
+                </ScrollArea>
+            </PopoverContent>
+        </Popover>
+    </div>
+</div>
                                             )}
                                         </div>
                                         )}
@@ -1171,20 +1277,83 @@ const getTasksByStage = (stage: string) => {
 
                                 {/* --- QUICK ADD CARD BUTTON GOES HERE --- */}
                                 {addingCardToColumn === column.id && !insertAfterTaskId ? (
-                                    /* Keep your existing input field block here */
-                                    <div className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm animate-in fade-in zoom-in-95">
-                                        <Input 
-                                            placeholder="Client Name / Task Title" 
-                                            value={newCardTitle} 
-                                            onChange={(e) => setNewCardTitle(e.target.value)} 
-                                            className="mb-2 h-8 text-sm"
-                                            autoFocus
-                                        />
-                                        <div className="flex gap-2">
-                                            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
-                                        </div>
-                                    </div>
+<div 
+    className="bg-background p-2 rounded-lg border border-primary/20 shadow-sm mt-3 animate-in fade-in zoom-in-95 cursor-default" 
+    onClick={e => e.stopPropagation()}
+>
+    <Input 
+        placeholder="Client Name / Task Title" 
+        value={newCardTitle} 
+        onChange={(e) => setNewCardTitle(e.target.value)} 
+        className="mb-2 h-8 text-sm"
+        autoFocus
+    />
+    
+    {/* Show Selected Member Avatars */}
+    {(() => {
+        const displayAssignees = Array.from(new Set([...newCardAssignees, currentUser?.id])).filter(Boolean) as string[];
+        if (displayAssignees.length === 0) return null;
+        return (
+            <div className="flex -space-x-1.5 mb-2 px-1">
+                {displayAssignees.map(id => {
+                    const u = allUsers.find(x => x.id === id);
+                    if(!u) return null;
+                    return (
+                        <div key={id} className={cn("h-5 w-5 rounded-full text-white flex items-center justify-center text-[8px] font-bold ring-1 ring-background", getMemberColor(u.name))} title={u.name}>
+                            {getInitials(u.name)}
+                        </div>
+                    )
+                })}
+            </div>
+        )
+    })()}
+
+    <div className="flex gap-2 justify-between items-center">
+        <div className="flex gap-2">
+            <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+            <Button size="sm" variant="ghost" className="h-7 px-3 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardAssignees([]); setInsertAfterTaskId(null); }}>Cancel</Button>
+        </div>
+        
+        {/* Assign Members Popover */}
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full border border-dashed border-muted-foreground hover:border-foreground shrink-0">
+                    <Plus className="h-3 w-3 text-muted-foreground" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-2" align="end" onClick={e => e.stopPropagation()}>
+                <h4 className="text-xs font-bold text-muted-foreground mb-2 px-2">Assign Members</h4>
+                <ScrollArea className="h-48">
+                    {allUsers.map(user => {
+                        const isCurrentUser = currentUser && user.id === currentUser.id;
+                        const isSelected = newCardAssignees.includes(user.id) || isCurrentUser;
+                        
+                        return (
+                            <div key={user.id} 
+                                className={cn("flex items-center gap-2 p-2 rounded text-sm", 
+                                    isSelected ? "bg-accent/50" : "hover:bg-accent cursor-pointer",
+                                    isCurrentUser && "opacity-70 cursor-not-allowed" // Locked state for creator
+                                )}
+                                onClick={() => {
+                                    if (isCurrentUser) return; // Prevent unchecking the creator
+                                    setNewCardAssignees(prev => 
+                                        prev.includes(user.id) ? prev.filter(id => id !== user.id) : [...prev, user.id]
+                                    );
+                                }}
+                            >
+                                <div className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs text-white shrink-0", getMemberColor(user.name))}>{getInitials(user.name)}</div>
+                                <span className="truncate">{user.name}</span>
+                                {isCurrentUser && <span className="text-[10px] text-muted-foreground ml-auto">(Creator)</span>}
+                                {isSelected && !isCurrentUser && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                                {isCurrentUser && <Check className="ml-2 h-3 w-3 shrink-0 text-muted-foreground" />}
+                            </div>
+                        );
+                    })}
+                </ScrollArea>
+            </PopoverContent>
+        </Popover>
+    </div>
+</div>
                                 ) : addingCardToColumn !== column.id && (
                                     <Button 
                                         variant="ghost" 

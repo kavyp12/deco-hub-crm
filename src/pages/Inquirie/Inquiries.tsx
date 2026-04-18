@@ -50,7 +50,7 @@ const ITEMS_PER_PAGE = 10;
 
 const Inquiries: React.FC = () => {
   const { toast } = useToast();
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [allInquiries, setAllInquiries] = useState<Inquiry[]>([]);
 
   // Lists
   const [salesPeople, setSalesPeople] = useState<{ id: string, name: string }[]>([]);
@@ -59,7 +59,6 @@ const Inquiries: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
 
   // Edit State
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -85,12 +84,16 @@ const Inquiries: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [currentPage]);
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data: allInquiries } = await api.get('/inquiries');
+      const { data: fetchedInquiries } = await api.get('/inquiries');
 
       const [peopleRes, archRes] = await Promise.all([
         api.get('/users/sales-people'),
@@ -100,14 +103,7 @@ const Inquiries: React.FC = () => {
       setSalesPeople(peopleRes.data);
       setArchitects(archRes.data);
 
-      const filtered = allInquiries;
-      setTotalCount(filtered.length);
-
-      const from = (currentPage - 1) * ITEMS_PER_PAGE;
-      const to = from + ITEMS_PER_PAGE;
-      const paginatedData = filtered.slice(from, to);
-
-      setInquiries(paginatedData);
+      setAllInquiries(fetchedInquiries);
     } catch (error) {
       console.error('Error:', error);
     } finally {
@@ -183,17 +179,23 @@ const Inquiries: React.FC = () => {
     }
   };
 
-  const filteredInquiries = inquiries.filter((inquiry) => {
+  const filteredAll = allInquiries.filter((inquiry) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
-      inquiry.client_name.toLowerCase().includes(query) ||
-      inquiry.inquiry_number.toLowerCase().includes(query) ||
-      inquiry.mobile_number.includes(query)
+      inquiry.client_name?.toLowerCase().includes(query) ||
+      inquiry.inquiry_number?.toLowerCase().includes(query) ||
+      inquiry.mobile_number?.includes(query)
     );
   });
 
+  const totalCount = filteredAll.length;
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+
+  const displayedInquiries = filteredAll.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   // Helper to format multiple names
   const renderSalesPersons = (inquiry: Inquiry) => {
@@ -238,10 +240,10 @@ const Inquiries: React.FC = () => {
             Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="card-premium p-4 h-32 animate-pulse bg-muted/20" />
             ))
-          ) : filteredInquiries.length === 0 ? (
+          ) : displayedInquiries.length === 0 ? (
             <div className="text-center p-8 text-muted-foreground bg-muted/20 rounded-lg">No inquiries found.</div>
           ) : (
-            filteredInquiries.map((inquiry) => (
+            displayedInquiries.map((inquiry) => (
               <div key={inquiry.id} className="card-premium p-4 flex flex-col gap-3">
                 <div className="flex justify-between items-start">
                   <div>
@@ -307,7 +309,7 @@ const Inquiries: React.FC = () => {
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}><td colSpan={6} className="px-6 py-4"><div className="h-5 bg-muted rounded animate-pulse" /></td></tr>
                   ))
-                ) : filteredInquiries.map((inquiry) => (
+                ) : displayedInquiries.map((inquiry) => (
                   <tr key={inquiry.id} className="border-b border-border hover:bg-muted/50 transition-colors">
                     <td className="px-6 py-4"><span className="font-medium">{inquiry.inquiry_number}</span></td>
                     <td className="px-6 py-4">
