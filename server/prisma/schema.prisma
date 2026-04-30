@@ -50,7 +50,8 @@ model User {
   dailyReports  DailyReport[]
   catalogMovements   CatalogMovement[]
   // === ADD THIS NEW LINE ===
-  comments_made      InquiryComment[] 
+  comments_made         InquiryComment[]
+  comment_mentions      InquiryCommentMention[] @relation("MentionedInComments")
 
   quotation_comments QuotationComment[]
   attendance         Attendance[]
@@ -58,12 +59,14 @@ model User {
   leaveRequests LeaveRequest[] // <--- ADD THIS LINE
   leaveBalance  LeaveBalance? // <--- ADD THIS
   corrections   TimeCorrection[] // <--- ADD THIS
+  inquiry_payments InquiryPayment[]
 }
 
 model Inquiry {
   id                  String    @id @default(uuid())
   inquiry_number      String    @unique
   client_name         String
+  stageDueDate  DateTime? // ← ADD THIS — due date for the current stage
   architect_id_name   String?
 
   client_birth_date       DateTime?
@@ -101,6 +104,7 @@ model Inquiry {
   checklists  InquiryChecklist[]
   labels      InquiryLabel[]
   catalogMovements CatalogMovement[]
+  payments    InquiryPayment[]
 }
 // ==========================================
 // ATTENDANCE, HR & REPORTING MODELS
@@ -197,20 +201,40 @@ model TimeCorrection {
 // ==========================================
 
 model InquiryComment {
-  id        String   @id @default(uuid())
-  content   String
+  id            String    @id @default(uuid())
+  content       String
   attachmentUrl String?
 
-  createdAt DateTime @default(now())
-  
-  
+  // Due date for task tracking (optional)
+  dueDate       DateTime?
+
+  createdAt     DateTime  @default(now())
+
   // Link to Inquiry
   inquiryId String
   inquiry   Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
-  
+
   // Link to User (Who wrote it)
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+
+  // Track which pipeline stage the comment was made in
+  stage     String?
+
+  // @mentions
+  mentions  InquiryCommentMention[]
+}
+
+model InquiryCommentMention {
+  id        String         @id @default(uuid())
+
+  commentId String
+  comment   InquiryComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User           @relation("MentionedInComments", fields: [userId], references: [id])
+  
+  isRead    Boolean        @default(false)
 }
 
 model InquiryChecklist {
@@ -867,17 +891,27 @@ model ActivityLog {
 }
 
 model DailyReport {
-  id          String   @id @default(uuid())
-  reportDate  DateTime
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status      String   @default("SUBMITTED")
-  otherWork   String?  @db.Text   // <--- ADD THIS LINE
-  submittedAt DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  entries     DailyReportEntry[]
+  id               String             @id @default(uuid())
+  reportDate       DateTime
+  userId           String
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status           String             @default("SUBMITTED")
+  submittedAt      DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  entries          DailyReportEntry[]
+  otherWorkEntries OtherWorkEntry[]
 
   @@unique([userId, reportDate])
+}
+
+model OtherWorkEntry {
+  id            String      @id @default(uuid())
+  dailyReportId String
+  dailyReport   DailyReport @relation(fields: [dailyReportId], references: [id], onDelete: Cascade)
+  startHour     String      // e.g. "09:00"
+  endHour       String      // e.g. "11:00"
+  description   String      @db.Text
+  createdAt     DateTime    @default(now())
 }
 
 model DailyReportEntry {
@@ -890,4 +924,20 @@ model DailyReportEntry {
   status        String
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+}
+
+model InquiryPayment {
+  id          String   @id @default(uuid())
+  amount      Float
+  date        DateTime
+  status      String   @default("pending") // "pending" or "collected"
+  
+  inquiryId   String
+  inquiry     Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

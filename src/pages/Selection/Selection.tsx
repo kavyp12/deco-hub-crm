@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { processProductsForDropdown } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -53,6 +54,7 @@ interface SelectionItem {
   areaName?: string;
   catalogName?: string;
   catalogType?: string;
+  srlNo: string;     // ✅ ADD THIS
   version?: number; // ✅ Version is crucial here
 
   // Measurement fields
@@ -135,6 +137,10 @@ const Selections: React.FC = () => {
   });
   const [editedItems, setEditedItems] = useState<any[]>([]);
 
+  const [selectedDesignName, setSelectedDesignName] = useState<string>('');  // ✅ Step 1
+  const [availableSrls, setAvailableSrls] = useState<any[]>([]);             // ✅ Step 2
+
+
   useEffect(() => {
     fetchData();
   }, [currentPage, statusFilter]);
@@ -143,7 +149,6 @@ const Selections: React.FC = () => {
     fetchCompanies();
   }, []);
 
-  // Handle Company Selection
   useEffect(() => {
     if (selectedCompanyId) {
       const comp = companies.find(c => c.id === selectedCompanyId);
@@ -152,6 +157,8 @@ const Selections: React.FC = () => {
       setSelectedCatalogType('');
       setProducts([]);
       setSelectedProduct(null);
+      setSelectedDesignName('');  // ✅ NEW
+      setAvailableSrls([]);       // ✅ NEW
     }
   }, [selectedCompanyId, companies]);
 
@@ -160,16 +167,19 @@ const Selections: React.FC = () => {
     if (selectedCatalogId) {
       const catalog = catalogs.find(c => c.id === selectedCatalogId);
       if (catalog) setSelectedCatalogType(catalog.type || 'Generic');
-
       api.get(`/catalogs/${selectedCatalogId}/products`).then(({ data }) => {
         setProducts(data);
       });
+      setSelectedDesignName('');  // ✅ NEW
+      setAvailableSrls([]);       // ✅ NEW
+      setSelectedProduct(null);
     } else {
       setProducts([]);
       setSelectedCatalogType('');
+      setSelectedDesignName('');  // ✅ NEW
+      setAvailableSrls([]);       // ✅ NEW
     }
   }, [selectedCatalogId, catalogs]);
-
   const fetchCompanies = async () => {
     try {
       const { data } = await api.get('/companies');
@@ -241,6 +251,7 @@ const Selections: React.FC = () => {
         catalogName: details.catalogName || item.catalogName || '',
         catalogType: details.catalogType || item.catalogType || '',
         companyId: details.companyId || '',
+        srlNo: item.srlNo || details.srlNo || '',   // ✅ preserve srlNo
         unit: item.unit,
         width: item.width,
         height: item.height,
@@ -278,6 +289,7 @@ const Selections: React.FC = () => {
         catalogName: details.catalogName || item.catalogName || '',
         catalogType: details.catalogType || item.catalogType || '',
         companyId: details.companyId || '',
+        srlNo: item.srlNo || details.srlNo || '',   // ✅ preserve srlNo
         unit: item.unit,
         width: item.width,
         height: item.height,
@@ -318,6 +330,7 @@ const Selections: React.FC = () => {
         catalogName: details.catalogName || item.catalogName || '',
         catalogType: details.catalogType || item.catalogType || '',
         companyId: details.companyId || '',
+        srlNo: item.srlNo || details.srlNo || '',   // ✅ preserve srlNo
         unit: item.unit,
         width: item.width,
         height: item.height,
@@ -345,6 +358,7 @@ const Selections: React.FC = () => {
         catalogName: details.catalogName || item.catalogName || '',
         catalogType: details.catalogType || item.catalogType || '',
         companyId: details.companyId || '',
+        srlNo: item.srlNo || details.srlNo || '',   // ✅ preserve srlNo
         unit: item.unit,
         width: item.width,
         height: item.height,
@@ -358,20 +372,43 @@ const Selections: React.FC = () => {
     }));
   }
 
-  const handleProductSelect = (prodId: string) => {
-    const prod = products.find(p => p.id === prodId);
+  // ✅ UPDATED: Step 2 — pick specific SRL
+  const handleProductSelect = (uniqueKey: string) => {
+    const prod = availableSrls.find(p => p.uniqueKey === uniqueKey);
     if (prod) {
       setSelectedProduct(prod);
-      const priceValue = typeof prod.price === 'string' ? parseFloat(prod.price.replace(/,/g, '')) : prod.price;
-      setCurrentItem(prev => ({ ...prev, productId: prod.id, price: priceValue }));
+      const price = typeof prod.price === 'number'
+        ? prod.price
+        : parseFloat(String(prod.price).replace(/,/g, '')) || 0;
+      setCurrentItem(prev => ({
+        ...prev,
+        productId: prod.originalId,
+        price
+      }));
     }
   };
 
+  // ✅ NEW: Step 1 — pick design name, populate SRL list
+  const handleDesignSelect = (designName: string) => {
+    setSelectedDesignName(designName);
+    setSelectedProduct(null);
+    setCurrentItem(prev => ({ ...prev, productId: '', price: 0 }));
+
+    if (designName) {
+      const srls = processProductsForDropdown(
+        products.filter(p => p.name === designName)
+      );
+      setAvailableSrls(srls);
+    } else {
+      setAvailableSrls([]);
+    }
+  };
   const handleAddItemOrUpdate = () => {
     if (!selectedProduct) return;
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
     const newItemData = {
       name: selectedProduct.name,
+      srlNo: selectedProduct.srlNo || '',   // ✅ NEW: save SRL
       catalogName: catalog?.name || '',
       catalogType: selectedCatalogType,
       companyId: selectedCompanyId,
@@ -385,7 +422,7 @@ const Selections: React.FC = () => {
       newItems[editingItemIndex] = {
         ...existingItem,
         ...newItemData,
-        productId: selectedProduct.id,
+        productId: selectedProduct.originalId || selectedProduct.id,
         total: existingItem.quantity * currentItem.price
       };
       setEditedItems(newItems);
@@ -397,17 +434,22 @@ const Selections: React.FC = () => {
         return;
       }
       setEditedItems([...editedItems, {
-        id: selectedProduct.id,
-        productId: selectedProduct.id,
+        id: selectedProduct.originalId || selectedProduct.id,
+        productId: selectedProduct.originalId || selectedProduct.id,
         ...newItemData,
         quantity: currentItem.quantity,
         total: currentItem.quantity * currentItem.price,
         areaName: currentItem.areaName,
         unit: 'mm',
-        width: null, height: null
+        width: null,
+        height: null
       }]);
     }
+
+    // ✅ Reset all product selection states
     setSelectedProduct(null);
+    setSelectedDesignName('');
+    setAvailableSrls([]);
     setCurrentItem({ productId: '', quantity: 1, price: 0, areaName: '' });
   };
 
@@ -456,12 +498,14 @@ const Selections: React.FC = () => {
         areaName: item.areaName,
         catalogName: item.catalogName,
         catalogType: item.catalogType,
+        srlNo: item.srlNo || '',   // ✅ Always send srlNo
         details: {
           ...(item.attributes || {}),
           areaName: item.areaName,
           catalogName: item.catalogName,
           catalogType: item.catalogType,
-          companyId: item.companyId
+          companyId: item.companyId,
+          srlNo: item.srlNo || ''  // ✅ Also in details for backward compat
         }
       }));
 
@@ -536,6 +580,45 @@ const Selections: React.FC = () => {
     return styles[status] || 'bg-muted text-muted-foreground';
   };
 
+
+
+  const handleSrlDirectSearch = (srlTerm: string) => {
+    if (!srlTerm.trim()) return;
+
+    const processedProducts = processProductsForDropdown(products);
+    const matchedProd = processedProducts.find(
+      p => p.srlNo?.toString().toLowerCase() === srlTerm.trim().toLowerCase()
+    );
+
+    if (matchedProd) {
+      // 1. Auto-select the design
+      setSelectedDesignName(matchedProd.name);
+
+      // 2. Populate available SRLs for this design
+      const srls = processProductsForDropdown(
+        products.filter(p => p.name === matchedProd.name)
+      );
+      setAvailableSrls(srls);
+
+      // 3. Set the specific product details (No selectedProductKey used here)
+      setSelectedProduct(matchedProd);
+
+      const price = typeof matchedProd.price === 'number'
+        ? matchedProd.price
+        : parseFloat(String(matchedProd.price).replace(/,/g, '')) || 0;
+
+      setCurrentItem(prev => ({
+        ...prev,
+        productId: matchedProd.originalId,
+        price: price
+      }));
+
+      toast({ title: 'Product Found', description: `Auto-selected ${matchedProd.name} (SRL: ${matchedProd.srlNo})` });
+    } else {
+      toast({ title: 'Not Found', description: `No product found with SRL: ${srlTerm}`, variant: 'destructive' });
+    }
+  };
+
   // Helper to group historical items
   const getGroupedHistory = () => {
     if (!selectedSelection || !selectedSelection.items) return {};
@@ -557,6 +640,9 @@ const Selections: React.FC = () => {
     );
   });
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+
+
+
 
   return (
     <DashboardLayout>
@@ -818,6 +904,26 @@ const Selections: React.FC = () => {
                 </h3>
 
                 <div className="bg-muted/30 p-4 rounded-lg space-y-4">
+
+                  {/* 1. MOVED TO TOP: Area Name (Only show if not editing an existing row's product) */}
+                  {editingItemIndex === null && (
+                    <div className="space-y-2 mb-4">
+                      <Label>Area Name *</Label>
+                      <Input
+                        list="selection-area-options"
+                        placeholder="e.g. Master Bedroom"
+                        value={currentItem.areaName}
+                        onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
+                        className="h-9"
+                      />
+                      <datalist id="selection-area-options">
+                        {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
+                          <option key={area} value={area} />
+                        ))}
+                      </datalist>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-4">
                     {/* COMPANY SELECTION */}
                     <div className="space-y-2">
@@ -827,6 +933,7 @@ const Selections: React.FC = () => {
                         <SelectContent>{companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
+
                     {/* CATALOG SELECTION */}
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
@@ -848,73 +955,91 @@ const Selections: React.FC = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    {/* PRODUCT SELECTION */}
+
+                    {/* PRODUCT SELECTION — Direct SRL & Design */}
                     <div className="space-y-2">
-                      <Label>Product</Label>
-                      <Select value={currentItem.productId} onValueChange={handleProductSelect} disabled={!selectedCatalogId}>
-                        <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                      <Label>Product Search</Label>
+
+                      <Input
+                        placeholder="🔍 Type SRL Number and press Enter..."
+                        disabled={!selectedCatalogId}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSrlDirectSearch(e.currentTarget.value);
+                          }
+                        }}
+                        onBlur={(e) => handleSrlDirectSearch(e.target.value)}
+                        className="border-green-300 bg-green-50 focus:border-green-500 text-green-900 placeholder-green-700/50 font-medium"
+                      />
+
+                      <div className="text-xs text-center text-muted-foreground py-1 font-medium">- OR SEARCH BY DESIGN -</div>
+
+                      <Select
+                        value={selectedDesignName}
+                        onValueChange={handleDesignSelect}
+                        disabled={!selectedCatalogId}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Select Design" /></SelectTrigger>
                         <SelectContent>
-                          {products.map(p => <SelectItem key={p.id} value={p.id}>{p.name} - ₹{p.price}</SelectItem>)}
+                          {Array.from(new Set(products.map(p => p.name)))
+                            .sort()
+                            .map(name => (
+                              <SelectItem key={name} value={name}>{name}</SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
+
+                      {selectedDesignName && (
+                        <div className="space-y-1 mt-2">
+                          <Label className="text-xs text-muted-foreground">SRL Number</Label>
+                          <Select
+                            value={selectedProduct?.uniqueKey || ''}
+                            onValueChange={handleProductSelect}
+                          >
+                            <SelectTrigger className="border-blue-300 bg-blue-50 text-blue-800">
+                              <SelectValue placeholder="Select SRL" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableSrls.map(p => (
+                                <SelectItem key={p.uniqueKey} value={p.uniqueKey}>
+                                  SRL: {p.srlNo}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                     </div>
                   </div>
 
+                  {/* Selected Product Action Block - REMOVED PRICE & QTY */}
                   {selectedProduct && (
-                    <div className="p-3 bg-background border rounded-lg animate-in fade-in">
-                      <div className="flex flex-col gap-4">
+                    <div className="p-3 bg-background border rounded-lg animate-in fade-in mt-4">
+                      <div className="flex items-center justify-between gap-4">
                         <div className="flex-1">
                           <p className="font-medium text-sm text-primary mb-1">{selectedProduct.name}</p>
-                          <p className="text-xs text-muted-foreground">Base Price: ₹{selectedProduct.price}</p>
+                          <p className="text-xs text-muted-foreground">SRL: {selectedProduct.srlNo}</p>
                         </div>
-                        <div className="flex gap-4 items-end">
-                          {editingItemIndex === null && (
-                            <div className="space-y-1 flex-1">
-                              <Label className="text-xs">Area Name *</Label>
-                              <Input
-                                list="selection-area-options"
-                                placeholder="e.g. Master Bedroom"
-                                value={currentItem.areaName}
-                                onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
-                                className="h-9"
-                              />
-                              <datalist id="selection-area-options">
-                                {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
-                                  <option key={area} value={area} />
-                                ))}
-                              </datalist>
-                            </div>
-                          )}
-                          <div className="space-y-1 w-28">
-                            <Label className="text-xs">Price</Label>
-                            <Input type="number" value={currentItem.price} onChange={(e) => setCurrentItem({ ...currentItem, price: parseFloat(e.target.value) })} className="h-9" />
-                          </div>
-                          {editingItemIndex === null && (
-                            <div className="space-y-1 w-20">
-                              <Label className="text-xs">Qty</Label>
-                              <Input type="number" value={currentItem.quantity} onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseFloat(e.target.value) })} className="h-9" />
-                            </div>
-                          )}
-                          <div className="flex gap-2">
-                            <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
-                              {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
+                        <div className="flex gap-2">
+                          <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
+                            {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
+                          </Button>
+                          {editingItemIndex !== null && (
+                            <Button
+                              type="button"
+                              onClick={() => {
+                                setEditingItemIndex(null);
+                                setSelectedProduct(null);
+                                setSelectedCompanyId('');
+                                setSelectedCatalogId('');
+                              }}
+                              size="sm"
+                              variant="outline" className="h-9"
+                            >
+                              Cancel Edit
                             </Button>
-                            {editingItemIndex !== null && (
-                              <Button
-                                type="button"
-                                onClick={() => {
-                                  setEditingItemIndex(null);
-                                  setSelectedProduct(null);
-                                  setSelectedCompanyId('');
-                                  setSelectedCatalogId('');
-                                }}
-                                size="sm"
-                                variant="outline" className="h-9"
-                              >
-                                Cancel Edit
-                              </Button>
-                            )}
-                          </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -940,13 +1065,10 @@ const Selections: React.FC = () => {
                     <table className="w-full text-sm">
                       <thead className="bg-muted/50">
                         <tr>
-                          <th className="text-left py-2 px-3">Area</th>
-                          <th className="text-left py-2 px-3">Catalog / Type</th>
-                          <th className="text-left py-2 px-3">Product</th>
-                          <th className="text-center py-2 px-3">Qty</th>
-                          <th className="text-right py-2 px-3">Price</th>
-                          <th className="text-right py-2 px-3">Total</th>
-                          <th className="py-2 px-3"></th>
+                          <th className="text-left py-2 px-3 w-1/4">Area</th>
+                          <th className="text-left py-2 px-3 w-1/4">Catalog / Type</th>
+                          <th className="text-left py-2 px-3 w-2/4">Product</th>
+                          <th className="py-2 px-3 w-12"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -977,12 +1099,12 @@ const Selections: React.FC = () => {
                             </td>
                             <td className="py-2 px-3">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium truncate max-w-[120px]" title={item.name}>
-                                  {item.name}
+                                <span className="text-xs font-medium truncate max-w-[200px]" title={item.name}>
+                                  {item.name} <span className="text-blue-600">(SRL: {item.srlNo || 'N/A'})</span>
                                 </span>
                                 <Button
                                   type="button"
-                                  variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800"
+                                  variant="ghost" size="icon" className="h-6 w-6 text-blue-600 hover:text-blue-800 shrink-0"
                                   title="Change Product"
                                   onClick={() => handleEditRowProduct(idx)}
                                 >
@@ -990,23 +1112,6 @@ const Selections: React.FC = () => {
                                 </Button>
                               </div>
                             </td>
-                            <td className="py-2 px-3">
-                              <Input
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => handleUpdateItemQuantity(idx, parseFloat(e.target.value))}
-                                className="h-8 w-16 mx-auto text-center"
-                              />
-                            </td>
-                            <td className="py-2 px-3">
-                              <Input
-                                type="number"
-                                value={item.price}
-                                onChange={(e) => handleUpdateItemPrice(idx, parseFloat(e.target.value))}
-                                className="h-8 w-24 ml-auto text-right"
-                              />
-                            </td>
-                            <td className="py-2 px-3 text-right font-bold">₹{item.total.toFixed(2)}</td>
                             <td className="py-2 px-3 text-right">
                               <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleRemoveItem(idx)}>
                                 <X className="h-4 w-4 text-destructive" />
@@ -1015,15 +1120,6 @@ const Selections: React.FC = () => {
                           </tr>
                         ))}
                       </tbody>
-                      <tfoot className="bg-muted/20 border-t">
-                        <tr>
-                          <td colSpan={5} className="py-2 px-3 text-right font-bold">Grand Total:</td>
-                          <td className="py-2 px-3 text-right font-bold text-lg text-accent">
-                            ₹{editedItems.reduce((sum, i) => sum + i.total, 0).toFixed(2)}
-                          </td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
                     </table>
                   </div>
                 )}

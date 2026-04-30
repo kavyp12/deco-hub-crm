@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
-
+import { processProductsForDropdown } from '@/lib/utils';
 interface MeasurementRow {
   uid: string;
   companyId: string;
@@ -14,6 +14,8 @@ interface MeasurementRow {
   catalogType: string;
   productId: string;
   productName: string;
+  selectedProductName: string;  // ✅ NEW
+  srlNo?: string;
   areaName: string;
   unit: 'mm' | 'cm' | 'inch';
   width: string;
@@ -27,10 +29,10 @@ interface MeasurementRow {
   price: number;
 }
 const COMMON_AREAS = [
-  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", 
-  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen", 
-  "Study Room", "Home Office", "Balcony", "Verandah", 
-  "Puja Room", "Staircase", "Lobby", "Entrance", 
+  "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom",
+  "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen",
+  "Study Room", "Home Office", "Balcony", "Verandah",
+  "Puja Room", "Staircase", "Lobby", "Entrance",
   "Bathroom", "Store Room", "Servant Room", "Utility Area"
 ];
 
@@ -41,14 +43,14 @@ const IndependentMeasurementForm: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  
+
   const [inquiry, setInquiry] = useState<any>(null);
   const [selection, setSelection] = useState<any>(null);
-  
+
   const [companies, setCompanies] = useState<any[]>([]);
   const [allCatalogs, setAllCatalogs] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
-  
+
   const [rows, setRows] = useState<MeasurementRow[]>([]);
 
   useEffect(() => {
@@ -56,7 +58,7 @@ const IndependentMeasurementForm: React.FC = () => {
       try {
         const inqRes = await api.get('/inquiries');
         const currentInquiry = inqRes.data.find((i: any) => i.id === inquiryId);
-        
+
         if (!currentInquiry) {
           toast({ title: 'Error', description: 'Inquiry not found', variant: 'destructive' });
           navigate('/measurements');
@@ -67,8 +69,8 @@ const IndependentMeasurementForm: React.FC = () => {
         // Fetch Companies & Catalogs
         const companiesRes = await api.get('/companies');
         setCompanies(companiesRes.data);
-        
-        const flatCatalogs = companiesRes.data.flatMap((c: any) => 
+
+        const flatCatalogs = companiesRes.data.flatMap((c: any) =>
           c.catalogs.map((cat: any) => ({
             ...cat,
             companyName: c.name,
@@ -85,40 +87,48 @@ const IndependentMeasurementForm: React.FC = () => {
         // Load Selection Items
         try {
           const selRes = await api.get(`/selections/by-inquiry/${inquiryId}`);
-          
+
           if (selRes.data && selRes.data.items && selRes.data.items.length > 0) {
             setSelection(selRes.data);
-            
+
             const mappedRows = selRes.data.items.map((item: any) => {
               const associatedProduct = prodRes.data.find((p: any) => p.id === item.productId);
-              
+
               let compId = '';
               let catId = '';
               let catName = item.details?.catalogName || item.catalogName || '';
               let catType = item.details?.catalogType || item.catalogType || 'Curtains';
 
               if (associatedProduct && associatedProduct.catalog) {
-                  compId = associatedProduct.catalog.companyId;
-                  catId = associatedProduct.catalog.id;
-                  catName = associatedProduct.catalog.name;
-                  catType = associatedProduct.catalog.type || 'Curtains';
+                compId = associatedProduct.catalog.companyId;
+                catId = associatedProduct.catalog.id;
+                catName = associatedProduct.catalog.name;
+                catType = associatedProduct.catalog.type || 'Curtains';
               } else if (catName) {
-                  const matchingCat = flatCatalogs.find((c: any) => c.name === catName);
-                  if (matchingCat) {
-                      compId = matchingCat.companyId;
-                      catId = matchingCat.id;
-                      catType = matchingCat.type;
-                  }
+                const matchingCat = flatCatalogs.find((c: any) => c.name === catName);
+                if (matchingCat) {
+                  compId = matchingCat.companyId;
+                  catId = matchingCat.id;
+                  catType = matchingCat.type;
+                }
+              }
+
+              // ✅ NEW: Final fallback — use companyId saved in details if still not found
+              if (!compId && item.details?.companyId) {
+                compId = item.details.companyId;
               }
 
               return {
                 uid: item.id || Math.random().toString(36).substr(2, 9),
                 companyId: compId,
-                catalogId: catId, 
+                catalogId: catId,
                 catalogName: catName,
-                catalogType: catType, 
+                catalogType: catType,
                 productId: item.productId || '',
                 productName: item.productName || '',
+                selectedProductName: item.productName || '',  // ✅ NEW: populate from saved name
+
+                srlNo: item.srlNo || item.details?.srlNo || '',
                 areaName: item.details?.areaName || item.areaName || '',
                 unit: item.unit || 'mm',
                 width: item.width?.toString() || '',
@@ -137,8 +147,8 @@ const IndependentMeasurementForm: React.FC = () => {
             setRows([createEmptyRow()]);
           }
         } catch (error: any) {
-           // If 404, assume new selection
-           setRows([createEmptyRow()]);
+          // If 404, assume new selection
+          setRows([createEmptyRow()]);
         }
       } catch (error) {
         console.error('Init error:', error);
@@ -159,6 +169,8 @@ const IndependentMeasurementForm: React.FC = () => {
     catalogType: '',
     productId: '',
     productName: '',
+    selectedProductName: '',  // ✅ NEW
+    srlNo: '',
     areaName: '',
     unit: 'mm',
     width: '',
@@ -171,7 +183,6 @@ const IndependentMeasurementForm: React.FC = () => {
     quantity: 1,
     price: 0
   });
-
   const handleAddRow = () => setRows(prev => [...prev, createEmptyRow()]);
 
   const handleRemoveRow = (index: number) => {
@@ -204,6 +215,8 @@ const IndependentMeasurementForm: React.FC = () => {
         catalogType: '',
         productId: '',
         productName: '',
+        selectedProductName: '',  // ✅ NEW
+        srlNo: '',
         price: 0
       };
       return newRows;
@@ -221,36 +234,66 @@ const IndependentMeasurementForm: React.FC = () => {
         catalogType: catalog ? (catalog.type || 'Curtains') : '',
         productId: '',
         productName: '',
+        selectedProductName: '',  // ✅ NEW
+        srlNo: '',
         price: 0
       };
       return newRows;
     });
   };
 
-  const handleProductSelect = (index: number, prodId: string) => {
-    if (!prodId) {
+  // ✅ NEW: Step 1 — pick design name only, clears SRL
+  const handleDesignSelect = (index: number, designName: string) => {
+    setRows(prev => {
+      const newRows = [...prev];
+      newRows[index] = {
+        ...newRows[index],
+        selectedProductName: designName,
+        productId: '',
+        srlNo: '',
+        price: 0
+      };
+      return newRows;
+    });
+  };
+
+  // ✅ UPDATED: Step 2 — pick specific SRL
+  const handleProductSelect = (index: number, uniqueKey: string) => {
+    if (!uniqueKey) {
       setRows(prev => {
         const newRows = [...prev];
-        newRows[index] = { ...newRows[index], productId: '', productName: '', price: 0 };
+        newRows[index] = { ...newRows[index], productId: '', srlNo: '', price: 0 };
         return newRows;
       });
       return;
     }
 
-    const prod = products.find(p => p.id === prodId);
-    if (prod) {
-      const price = typeof prod.price === 'string' ? parseFloat(prod.price.replace(/,/g, '')) : prod.price;
-      setRows(prev => {
+    setRows(prev => {
+      const catalogId = prev[index].catalogId;
+      const selectedDesign = prev[index].selectedProductName;
+      const availableProdList = processProductsForDropdown(
+        products.filter(p => p.catalogId === catalogId && p.name === selectedDesign)
+      );
+      const processedProd = availableProdList.find(p => p.uniqueKey === uniqueKey);
+
+      if (processedProd) {
         const newRows = [...prev];
+        // ✅ price is already number from utils fix — no .replace() needed
+        const price = typeof processedProd.price === 'number'
+          ? processedProd.price
+          : parseFloat(String(processedProd.price).replace(/,/g, '')) || 0;
         newRows[index] = {
           ...newRows[index],
-          productId: prod.id,
-          productName: prod.name,
+          productId: processedProd.originalId,
+          productName: processedProd.name,
+          selectedProductName: processedProd.name,
+          srlNo: processedProd.srlNo !== 'N/A' ? processedProd.srlNo : '',
           price: price
         };
         return newRows;
-      });
-    }
+      }
+      return prev;
+    });
   };
 
   const handleSave = async () => {
@@ -282,10 +325,13 @@ const IndependentMeasurementForm: React.FC = () => {
           openingType: r.catalogType === 'Curtains' ? (r.openingType || null) : null,
           areaName: r.areaName,
           catalogName: r.catalogName,
+          srlNo: r.srlNo || null,
           details: {
-              catalogName: r.catalogName,
-              catalogType: r.catalogType,
-              companyId: r.companyId
+            catalogName: r.catalogName,
+            catalogType: r.catalogType,
+            companyId: r.companyId,
+            areaName: r.areaName,        // ✅ ADD THIS
+            srlNo: r.srlNo || null
           }
         }))
       };
@@ -313,6 +359,43 @@ const IndependentMeasurementForm: React.FC = () => {
     }
   };
 
+  const handleSrlDirectSearch = (index: number, srlTerm: string) => {
+    const row = rows[index];
+    if (!row.catalogId || !srlTerm.trim()) return;
+
+    // Find all products for the current catalog
+    const relevantProducts = products.filter(p => p.catalogId === row.catalogId);
+    const processedProducts = processProductsForDropdown(relevantProducts);
+
+    // Search for an exact or case-insensitive match on the SRL No
+    const matchedProd = processedProducts.find(
+      p => p.srlNo?.toString().toLowerCase() === srlTerm.trim().toLowerCase()
+    );
+
+    if (matchedProd) {
+      const price = typeof matchedProd.price === 'number'
+        ? matchedProd.price
+        : parseFloat(String(matchedProd.price).replace(/,/g, '')) || 0;
+
+      setRows(prev => {
+        const newRows = [...prev];
+        newRows[index] = {
+          ...newRows[index],
+          selectedProductName: matchedProd.name, // Auto-selects the Design Name
+          productId: matchedProd.originalId,     // Selects the exact product mapping
+          productName: matchedProd.name,
+          srlNo: matchedProd.srlNo,
+          price: price
+        };
+        return newRows;
+      });
+
+      toast({ title: 'Product Found', description: `Auto-selected ${matchedProd.name} (SRL: ${matchedProd.srlNo})` });
+    } else {
+      toast({ title: 'Not Found', description: `No product found with SRL: ${srlTerm} in this catalog.`, variant: 'destructive' });
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -328,7 +411,7 @@ const IndependentMeasurementForm: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="max-w-[98vw] mx-auto animate-fade-in pb-20">
-        
+
         {/* Header - Stack on Mobile */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div className="flex items-start md:items-center gap-4">
@@ -355,7 +438,7 @@ const IndependentMeasurementForm: React.FC = () => {
         <div className="bg-white border rounded-xl shadow-sm overflow-hidden flex flex-col h-full">
           {/* Scrollable Area */}
           <div className="overflow-x-auto flex-1">
-            <table className="w-full text-sm border-collapse" style={{ minWidth: '2400px' }}>
+            <table className="w-full text-sm border-collapse" style={{ minWidth: '2100px' }}>
               <thead className="bg-gradient-to-r from-primary/10 to-primary/5 sticky top-0 z-10">
                 <tr>
                   <th className="p-3 w-14 text-center font-bold text-primary border-r border-primary/20 sticky left-0 bg-white z-20 shadow-sm">SR</th>
@@ -371,8 +454,6 @@ const IndependentMeasurementForm: React.FC = () => {
                   <th className="p-3 w-24 text-left font-bold text-primary border-r border-primary/20">OPS/W</th>
                   <th className="p-3 w-28 text-left font-bold text-primary border-r border-primary/20">Pelmet</th>
                   <th className="p-3 w-32 text-left font-bold text-primary border-r border-primary/20">Opening</th>
-                  <th className="p-3 w-24 text-left font-bold text-primary border-r border-primary/20">Qty</th>
-                  <th className="p-3 w-28 text-left font-bold text-primary border-r border-primary/20">Price</th>
                   <th className="p-3 w-16 sticky right-0 bg-white z-20 shadow-sm"></th>
                 </tr>
               </thead>
@@ -384,61 +465,102 @@ const IndependentMeasurementForm: React.FC = () => {
                   return (
                     <tr key={row.uid} className="group hover:bg-primary/5 transition-colors">
                       <td className="p-2 text-center text-muted-foreground border-r bg-muted/10 font-bold sticky left-0 z-10">{idx + 1}</td>
-                      
+
                       <td className="p-1 border-r">
-                        <input 
-  list={`area-suggestions-${row.uid}`}
-  value={row.areaName} 
-  onChange={(e) => updateRow(idx, 'areaName', e.target.value)} 
-  className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded" 
-  placeholder="Area Name" 
-/>
-<datalist id={`area-suggestions-${row.uid}`}>
-  {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby"].map(area => (
-    <option key={area} value={area} />
-  ))}
-</datalist>
+                        <input
+                          list={`area-suggestions-${row.uid}`}
+                          value={row.areaName}
+                          onChange={(e) => updateRow(idx, 'areaName', e.target.value)}
+                          className="w-full h-10 px-3 border-transparent bg-transparent focus:bg-white focus:border-primary rounded"
+                          placeholder="Area Name"
+                        />
+                        <datalist id={`area-suggestions-${row.uid}`}>
+                          {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby"].map(area => (
+                            <option key={area} value={area} />
+                          ))}
+                        </datalist>
                       </td>
 
                       <td className="p-1 border-r">
-                         <select 
-                            value={row.companyId} 
-                            onChange={(e) => handleCompanySelect(idx, e.target.value)} 
-                            className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs cursor-pointer"
-                          >
-                            <option value="">-- Company --</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
+                        <select
+                          value={row.companyId}
+                          onChange={(e) => handleCompanySelect(idx, e.target.value)}
+                          className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs cursor-pointer"
+                        >
+                          <option value="">-- Company --</option>
+                          {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
                       </td>
 
                       <td className="p-1 border-r">
                         <div className="flex flex-col justify-center h-full gap-1">
-                            <select 
-                              value={row.catalogId} 
-                              onChange={(e) => handleCatalogSelect(idx, e.target.value)} 
-                              disabled={!row.companyId}
-                              className="w-full h-8 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs disabled:opacity-50"
-                            >
-                              <option value="">-- Catalog --</option>
-                              {allCatalogs
-                                .filter(cat => cat.companyId === row.companyId)
-                                .map(cat => (
-                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                          <select
+                            value={row.catalogId}
+                            onChange={(e) => handleCatalogSelect(idx, e.target.value)}
+                            disabled={!row.companyId}
+                            className="w-full h-8 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded text-xs disabled:opacity-50"
+                          >
+                            <option value="">-- Catalog --</option>
+                            {allCatalogs
+                              .filter(cat => cat.companyId === row.companyId)
+                              .map(cat => (
+                                <option key={cat.id} value={cat.id}>{cat.name}</option>
                               ))}
-                            </select>
-                            {row.catalogType && (
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full border self-start ml-2 ${getBadgeColor(row.catalogType)}`}>
-                                {row.catalogType}
-                              </span>
-                            )}
+                          </select>
+                          {row.catalogType && (
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border self-start ml-2 ${getBadgeColor(row.catalogType)}`}>
+                              {row.catalogType}
+                            </span>
+                          )}
                         </div>
                       </td>
 
                       <td className="p-1 border-r">
-                        <select value={row.productId} onChange={(e) => handleProductSelect(idx, e.target.value)} disabled={!row.catalogId} className="w-full h-10 px-2 border-transparent bg-transparent focus:bg-white focus:border-primary rounded disabled:opacity-50 text-xs">
-                          <option value="">-- Product --</option>
-                          {products.filter(p => p.catalogId === row.catalogId).map(p => <option key={p.id} value={p.id}>{p.name} - ₹{p.price}</option>)}
-                        </select>
+                        <div className="flex flex-col gap-1">
+                          <input
+                            type="text"
+                            placeholder="🔍 Direct SRL Search..."
+                            disabled={!row.catalogId}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleSrlDirectSearch(idx, e.currentTarget.value);
+                              }
+                            }}
+                            onBlur={(e) => handleSrlDirectSearch(idx, e.target.value)}
+                            className="w-full h-8 px-2 border border-green-300 bg-green-50 focus:border-green-500 rounded text-xs placeholder-green-700/50 text-green-900 font-medium disabled:opacity-50 transition-colors"
+                          />
+
+                          <div className="text-[10px] text-center text-muted-foreground font-medium">- OR SEARCH DESIGN -</div>
+
+                          <input
+                            list={`design-list-${row.uid}`}
+                            placeholder={row.catalogId ? "Design name..." : "-"}
+                            disabled={!row.catalogId}
+                            defaultValue={row.selectedProductName}
+                            onBlur={(e) => handleDesignSelect(idx, e.target.value)}
+                            className="w-full h-8 px-2 border border-border bg-transparent focus:bg-white focus:border-primary rounded text-xs disabled:opacity-50"
+                          />
+                          <datalist id={`design-list-${row.uid}`}>
+                            {Array.from(new Set(products.filter(p => p.catalogId === row.catalogId).map(p => p.name)))
+                              .map(name => <option key={name} value={name} />)}
+                          </datalist>
+
+                          {row.selectedProductName && (
+                            <select
+                              value={row.srlNo ? `${row.productId}-${row.srlNo}` : ''}
+                              onChange={(e) => handleProductSelect(idx, e.target.value)}
+                              className="w-full h-8 px-2 border border-border bg-white focus:border-primary rounded text-xs text-blue-700 font-medium"
+                            >
+                              <option value="">-- SRL No --</option>
+                              {processProductsForDropdown(
+                                products.filter(p => p.catalogId === row.catalogId && p.name === row.selectedProductName)
+                              ).map(p => (
+                                <option key={p.uniqueKey} value={p.uniqueKey}>SRL: {p.srlNo}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
                       </td>
 
                       <td className="p-1 border-r">
@@ -453,9 +575,9 @@ const IndependentMeasurementForm: React.FC = () => {
                         </select>
                       </td>
                       <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-100 opacity-50' : ''}`}>
-                         <select value={row.motorizationMode} onChange={(e) => updateRow(idx, 'motorizationMode', e.target.value)} disabled={disableCurtainFields || row.type !== 'Automatic / Motorized'} className="w-full h-10 px-2 bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:opacity-30 disabled:cursor-not-allowed">
-                           <option value="">-</option><option value="Remote">Remote</option><option value="Automation">Automation</option><option value="Both">Both</option>
-                         </select>
+                        <select value={row.motorizationMode} onChange={(e) => updateRow(idx, 'motorizationMode', e.target.value)} disabled={disableCurtainFields || row.type !== 'Automatic / Motorized'} className="w-full h-10 px-2 bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:opacity-30 disabled:cursor-not-allowed">
+                          <option value="">-</option><option value="Remote">Remote</option><option value="Automation">Automation</option><option value="Both">Both</option>
+                        </select>
                       </td>
                       <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-100 opacity-50' : ''}`}>
                         <select value={row.opsType} onChange={(e) => updateRow(idx, 'opsType', e.target.value)} disabled={disableCurtainFields} className="w-full h-10 px-2 bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:cursor-not-allowed">
@@ -466,13 +588,10 @@ const IndependentMeasurementForm: React.FC = () => {
                         <input type="number" step="0.01" value={row.pelmet} onChange={(e) => updateRow(idx, 'pelmet', e.target.value)} disabled={disableCurtainFields} className="w-full h-10 px-3 text-right bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:cursor-not-allowed" />
                       </td>
                       <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-100 opacity-50' : ''}`}>
-                         <select value={row.openingType} onChange={(e) => updateRow(idx, 'openingType', e.target.value)} disabled={disableCurtainFields} className="w-full h-10 px-2 bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:cursor-not-allowed">
-                           <option value="">-</option><option value="Left">Left</option><option value="Right">Right</option><option value="Center">Center</option>
-                         </select>
+                        <select value={row.openingType} onChange={(e) => updateRow(idx, 'openingType', e.target.value)} disabled={disableCurtainFields} className="w-full h-10 px-2 bg-transparent border-transparent focus:bg-white focus:border-primary rounded disabled:cursor-not-allowed">
+                          <option value="">-</option><option value="Left">Left</option><option value="Right">Right</option><option value="Center">Center</option>
+                        </select>
                       </td>
-
-                      <td className="p-1 border-r"><input type="number" value={row.quantity} onChange={(e) => updateRow(idx, 'quantity', parseFloat(e.target.value) || 1)} className="w-full h-10 text-center border-transparent bg-transparent focus:bg-white rounded" /></td>
-                      <td className="p-1 border-r"><input type="number" step="0.01" value={row.price} onChange={(e) => updateRow(idx, 'price', parseFloat(e.target.value) || 0)} className="w-full h-10 text-right font-bold border-transparent bg-transparent focus:bg-white rounded" /></td>
                       <td className="p-1 text-center sticky right-0 bg-white z-10 border-l">
                         <Button variant="ghost" size="icon" onClick={() => handleRemoveRow(idx)} className="h-9 w-9 text-muted-foreground hover:text-red-600"><Trash2 className="h-4 w-4" /></Button>
                       </td>
@@ -482,14 +601,13 @@ const IndependentMeasurementForm: React.FC = () => {
               </tbody>
             </table>
           </div>
-          
+
           {/* Footer - Stack on mobile */}
           <div className="p-4 border-t flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50/50">
             <Button variant="outline" onClick={handleAddRow} className="w-full sm:w-auto gap-2 border-dashed border-2"><Plus className="h-4 w-4" /> Add Row</Button>
             <div className="flex items-center justify-between w-full sm:w-auto gap-6 text-sm text-muted-foreground">
-                <div>Total Rows: <span className="text-foreground font-bold">{rows.length}</span></div>
-                <div>Total: <span className="text-accent font-bold text-lg">₹{totalAmount.toLocaleString()}</span></div>
-             </div>
+              <div>Total Rows: <span className="text-foreground font-bold">{rows.length}</span></div>
+            </div>
           </div>
         </div>
       </div>

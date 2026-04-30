@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { format } from 'date-fns';
 import {
-  format, parseISO,
-} from 'date-fns';
-import {
-  ClipboardList, Send, AlertTriangle, CheckCircle2,
-  Clock, Eye, Pencil, Info, Search, CalendarDays,
-  FileText,
+  ClipboardList, Send, Search, CalendarDays,
+  Plus, Trash2, CheckCircle2, ChevronDown, Pencil,
+  ListTodo, Clock, Users, AtSign, AlertCircle, IndianRupee,
+  RefreshCw, XCircle
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -14,272 +13,222 @@ import { Input } from '@/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
 import ReportCalendar from './ReportCalendar';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const STATUSES = [
-  { value: 'contacted',         label: '📞 Contacted' },
-  { value: 'follow_up',         label: '🔄 Follow-up' },
-  { value: 'meeting_scheduled', label: '📅 Meeting Scheduled' },
-  { value: 'proposal_sent',     label: '📄 Proposal Sent' },
-  { value: 'negotiation',       label: '🤝 Negotiation' },
-  { value: 'closed_won',        label: '✅ Closed Won' },
-  { value: 'closed_lost',       label: '❌ Closed Lost' },
-  { value: 'no_response',       label: '🔇 No Response' },
-  { value: 'on_hold',           label: '⏸️ On Hold' },
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  contacted:         'bg-blue-100 text-blue-700 border-blue-200',
-  follow_up:         'bg-yellow-100 text-yellow-700 border-yellow-200',
-  meeting_scheduled: 'bg-purple-100 text-purple-700 border-purple-200',
-  proposal_sent:     'bg-indigo-100 text-indigo-700 border-indigo-200',
-  negotiation:       'bg-orange-100 text-orange-700 border-orange-200',
-  closed_won:        'bg-green-100 text-green-700 border-green-200',
-  closed_lost:       'bg-red-100 text-red-700 border-red-200',
-  no_response:       'bg-gray-100 text-gray-600 border-gray-200',
-  on_hold:           'bg-slate-100 text-slate-600 border-slate-200',
-};
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface InquiryOption {
+interface TimeBlock {
   id: string;
-  inquiry_number: string;
-  client_name: string;
-  stage: string;
-  address: string;
-  lastStatus: string | null;
-  lastUpdatedAt: string | null;
-  isInactive: boolean;
-  daysInactive: number;
+  startHour: string;
+  endHour: string;
+  description: string;
 }
 
-interface InquiryEntry {
-  inquiryId: string;
-  status: string;
-  workDone: string;
+const HOUR_OPTIONS: string[] = [];
+for (let i = 0; i < 24; i++) {
+  const h = String(i).padStart(2, '0');
+  HOUR_OPTIONS.push(`${h}:00`);
+  HOUR_OPTIONS.push(`${h}:15`);
+  HOUR_OPTIONS.push(`${h}:30`);
+  HOUR_OPTIONS.push(`${h}:45`);
+}
+HOUR_OPTIONS.push('24:00');
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
 }
 
-const getWindowInfo = () => {
-  const now = new Date();
-  const todayAt6PM = new Date(now);
-  todayAt6PM.setHours(18, 0, 0, 0);
+const emptyBlock = (): TimeBlock => ({
+  id: uid(),
+  startHour: '09:00',
+  endHour: '10:00',
+  description: '',
+});
 
-  const isPast6PM = now >= todayAt6PM;
-  const windowEnd = new Date(todayAt6PM);
-  if (isPast6PM) windowEnd.setDate(windowEnd.getDate() + 1);
-
-  const msLeft    = windowEnd.getTime() - now.getTime();
-  const hoursLeft = Math.max(0, Math.floor(msLeft / (1000 * 60 * 60)));
-  const minsLeft  = Math.max(0, Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60)));
-
-  const reportDayDate = isPast6PM
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-    : now;
-
-  return {
-    reportLabel:  format(reportDayDate, 'EEEE, dd MMM yyyy'),
-    hoursLeft,
-    minsLeft,
-    closesAt:     format(windowEnd, 'h:mm a, dd MMM'),
-    isPast6PM,
-  };
-};
-
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const DailyReportPage: React.FC = () => {
   const { toast } = useToast();
-  const win = getWindowInfo();
 
- // Tabs
-  const [activeTab, setActiveTab] = useState<'today' | 'other_work' | 'history' | 'calendar'>('today');
+  const [activeTab, setActiveTab] = useState<'log' | 'history' | 'calendar' | 'todo' | 'payments'>('log');
 
-  // Today State
-  const [inquiries, setInquiries]           = useState<InquiryOption[]>([]);
-  const [loading, setLoading]               = useState(true);
-  const [submitting, setSubmitting]         = useState(false);
-  const [submitted, setSubmitted]           = useState(false);
-  const [editMode, setEditMode]             = useState(false);
-  const [entries, setEntries]               = useState<Record<string, InquiryEntry>>({});
-  const [savedEntries, setSavedEntries]     = useState<any[]>([]);
+  const [pendingPayments, setPendingPayments] = useState<any[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+
+  // ── Todo / Due-Date State ─────────────────────────────────────────────────
+  const [todoItems, setTodoItems] = useState<any[]>([]);
+  const [todoLoading, setTodoLoading] = useState(false);
+
+  // ── Log Work State ────────────────────────────────────────────────────────
+  const [blocks, setBlocks] = useState<TimeBlock[]>([emptyBlock()]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [savedBlocks, setSavedBlocks] = useState<any[]>([]);
   
-  // NEW: State for Other Work
-  const [otherWork, setOtherWork]           = useState('');
-  const [savedOtherWork, setSavedOtherWork] = useState('');
+  // NEW: Date Selection & Drag State
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const isToday = selectedDate === todayStr;
+  const [resizingBlockId, setResizingBlockId] = useState<string | null>(null);
 
-  
-  // History State
+  // Todo filter
+  const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
+
+  // ── History State ─────────────────────────────────────────────────────────
   const [historyEntries, setHistoryEntries] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historySearch, setHistorySearch]   = useState('');
+  const [historySearch, setHistorySearch] = useState('');
 
-  // Dialog States
-  const [previewOpen, setPreviewOpen]       = useState(false);
-  const [previewItem, setPreviewItem]       = useState<{ entry: any; inq: InquiryOption | undefined } | null>(null);
-  const [timelineOpen, setTimelineOpen]     = useState(false);
-  const [timelineData, setTimelineData]     = useState<any>(null);
-  const [timelineLoading, setTimelineLoading]= useState(false);
+  // ── Payments State ────────────────────────────────────────────────────────
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'collected'>('all');
 
-  // ─── Fetch Today's Data ──────────────────────────────────────────────────
+  // ── Timeline Edit State ──────────────────────────────────────────────────
+  const [editingBlock, setEditingBlock] = useState<TimeBlock | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
- useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.get('/daily-reports/my-today');
-        const inqs: InquiryOption[] = (data.inquiries || []).filter((i: InquiryOption) => i.stage !== 'Completed');
-        setInquiries(inqs);
+  // ── Load entries for the selected date ────────────────────────────────────
+  useEffect(() => {
+    fetchTodayLog(selectedDate);
+  }, [selectedDate]);
 
-        // Check if existingReport exists
-        if (data.existingReport) {
-          setSubmitted(true);
-          
-          // Set saved other work
-          setSavedOtherWork(data.existingReport.otherWork || '');
-          setOtherWork(data.existingReport.otherWork || '');
-          
-          // Process inquiries if they exist
-          if (data.existingReport.entries?.length) {
-            setSavedEntries(data.existingReport.entries);
-            const map: Record<string, InquiryEntry> = {};
-            data.existingReport.entries.forEach((e: any) => {
-              map[e.inquiryId] = { inquiryId: e.inquiryId, status: e.status, workDone: e.workDone };
-            });
-            inqs.forEach(inq => {
-              if (!map[inq.id]) map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' };
-            });
-            setEntries(map);
-          } else {
-            // If they only submitted otherWork, setup empty inquiry map
-            const map: Record<string, InquiryEntry> = {};
-            inqs.forEach(inq => { map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' }; });
-            setEntries(map);
-          }
-        } else {
-          // Completely new day
-          const map: Record<string, InquiryEntry> = {};
-          inqs.forEach(inq => { map[inq.id] = { inquiryId: inq.id, status: '', workDone: '' }; });
-          setEntries(map);
-        }
-      } catch {
-        toast({ title: 'Error', description: 'Could not load data', variant: 'destructive' });
-      } finally {
-        setLoading(false);
+  const fetchTodayLog = async (dateStr: string) => {
+    try {
+      const { data } = await api.get(`/daily-reports/my-today?date=${dateStr}`);
+      if (data.existingReport?.otherWorkEntries?.length) {
+        setSavedBlocks(data.existingReport.otherWorkEntries);
+        setSubmitted(true);
+      } else {
+        setSavedBlocks([]);
+        setBlocks([emptyBlock()]);
+        setSubmitted(false);
       }
-    })();
-  }, [toast]);
-
-  // ─── Fetch History Data ──────────────────────────────────────────────────
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
-    if (activeTab === 'history' && historyEntries.length === 0) {
+    if ((activeTab === 'history' || activeTab === 'calendar') && historyEntries.length === 0) {
       fetchHistory();
     }
+    if (activeTab === 'todo') {
+      fetchTodoItems();
+    }
+    if (activeTab === 'payments') {
+      fetchPendingPayments();
+    }
   }, [activeTab]);
+
+  const fetchPendingPayments = async () => {
+    setPaymentsLoading(true);
+    try {
+      const { data } = await api.get('/payments/pending');
+      setPendingPayments(data);
+    } catch {
+      toast({ title: 'Error', description: 'Could not load payments', variant: 'destructive' });
+    } finally {
+      setPaymentsLoading(false);
+    }
+  };
+
+  const fetchTodoItems = async () => {
+    setTodoLoading(true);
+    try {
+      const { data } = await api.get('/pipeline/todo-items');
+      setTodoItems(data);
+      await api.put('/notifications/mentions/read-all');
+    } catch {
+      toast({ title: 'Error', description: 'Could not load todo items', variant: 'destructive' });
+    } finally {
+      setTodoLoading(false);
+    }
+  };
+
+  const handleCompleteTodo = async (id: string, type: string) => {
+    try {
+      await api.put(`/pipeline/todo-items/${type}/${id}/complete`);
+      toast({ title: 'Task Completed', description: 'Task has been marked as complete.' });
+      fetchTodoItems(); // refresh
+    } catch {
+      toast({ title: 'Error', description: 'Failed to complete task', variant: 'destructive' });
+    }
+  };
 
   const fetchHistory = async () => {
     setHistoryLoading(true);
     try {
       const { data } = await api.get('/daily-reports/my-history');
       setHistoryEntries(data);
-    } catch (error) {
+    } catch {
       toast({ title: 'Error', description: 'Could not load history', variant: 'destructive' });
     } finally {
       setHistoryLoading(false);
     }
   };
 
-  // Group the raw history entries into structured reports (supports both flat arrays and nested arrays)
+  // Group flat history into per-day reports
   const groupedReports = useMemo(() => {
     if (!historyEntries || historyEntries.length === 0) return [];
-
-    // If the backend already returns structured Report objects (with entries & otherWork)
-    if ('entries' in historyEntries[0] || 'otherWork' in historyEntries[0]) {
-      return historyEntries;
-    }
-
-    // Otherwise, assume it's returning a flat array of ReportEntries and group them by Date
-    const map = new Map();
-    historyEntries.forEach(entry => {
+    if ('otherWorkEntries' in (historyEntries[0] || {})) return historyEntries;
+    const map = new Map<string, any>();
+    historyEntries.forEach((entry: any) => {
       const dateStr = entry.dailyReport?.reportDate || format(new Date(entry.createdAt), 'yyyy-MM-dd');
       if (!map.has(dateStr)) {
         map.set(dateStr, {
           id: entry.dailyReport?.id || dateStr,
           reportDate: dateStr,
           createdAt: entry.createdAt,
-          otherWork: entry.dailyReport?.otherWork || '',
-          entries: []
+          otherWorkEntries: [],
         });
       }
-      if (entry.inquiryId) {
-        map.get(dateStr).entries.push(entry);
-      }
+      map.get(dateStr).otherWorkEntries.push(entry);
     });
-
-    return Array.from(map.values()).sort((a: any, b: any) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime());
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime()
+    );
   }, [historyEntries]);
 
-  // Filter against grouped reports (checks date, other work text, and individual entries)
   const filteredHistory = groupedReports.filter((report: any) => {
     if (!historySearch) return true;
     const q = historySearch.toLowerCase();
-    
-    const matchesDate = format(new Date(report.reportDate || report.createdAt), 'dd MMM yyyy').toLowerCase().includes(q);
-    const matchesOtherWork = report.otherWork?.toLowerCase().includes(q);
-    const matchesEntries = report.entries?.some((e: any) => 
-      e.inquiry?.inquiry_number?.toLowerCase().includes(q) ||
-      e.inquiry?.client_name?.toLowerCase().includes(q) ||
-      e.workDone?.toLowerCase().includes(q) ||
-      (STATUSES.find(s => s.value === e.status)?.label || '').toLowerCase().includes(q)
-    );
-    
-    return matchesDate || matchesOtherWork || matchesEntries;
+    const matchDate = format(new Date(report.reportDate || report.createdAt), 'dd MMM yyyy').toLowerCase().includes(q);
+    const matchEntries = report.otherWorkEntries?.some((e: any) => e.description?.toLowerCase().includes(q));
+    return matchDate || matchEntries;
   });
 
-  // ─── Handlers ─────────────────────────────────────────────────────────────
+  // ── Block helpers ──────────────────────────────────────────────────────────
+  const removeBlock = (id: string) =>
+    setBlocks(prev => prev.filter(b => b.id !== id));
 
-  const updateEntry = (id: string, field: 'status' | 'workDone', val: string) =>
-    setEntries(prev => ({ ...prev, [id]: { ...prev[id], [field]: val } }));
-
-  const filledCount = Object.values(entries).filter(e => e.status && e.workDone.trim()).length;
-
- const handleSubmit = async () => {
-    const toSubmit = Object.values(entries).filter(e => e.status || e.workDone.trim());
-    const hasOtherWork = otherWork.trim().length > 0;
-
-    if (toSubmit.length === 0 && !hasOtherWork) {
-      toast({ title: 'Nothing to submit', description: 'Please update an inquiry or log your other work.', variant: 'destructive' });
+  // ── Submit ─────────────────────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    const valid = blocks.filter(b => b.description.trim());
+    if (valid.length === 0) {
+      toast({ title: 'Nothing to submit', description: 'Add at least one activity.', variant: 'destructive' });
       return;
     }
-
-    for (const e of toSubmit) {
-      const inq = inquiries.find(i => i.id === e.inquiryId);
-      if (!e.status)          { toast({ title: inq?.inquiry_number || 'Inquiry', description: 'Select a status.',    variant: 'destructive' }); return; }
-      if (!e.workDone.trim()) { toast({ title: inq?.inquiry_number || 'Inquiry', description: 'Describe work done.', variant: 'destructive' }); return; }
+    for (const b of valid) {
+      if (b.startHour >= b.endHour) {
+        toast({ title: 'Invalid time', description: 'End time must be after start time.', variant: 'destructive' });
+        return;
+      }
     }
-
     setSubmitting(true);
     try {
-      await api.post('/daily-reports', { entries: toSubmit, otherWork });
-      
-      const { data } = await api.get('/daily-reports/my-today');
-      setSavedEntries(data.existingReport?.entries || []);
-      setSavedOtherWork(data.existingReport?.otherWork || '');
-      setSubmitted(true);
-      setEditMode(false);
-      
-      const historyData = await api.get('/daily-reports/my-history');
-      setHistoryEntries(historyData.data);
-      
-      toast({ title: '✅ Report Submitted', description: `Your daily activity has been logged.` });
+      await api.post('/daily-reports/other-work', {
+        date: selectedDate, // Send selected date
+        entries: valid.map(b => ({
+          startHour: b.startHour,
+          endHour: b.endHour,
+          description: b.description,
+        })),
+      });
+      fetchTodayLog(selectedDate); // Refresh data
+      const hist = await api.get('/daily-reports/my-history');
+      setHistoryEntries(hist.data);
+      toast({ title: '✅ Submitted', description: 'Your work log has been saved.' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.response?.data?.error || 'Failed', variant: 'destructive' });
     } finally {
@@ -287,622 +236,642 @@ const DailyReportPage: React.FC = () => {
     }
   };
 
-  const startEdit = () => { setEditMode(true); setSubmitted(false); };
-
-  const openTimeline = async (inquiryId: string) => {
-    setTimelineLoading(true);
-    setTimelineOpen(true);
-    setTimelineData(null);
-    try {
-      const { data } = await api.get(`/daily-reports/inquiry/${inquiryId}/timeline`);
-      setTimelineData(data);
-    } catch {
-      toast({ title: 'Error', description: 'Could not load history', variant: 'destructive' });
-    } finally {
-      setTimelineLoading(false);
-    }
+  const startEdit = () => {
+    setSubmitted(false);
+    setBlocks(savedBlocks.length ? savedBlocks.map(b => ({ ...b, id: uid() })) : [emptyBlock()]);
   };
 
-  if (loading) return (
-    <DashboardLayout>
-      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
-        Loading your data...
-      </div>
-    </DashboardLayout>
-  );
+  // ── Drag Handlers ──────────────────────────────────────────────────────────
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!resizingBlockId) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top + e.currentTarget.scrollTop;
+    
+    // 60px = 1 hour. Calculate the decimal hour the mouse is at.
+    const draggedHourDecimal = Math.max(0, Math.min(24, y / 60));
+    
+    // Snap to 15-minute intervals (0.25)
+    const snappedHour = Math.round(draggedHourDecimal * 4) / 4;
+    
+    const h = Math.floor(snappedHour);
+    const m = Math.round((snappedHour % 1) * 60);
+    const newEndHour = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
+    // Ensure end time doesn't go backwards past start time
+    setBlocks(prev => prev.map(b => {
+      if (b.id === resizingBlockId && b.startHour < newEndHour) {
+        return { ...b, endHour: newEndHour };
+      }
+      return b;
+    }));
+  };
+
+  const handleMouseUp = () => {
+    setResizingBlockId(null);
+  };
+
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto animate-fade-in">
+      <div className="max-w-2xl mx-auto animate-fade-in">
 
-        {/* ── Page Header & Tabs ── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <ClipboardList className="h-6 w-6 text-accent" /> Daily Reports
-            </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Manage and track your daily updates</p>
-          </div>
+        {/* Header */}
+        <div className="mb-5">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <ClipboardList className="h-5 w-5 text-accent" /> Daily Reports
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">Log your daily activities by time slot</p>
         </div>
 
+        {/* Tabs */}
         <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
-          <button
-            onClick={() => setActiveTab('today')}
-            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'today' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-          >
-            📋 Today's Report
-          </button>
-          <button
-            onClick={() => setActiveTab('other_work')}
-            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'other_work' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-          >
-            📝 Other Work
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'history' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-          >
-            📜 My History
-          </button>
-          <button
-            onClick={() => { setActiveTab('calendar'); if (historyEntries.length === 0) fetchHistory(); }}
-            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors', activeTab === 'calendar' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
-          >
-            📅 Calendar
-          </button>
+          {([
+            { key: 'log', label: '🕐 Log Work' },
+            { key: 'history', label: '📜 My History' },
+            { key: 'calendar', label: '📅 Calendar' },
+            { key: 'todo', label: '✅ To-Do' },
+            { key: 'payments', label: '💳 Payments' },
+          ] as const).map(t => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={cn(
+                'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+                activeTab === t.key
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
-        {/* ════════════════════════════════════════
-            TAB 1: TODAY'S REPORT
-        ════════════════════════════════════════ */}
-        {activeTab === 'today' && (
-          <div className="animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg w-fit">
-                <Clock className="h-3.5 w-3.5" />
-                <span>{win.reportLabel}</span>
-                <span className="mx-1 text-blue-300">|</span>
-                <span>Closes {win.closesAt} · <strong>{win.hoursLeft}h {win.minsLeft}m left</strong></span>
+        {/* ══════════ TAB: LOG WORK ══════════ */}
+        {activeTab === 'log' && (
+          <div className="animate-fade-in space-y-3">
+            {/* Date Picker + submitted badge */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Input 
+                  type="date" 
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="h-9 text-sm w-44 font-medium text-blue-700 bg-blue-50 border-blue-200"
+                />
               </div>
-              
-              {submitted && !editMode ? (
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="flex items-center gap-1.5 text-green-600 bg-green-50 px-3 py-1.5 rounded-full text-sm font-medium border border-green-200">
+              <div className="flex items-center gap-3">
+                {submitted && (
+                  <span className="flex items-center gap-1.5 text-green-600 bg-green-50 px-3 py-1.5 rounded-full text-xs font-medium border border-green-200">
                     <CheckCircle2 className="h-3.5 w-3.5" /> Submitted
                   </span>
-                  <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={startEdit}>
-                    <Pencil className="h-3.5 w-3.5" /> Edit
+                )}
+                {!submitted && isToday && (
+                  <Button onClick={handleSubmit} disabled={submitting} size="sm" className="gap-2">
+                    <Send className="h-4 w-4" />
+                    {submitting ? 'Submitting…' : 'Submit Work Log'}
                   </Button>
-                </div>
-              ) : (
-                <span className="flex items-center gap-1.5 text-yellow-600 bg-yellow-50 px-3 py-1.5 rounded-full text-sm font-medium border border-yellow-200 w-fit">
-                  <Clock className="h-4 w-4" /> Pending Submission
-                </span>
-              )}
+                )}
+                {submitted && isToday && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={startEdit}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit Report
+                  </Button>
+                )}
+              </div>
             </div>
 
-            {/* View Mode: Already Submitted */}
-            {submitted && !editMode ? (() => {
-              const activeSaved = savedEntries.filter((entry: any) => {
-                const inq = inquiries.find(i => i.id === entry.inquiryId);
-                return !(inq?.stage === 'Completed' || entry.status === 'closed_won' || entry.status === 'closed_lost');
-              });
-              const closedSaved = savedEntries.filter((entry: any) => {
-                const inq = inquiries.find(i => i.id === entry.inquiryId);
-                return (inq?.stage === 'Completed' || entry.status === 'closed_won' || entry.status === 'closed_lost');
-              });
+            {!isToday && (
+              <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-xl mb-4 text-sm flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                You are viewing a past date. You can only add or edit logs for today.
+              </div>
+            )}
 
-              const renderSavedEntry = (entry: any, startIdx: number) => {
-                const inq = inquiries.find(i => i.id === entry.inquiryId);
-                const num   = inq?.inquiry_number || entry.inquiry?.inquiry_number || '—';
-                const name  = inq?.client_name    || entry.inquiry?.client_name    || '—';
-                const label = STATUSES.find(s => s.value === entry.status)?.label || entry.status;
-                return (
-                  <div key={entry.id || startIdx} className="card-premium p-4 flex items-start gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
-                      {startIdx}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                        <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{num}</span>
-                        <span className="text-sm font-semibold">{name}</span>
+            {/* ── Google Calendar Style Day Grid ── */}
+            <div 
+              className={cn("bg-card rounded-xl border shadow-sm overflow-hidden", submitted && "opacity-80")}
+            >
+              <div 
+                className="h-[600px] overflow-y-auto custom-scrollbar relative bg-white select-none"
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp} 
+              >
+                <div className="flex">
+                  {/* Time Axis (Left Side) */}
+                  <div className="w-16 flex-shrink-0 border-r border-border/50 bg-muted/10 relative select-none">
+                    {Array.from({ length: 24 }).map((_, i) => (
+                      <div key={i} className="h-[60px] relative border-b border-border/20">
+                        <span className="absolute -top-2.5 right-2 text-[10px] font-medium text-muted-foreground">
+                          {i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                        </span>
                       </div>
-                      <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                        {label}
-                      </span>
-                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1">{entry.workDone}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => openTimeline(entry.inquiryId)}>
-                        <Clock className="h-3 w-3" /> History
-                      </Button>
-                      <button
-                        onClick={() => { setPreviewItem({ entry, inq }); setPreviewOpen(true); }}
-                        className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-accent hover:bg-accent/10 transition-colors"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                );
-              };
+                  
+                  {/* Grid Area (Right Side) */}
+                  <div 
+                    className="flex-1 relative"
+                    onClick={(e) => {
+                      if (submitted || resizingBlockId || !isToday) return; // Prevent click when dragging or not today
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const y = e.clientY - rect.top + e.currentTarget.scrollTop;
+                      
+                      // Snap click to 30 min increments for new blocks
+                      const clickedHour = Math.floor((y / 60) * 2) / 2;
+                      const h1 = Math.floor(clickedHour);
+                      const m1 = (clickedHour % 1) * 60;
+                      
+                      const h2 = Math.floor(clickedHour + 1);
+                      const m2 = m1; // 1 hour block by default
+                      
+                      const start = `${String(h1).padStart(2, '0')}:${String(m1).padStart(2, '0')}`;
+                      const end = `${String(Math.min(h2, 24)).padStart(2, '0')}:${String(m2).padStart(2, '0')}`;
+                      
+                      const newBlock = { id: uid(), startHour: start, endHour: end, description: '' };
+                      setEditingBlock(newBlock);
+                      setIsModalOpen(true);
+                    }}
+                  >
+                    {/* Horizontal Grid Lines */}
+                    {Array.from({ length: 24 }).map((_, i) => (
+                      <div key={i} className="h-[60px] border-b border-border/20 w-full" />
+                    ))}
 
-              return (
-              <>
-                {activeSaved.length > 0 && (
-                  <div className="space-y-3 mt-6">
-                    {activeSaved.map((entry: any, idx: number) => renderSavedEntry(entry, idx + 1))}
-                  </div>
-                )}
-                {closedSaved.length > 0 && (
-                  <div className="mt-8">
-                    <div className="flex items-center gap-2 mb-4 border-b border-border/50 pb-2">
-                      <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Completed & Lost Inquiries</h3>
-                      <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{closedSaved.length}</span>
-                    </div>
-                    <div className="space-y-3 opacity-90">
-                      {closedSaved.map((entry: any, idx: number) => renderSavedEntry(entry, activeSaved.length + idx + 1))}
-                    </div>
-                  </div>
-                )}
-                <p className="text-center text-xs text-muted-foreground mt-5">
-                  ✅ {savedEntries.length} {savedEntries.length === 1 ? 'inquiry' : 'inquiries'} updated · Visible to your manager
-                </p>
-              </>
-              );
-            })() : (
-              /* Edit Mode / New Submission */
-              (() => {
-                const activeInqs = inquiries.filter(i => !(i.stage === 'Completed' || i.lastStatus === 'closed_won' || i.lastStatus === 'closed_lost'));
-                const closedInqs = inquiries.filter(i => {
-                  if (!(i.stage === 'Completed' || i.lastStatus === 'closed_won' || i.lastStatus === 'closed_lost')) return false;
-                  // Only show in "Edit Mode" today IF they actively marked it today
-                  const entry = entries[i.id];
-                  return !!(entry && (entry.status || entry.workDone.trim() !== ''));
-                });
-                const visibleInqs = [...activeInqs, ...closedInqs];
+                    {/* Rendered Time Blocks */}
+                    {(submitted ? savedBlocks : blocks).filter(b => b.description?.trim() !== '').map((block: any) => {
+                      const [startH, startM] = block.startHour.split(':').map(Number);
+                      const [endH, endM] = block.endHour.split(':').map(Number);
+                      const top = (startH + (startM || 0) / 60) * 60;
+                      let height = ((endH + (endM || 0) / 60) - (startH + (startM || 0) / 60)) * 60;
+                      if (height <= 0) height = 60;
 
-                const criticalInqs = activeInqs.filter(i => i.daysInactive >= 3);
-                const warningInqs = activeInqs.filter(i => i.daysInactive === 2);
-
-                const renderInquiryRow = (inq: InquiryOption, idx: number) => {
-                  const entry = entries[inq.id] || { inquiryId: inq.id, status: '', workDone: '' };
-                  const isFilled = !!(entry.status && entry.workDone.trim());
-
-                  let borderClass = 'border-l-transparent';
-                  if (isFilled) borderClass = 'border-l-green-400';
-                  else if (inq.daysInactive >= 3) borderClass = 'border-l-red-500 bg-red-50/40';
-                  else if (inq.daysInactive === 2) borderClass = 'border-l-yellow-400 bg-yellow-50/40';
-
-                  return (
-                    <div
-                      key={inq.id}
-                      className={cn(
-                        'card-premium overflow-hidden transition-all duration-200 border-l-4',
-                        borderClass
-                      )}
-                    >
-                      <div className="flex items-center gap-3 px-5 py-3.5 bg-muted/25 border-b border-border/50">
-                        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
-                          {idx}
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
-                              {inq.inquiry_number}
+                      return (
+                        <div
+                          key={block.id}
+                          onClick={(e) => {
+                            e.stopPropagation(); 
+                            if (!submitted && !resizingBlockId && isToday) {
+                              setEditingBlock(block);
+                              setIsModalOpen(true);
+                            }
+                          }}
+                          className={cn(
+                            "absolute left-2 right-4 rounded-md p-2 overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-blue-400 bg-blue-50 border border-blue-200 border-l-4 border-l-blue-600 text-blue-900 shadow-sm flex flex-col group",
+                            resizingBlockId === block.id && "ring-2 ring-blue-500 opacity-90 z-10"
+                          )}
+                          style={{ top: `${top}px`, height: `${height}px` }}
+                        >
+                          <div className="flex justify-between items-start">
+                            <span className="text-xs font-bold truncate">
+                              {block.startHour} - {block.endHour}
                             </span>
-                            <span className="text-sm font-semibold">{inq.client_name}</span>
-                            
-                            {inq.daysInactive >= 3 && (
-                              <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold border border-red-200">
-                                🚨 3+ Days Inactive
-                              </span>
-                            )}
-                            {inq.daysInactive === 2 && (
-                              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold border border-yellow-200">
-                                ⚠️ 2 Days Inactive
-                              </span>
-                            )}
                           </div>
-                        </div>
+                          <p className="text-[11px] leading-tight mt-1 opacity-90 line-clamp-3 whitespace-pre-wrap flex-1">
+                            {block.description || "No description (Click to edit)"}
+                          </p>
 
-                        <div className="flex-shrink-0 flex items-center gap-2">
-                          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => openTimeline(inq.id)}>
-                            <Clock className="h-3 w-3" /> History
-                          </Button>
-                          
-                          {inq.lastStatus && (
-                            <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Info className="h-3 w-3" />
-                              <span className={cn('px-2 py-0.5 rounded-full border text-xs font-medium', STATUS_COLORS[inq.lastStatus])}>
-                                {STATUSES.find(s => s.value === inq.lastStatus)?.label || inq.lastStatus}
-                              </span>
+                          {/* ⬇️ DRAG HANDLE FOR RESIZING ⬇️ */}
+                          {!submitted && isToday && (
+                            <div 
+                              className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-end justify-center pb-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-blue-200/50 to-transparent"
+                              onMouseDown={(e) => {
+                                e.stopPropagation(); // Stop click from opening the edit modal
+                                setResizingBlockId(block.id);
+                              }}
+                            >
+                               <div className="w-8 h-1 bg-blue-400 rounded-full" />
                             </div>
                           )}
-                          {isFilled
-                            ? <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            : <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
-                          }
-                        </div>
-                      </div>
-
-                      <div className="px-5 py-4 grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-4 items-start">
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Today's Status
-                          </label>
-                          <Select
-                            value={entry.status || undefined}
-                            onValueChange={val => updateEntry(inq.id, 'status', val)}
-                          >
-                            <SelectTrigger className="h-9 text-sm">
-                              <SelectValue placeholder="Select status..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {STATUSES.map(s => (
-                                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Work Done Today
-                          </label>
-                          <Textarea
-                            placeholder="What did you do on this inquiry today? e.g. called client, sent samples, visited site..."
-                            rows={3}
-                            value={entry.workDone}
-                            onChange={e => updateEntry(inq.id, 'workDone', e.target.value)}
-                            className="resize-none text-sm"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                };
-
-                return (
-                  <>
-                    {/* Warnings */}
-                    {criticalInqs.length > 0 && (
-                      <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4 mb-3 text-sm">
-                        <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-semibold text-red-700">🚨 {criticalInqs.length} Critical Inquiries</p>
-                          <p className="text-red-600 mt-0.5">No update for 3+ days. Action required immediately.</p>
-                        </div>
-                      </div>
-                    )}
-                    {warningInqs.length > 0 && (
-                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-5 text-sm">
-                        <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-semibold text-yellow-700">⚠️ {warningInqs.length} Warning Inquiries</p>
-                          <p className="text-yellow-700 mt-0.5">No update for 2 days. Please follow up today.</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {visibleInqs.length === 0 ? (
-                      <div className="card-premium p-12 text-center text-muted-foreground">
-                        <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-25" />
-                        <p className="font-medium">No active inquiries assigned to you</p>
-                        <p className="text-sm mt-1 opacity-70">Contact your manager to get inquiries assigned.</p>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          Update all your active assigned inquiries below.
-                        </p>
-
-                        {activeInqs.length > 0 && (
-                          <div className="space-y-4">
-                            {activeInqs.map((inq, idx) => renderInquiryRow(inq, idx + 1))}
-                          </div>
-                        )}
-
-                        {closedInqs.length > 0 && (
-                          <div className="mt-8">
-                            <div className="flex items-center gap-2 mb-4 border-b border-border/50 pb-2">
-                              <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Completed & Lost Inquiries</h3>
-                              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{closedInqs.length}</span>
-                            </div>
-                            <div className="space-y-4 opacity-75 grayscale-[20%]">
-                              {closedInqs.map((inq, idx) => renderInquiryRow(inq, activeInqs.length + idx + 1))}
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
-                          <p className="text-sm text-muted-foreground">
-                            <span className={cn('font-semibold', filledCount > 0 ? 'text-green-600' : 'text-foreground')}>
-                              {filledCount}
-                            </span>
-                            <span className="text-muted-foreground">/{visibleInqs.length} filled</span>
-                          </p>
-                          <Button
-                            variant="default"
-                            size="lg"
-                            onClick={handleSubmit}
-                            disabled={submitting || filledCount === 0}
-                            className="gap-2 px-8"
-                          >
-                            <Send className="h-4 w-4" />
-                            {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </>
-                );
-              })()
-            )}
-          </div>
-        )}
-         
-       {/* ════════════════════════════════════════
-            TAB: OTHER WORK
-        ════════════════════════════════════════ */}
-        {activeTab === 'other_work' && (
-          <div className="animate-fade-in space-y-4">
-            <div className="card-premium p-6">
-              
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h2 className="text-lg font-bold flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-accent" />
-                    General Activities & Assisting Others
-                  </h2>
-                  <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2 font-medium">
-                    <CalendarDays className="h-4 w-4" /> {win.reportLabel}
-                  </p>
-                </div>
-
-                {/* Edit Button right inside the Other Work tab */}
-                {submitted && !editMode && (
-                  <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={startEdit}>
-                    <Pencil className="h-3.5 w-3.5" /> Edit Other Work
-                  </Button>
-                )}
-              </div>
-
-              <p className="text-sm text-muted-foreground mb-4">
-                Did you assist another employee, do site visits, or perform general office work today? Log it here.
-              </p>
-
-              {submitted && !editMode ? (
-                <div className="bg-muted/40 border border-border/50 rounded-xl p-4 min-h-[150px] whitespace-pre-wrap text-sm leading-relaxed">
-                  {savedOtherWork ? savedOtherWork : <span className="text-muted-foreground italic">No other work logged for today.</span>}
-                </div>
-              ) : (
-                <Textarea
-                  placeholder="Example: Went on site visit with Rahul for Inquiry #1024, completed weekly inventory check..."
-                  className="min-h-[150px] resize-none text-sm p-4"
-                  value={otherWork}
-                  onChange={(e) => setOtherWork(e.target.value)}
-                />
-              )}
-            </div>
-
-            {(!submitted || editMode) && (
-              <div className="flex justify-end">
-                <Button
-                  variant="default"
-                  onClick={handleSubmit}
-                  disabled={submitting || (filledCount === 0 && otherWork.trim().length === 0)}
-                  className="gap-2 px-8 h-10"
-                >
-                  <Send className="h-4 w-4" />
-                  {submitting ? 'Submitting...' : editMode ? 'Update Report' : 'Submit Report'}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* ════════════════════════════════════════
-            TAB 2: MY HISTORY
-        ════════════════════════════════════════ */}
-        {activeTab === 'history' && (
-          <div className="animate-fade-in">
-            {/* Search Bar */}
-            <div className="card-premium p-4 mb-4 flex items-center gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by date, inquiry number, client name, status, or other work..."
-                  className="pl-9 h-9 text-sm"
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {historyLoading ? (
-              <div className="text-center py-20 text-muted-foreground text-sm">
-                Loading your history...
-              </div>
-            ) : filteredHistory.length === 0 ? (
-              <div className="card-premium p-12 text-center text-muted-foreground">
-                <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-25" />
-                <p className="font-medium">No history found</p>
-                <p className="text-sm mt-1 opacity-70">
-                  {historySearch ? "No records match your search." : "You haven't submitted any daily reports yet."}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                  Showing {filteredHistory.length} recorded days
-                </p>
-                
-                {filteredHistory.map((report: any) => {
-                  const hasActivity = (report.entries?.length > 0) || (report.otherWork && report.otherWork.trim().length > 0);
-                  return (
-                  <div key={report.id} className="card-premium overflow-hidden divide-y divide-border/50">
-                    
-                    {/* Day Header — red if has entries */}
-                    <div className={cn(
-                      'px-4 py-3 flex items-center gap-2',
-                      hasActivity ? 'bg-red-50 border-b border-red-200' : 'bg-muted/30'
-                    )}>
-                      <CalendarDays className={cn('h-4 w-4', hasActivity ? 'text-red-500' : 'text-accent')} />
-                      <span className={cn('font-semibold text-sm', hasActivity && 'text-red-700')}>
-                        {format(new Date(report.reportDate || report.createdAt), 'EEEE, dd MMM yyyy')}
-                      </span>
-                      {hasActivity && (
-                        <span className="ml-auto text-xs bg-red-100 text-red-600 border border-red-200 px-2 py-0.5 rounded-full font-medium">
-                          {report.entries?.length || 0} {report.entries?.length === 1 ? 'entry' : 'entries'}{report.otherWork ? ' + other work' : ''}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Inquiry Entries Loop */}
-                    {report.entries?.map((entry: any) => {
-                      const label = STATUSES.find((s) => s.value === entry.status)?.label || entry.status;
-                      return (
-                        <div key={entry.id} className="p-4 hover:bg-muted/20 transition-colors flex flex-col sm:flex-row gap-4 sm:items-start">
-                          <div className="sm:w-64 flex-shrink-0 space-y-2.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">
-                                {entry.inquiry?.inquiry_number}
-                              </span>
-                              <span className="text-sm font-semibold truncate">{entry.inquiry?.client_name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={cn('text-[11px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                                {label}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                              {entry.workDone}
-                            </p>
-                          </div>
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
-                    {/* Other Work Box */}
-                    {report.otherWork && report.otherWork.trim().length > 0 && (
-                      <div className="p-4 bg-muted/10">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                          <FileText className="h-3.5 w-3.5" /> Other Work / General Activities
-                        </p>
-                        <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                          {report.otherWork}
-                        </p>
-                      </div>
-                    )}
+        {/* ══════════ TAB: HISTORY ══════════ */}
+        {activeTab === 'history' && (
+          <div className="animate-fade-in space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search history…"
+                className="pl-9 h-9 text-sm"
+                value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+              />
+            </div>
 
-                    {(!report.entries || report.entries.length === 0) && (!report.otherWork || report.otherWork.trim().length === 0) && (
-                      <div className="p-4 text-sm text-muted-foreground italic text-center">
-                        No activity recorded for this day.
+            {historyLoading ? (
+              <div className="text-center py-16 text-sm text-muted-foreground">Loading…</div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="text-center py-16 text-muted-foreground text-sm">No history yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {filteredHistory.map((report: any) => (
+                  <div key={report.id} className="card-premium overflow-hidden">
+                    <div className="px-4 py-3 bg-muted/30 border-b border-border/50 flex items-center gap-2">
+                      <CalendarDays className="h-4 w-4 text-accent" />
+                      <span className="font-semibold text-sm">
+                        {format(new Date(report.reportDate || report.createdAt), 'EEEE, dd MMM yyyy')}
+                      </span>
+                      {report.otherWorkEntries?.length > 0 && (
+                        <span className="ml-auto text-xs bg-accent/10 text-accent border border-accent/20 px-2 py-0.5 rounded-full font-medium">
+                          {report.otherWorkEntries.length} block{report.otherWorkEntries.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {report.otherWorkEntries?.length > 0 ? (
+                      <div className="divide-y divide-border/30">
+                        {report.otherWorkEntries.map((b: any, i: number) => (
+                          <div key={b.id || i} className="flex gap-4 px-4 py-3 hover:bg-muted/10 transition-colors">
+                            <div className="flex-shrink-0 text-center w-16">
+                              <span className="text-xs font-bold text-accent block">{b.startHour}</span>
+                              <div className="my-0.5 h-4 w-px bg-border mx-auto" />
+                              <span className="text-xs text-muted-foreground block">{b.endHour}</span>
+                            </div>
+                            <p className="flex-1 text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed pt-0.5">
+                              {b.description}
+                            </p>
+                          </div>
+                        ))}
                       </div>
+                    ) : (
+                      <div className="p-4 text-sm text-muted-foreground italic text-center">No activity recorded.</div>
                     )}
                   </div>
-                  );
-                })}
+                ))}
               </div>
             )}
           </div>
         )}
 
-        {/* ════════════════════════════════════════
-            TAB 4: CALENDAR
-        ════════════════════════════════════════ */}
+        {/* ══════════ TAB: CALENDAR ══════════ */}
         {activeTab === 'calendar' && (
-          <ReportCalendar
-            reports={groupedReports}
-            loading={historyLoading}
-          />
+          <ReportCalendar reports={groupedReports} loading={historyLoading} />
         )}
 
-        {/* ── Dialogs ── */}
-        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-base flex items-center gap-2">
-                <Eye className="h-4 w-4 text-accent" />
-                {previewItem?.inq?.inquiry_number || previewItem?.entry?.inquiry?.inquiry_number} — {previewItem?.inq?.client_name || previewItem?.entry?.inquiry?.client_name}
-              </DialogTitle>
-            </DialogHeader>
-            {previewItem && (
-              <div className="space-y-4 pt-1">
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Status</p>
-                  <span className={cn('text-sm px-3 py-1.5 rounded-full border font-medium inline-block', STATUS_COLORS[previewItem.entry.status] || 'bg-muted border-border')}>
-                    {STATUSES.find(s => s.value === previewItem.entry.status)?.label || previewItem.entry.status}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Work Done</p>
-                  <p className="text-sm bg-muted/40 rounded-xl p-4 whitespace-pre-wrap leading-relaxed min-h-[80px]">
-                    {previewItem.entry.workDone}
-                  </p>
-                </div>
+        {/* ══════════ TAB: TO-DO LIST ══════════ */}
+        {activeTab === 'todo' && (
+          <div className="animate-fade-in space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <ListTodo className="h-4 w-4 text-accent" /> To-Do Items from Pipeline
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Tasks assigned to you via pipeline card comments with due dates</p>
               </div>
-            )}
-          </DialogContent>
-        </Dialog>
+              <div className="flex gap-2 items-center">
+                <Select value={todoFilter} onValueChange={(v: any) => setTodoFilter(v)}>
+                  <SelectTrigger className="h-8 text-xs w-32 bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Tasks</SelectItem>
+                    <SelectItem value="overdue">Overdue Only</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="sm" variant="outline" onClick={fetchTodoItems} className="h-8 text-xs gap-1">
+                  <RefreshCw className="h-3 w-3" /> Refresh
+                </Button>
+              </div>
+            </div>
 
-        <Dialog open={timelineOpen} onOpenChange={setTimelineOpen}>
-          <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
-            <DialogHeader>
-              <DialogTitle className="text-base flex items-center gap-2">
-                <Clock className="h-4 w-4 text-accent" />
-                {timelineData?.inquiry
-                  ? `${timelineData.inquiry.inquiry_number} — ${timelineData.inquiry.client_name}`
-                  : 'Activity Timeline'}
-              </DialogTitle>
-            </DialogHeader>
+            {todoLoading ? (
+              <div className="text-center py-16 text-sm text-muted-foreground">Loading…</div>
+            ) : todoItems.length === 0 ? (
+              <div className="text-center py-16 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
+                <ListTodo className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                <p className="font-medium text-sm">No tasks assigned yet</p>
+                <p className="text-xs mt-1 opacity-70">Set a due date on a pipeline card comment to create tasks</p>
+              </div>
+            ) : (() => {
+              let filteredTodos = todoItems;
+              if (todoFilter === 'overdue') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus === 'overdue');
+              }
+              const overdue = filteredTodos.filter(t => t.dueDateStatus === 'overdue');
+              const today = filteredTodos.filter(t => t.dueDateStatus === 'today');
+              const upcoming = filteredTodos.filter(t => t.dueDateStatus === 'upcoming');
 
-            <div className="overflow-y-auto flex-1 pr-1 mt-2">
-              {timelineLoading ? (
-                <div className="text-center py-10 text-muted-foreground text-sm">Loading history...</div>
-              ) : !timelineData || timelineData.timeline.length === 0 ? (
-                <div className="text-center py-10 text-muted-foreground text-sm">No history recorded yet.</div>
-              ) : (
-                <div className="relative pb-2">
-                  <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
-                  <div className="space-y-5">
-                    {timelineData.timeline.map((entry: any, i: number) => (
-                      <div key={entry.id} className="flex gap-4 pl-10 relative">
-                        <div className={cn(
-                          'absolute left-[13px] w-3 h-3 rounded-full border-2 border-background mt-1',
-                          i === 0 ? 'bg-accent' : 'bg-muted-foreground/40'
-                        )} />
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between mb-1.5 gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold">{entry.dailyReport?.user?.name || "You"}</span>
-                            </div>
-                            <span className="text-xs text-muted-foreground flex-shrink-0">
-                              {format(new Date(entry.createdAt), 'dd MMM yyyy')}
+              const TodoGroup = ({ items, title, accent }: { items: any[]; title: string; accent: string }) =>
+                items.length === 0 ? null : (
+                  <div className="space-y-2">
+                    <p className={`text-xs font-bold uppercase tracking-wide ${accent}`}>{title} ({items.length})</p>
+                    {items.map((item: any) => (
+                      <div key={item.id} className="card-premium p-4 space-y-2 hover:shadow-md transition-shadow">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold truncate">
+                              {item.inquiry?.client_name || 'Unknown Client'}
+                            </p>
+                            <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                              {item.inquiry?.inquiry_number}
                             </span>
                           </div>
-                          <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                            {STATUSES.find((s: any) => s.value === entry.status)?.label || entry.status}
-                          </span>
-                          <p className="text-sm text-muted-foreground bg-muted/30 rounded-lg px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
-                            {entry.workDone}
-                          </p>
+                          <div className={cn(
+                            'shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
+                            item.dueDateStatus === 'overdue' && 'bg-red-50 text-red-600 border-red-200',
+                            item.dueDateStatus === 'today' && 'bg-orange-50 text-orange-600 border-orange-200',
+                            item.dueDateStatus === 'upcoming' && 'bg-blue-50 text-blue-600 border-blue-200',
+                          )}>
+                            <CalendarDays className="h-3 w-3 inline mr-1" />
+                            {format(new Date(item.dueDate), 'dd MMM yyyy')}
+                            {item.dueDateStatus === 'overdue' && ' · Overdue'}
+                            {item.dueDateStatus === 'today' && ' · Today'}
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-foreground/80 bg-muted/30 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
+                          {item.content || <span className="italic text-muted-foreground">No message</span>}
+                        </p>
+
+                        <div className="flex items-center justify-between mt-2">
+                          <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              By <span className="font-medium text-foreground ml-0.5">{item.user?.name}</span>
+                            </span>
+                            {item.mentions && item.mentions.length > 0 && (
+                              <span className="flex items-center gap-1">
+                                <AtSign className="h-3 w-3" />
+                                {item.mentions.map((m: any) => (
+                                  <span key={m.user?.id || m.id} className="text-[10px] bg-accent/10 text-accent border border-accent/20 px-1.5 py-0.5 rounded-full font-medium">
+                                    @{m.user?.name || 'User'}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
+                            {item.inquiry?.stage && (
+                              <span className="bg-muted px-2 py-0.5 rounded-full text-[10px] font-medium">
+                                {item.inquiry.stage}
+                              </span>
+                            )}
+                          </div>
+                          
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 text-xs gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                            onClick={() => handleCompleteTodo(item.id, item.type)}
+                          >
+                            <CheckCircle2 className="h-3 w-3" /> Complete
+                          </Button>
                         </div>
                       </div>
                     ))}
                   </div>
+                );
+
+              return (
+                <div className="space-y-5">
+                  <TodoGroup items={overdue} title="⚠️ Overdue" accent="text-red-500" />
+                  <TodoGroup items={today} title="🔥 Due Today" accent="text-orange-500" />
+                  <TodoGroup items={upcoming} title="📋 Upcoming" accent="text-blue-500" />
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+       {/* ══════════ TAB: PAYMENTS ══════════ */}
+       {activeTab === 'payments' && (() => {
+          const filteredPayments = pendingPayments.filter((payment: any) => {
+            const matchesSearch = 
+              payment.inquiry?.client_name?.toLowerCase().includes(paymentSearch.toLowerCase()) ||
+              payment.inquiry?.inquiry_number?.toLowerCase().includes(paymentSearch.toLowerCase());
+            const matchesStatus = paymentFilter === 'all' || payment.status === paymentFilter;
+            return matchesSearch && matchesStatus;
+          });
+
+          return (
+            <div className="animate-fade-in space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-semibold flex items-center gap-2">
+                    <IndianRupee className="h-4 w-4 text-accent" /> Payments Ledger
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">Track and manage all scheduled and collected payments</p>
+                </div>
+                <Button size="sm" variant="outline" onClick={fetchPendingPayments} className="h-8 text-xs gap-1">
+                  <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                </Button>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 bg-muted/20 p-3 rounded-xl border border-border/50">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Search by client or inquiry number..." 
+                    className="pl-9 h-9 text-sm bg-background"
+                    value={paymentSearch}
+                    onChange={(e) => setPaymentSearch(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {['all', 'pending', 'collected'].map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setPaymentFilter(f as any)}
+                      className={cn(
+                        "px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all border",
+                        paymentFilter === f 
+                          ? "bg-primary text-primary-foreground border-primary shadow-sm" 
+                          : "bg-background text-muted-foreground border-border hover:border-primary/50"
+                      )}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {paymentsLoading ? (
+                <div className="text-center py-16 text-sm text-muted-foreground">Loading payments…</div>
+              ) : filteredPayments.length === 0 ? (
+                <div className="text-center py-16 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
+                  <IndianRupee className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                  <p className="font-medium text-sm">No payments found</p>
+                  <p className="text-xs mt-1 opacity-70">Try adjusting your search or filters.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredPayments.map((payment: any) => {
+                    const isOverdue = new Date(payment.date) < new Date(new Date().setHours(0,0,0,0)) && payment.status !== 'collected';
+                    const isToday = new Date(payment.date).toDateString() === new Date().toDateString() && payment.status !== 'collected';
+                    const isCollected = payment.status === 'collected';
+
+                    return (
+                      <div 
+                        key={payment.id} 
+                        className={cn(
+                          'rounded-xl border p-4 flex flex-col justify-between h-full space-y-4 shadow-sm hover:shadow-md transition-all',
+                          isCollected ? 'bg-muted/30 border-border/50' : 
+                          isOverdue ? 'border-red-200 bg-red-50/30' : 
+                          isToday ? 'border-orange-200 bg-orange-50/30' : 
+                          'bg-background border-border hover:border-primary/40'
+                        )}
+                      >
+                        <div>
+                          <div className="flex justify-between items-start mb-2 gap-2">
+                            <p className={cn("text-sm font-bold truncate", isCollected && "text-muted-foreground")}>
+                              {payment.inquiry?.client_name || "Unknown Client"}
+                            </p>
+                            {isCollected ? (
+                              <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold uppercase shrink-0 border border-green-200">
+                                Collected
+                              </span>
+                            ) : (
+                              <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold uppercase shrink-0 border border-amber-200">
+                                Pending
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono bg-muted/80 px-1.5 py-0.5 rounded border text-muted-foreground">
+                              {payment.inquiry?.inquiry_number}
+                            </span>
+                            <span className="text-[10px] bg-muted/50 px-2 py-0.5 rounded-full font-medium text-muted-foreground">
+                              {payment.inquiry?.stage}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="pt-3 border-t border-border/50 flex items-end justify-between">
+                          <div className={cn(
+                            'text-[11px] font-semibold flex items-center gap-1',
+                            isCollected ? 'text-muted-foreground' :
+                            isOverdue ? 'text-red-600' : 
+                            isToday ? 'text-orange-600' : 'text-blue-600'
+                          )}>
+                            <CalendarDays className="h-3.5 w-3.5" />
+                            <div className="flex flex-col">
+                              <span>{format(new Date(payment.date), 'dd MMM yyyy')}</span>
+                              {!isCollected && (isOverdue ? <span>(Overdue)</span> : isToday ? <span>(Due Today)</span> : null)}
+                            </div>
+                          </div>
+
+                          <div className={cn(
+                            "font-bold text-xl flex items-center",
+                            isCollected ? "text-muted-foreground opacity-60 line-through" : "text-green-600"
+                          )}>
+                            ₹{payment.amount.toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
-          </DialogContent>
-        </Dialog>
-
+          );
+        })()}
       </div>
+
+      {/* ── Add / Edit Block Modal ── */}
+      {isModalOpen && editingBlock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-background w-full max-w-md rounded-xl shadow-xl border overflow-hidden">
+            <div className="px-4 py-3 border-b bg-muted/30 flex justify-between items-center">
+              <h3 className="font-semibold text-sm">Edit Work Log</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Start Time</label>
+                  <Select 
+                    value={editingBlock.startHour} 
+                    onValueChange={v => setEditingBlock({ ...editingBlock, startHour: v })}
+                  >
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-56">
+                      {HOUR_OPTIONS.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <span className="mt-5 text-muted-foreground">→</span>
+                <div className="flex-1 space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">End Time</label>
+                  <Select 
+                    value={editingBlock.endHour} 
+                    onValueChange={v => setEditingBlock({ ...editingBlock, endHour: v })}
+                  >
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-56">
+                      {HOUR_OPTIONS.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground">What did you do?</label>
+                <Textarea
+                  rows={4}
+                  placeholder="E.g., Client meeting, server deployment, etc..."
+                  value={editingBlock.description}
+                  onChange={e => setEditingBlock({ ...editingBlock, description: e.target.value })}
+                  className="resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-muted/30 border-t flex justify-between">
+              <Button 
+                variant="outline"
+                size="sm" 
+                onClick={() => {
+                  removeBlock(editingBlock.id);
+                  setIsModalOpen(false);
+                }}
+                className="text-red-500 hover:text-red-600 hover:bg-red-50 border-red-200"
+              >
+                <Trash2 className="h-4 w-4 mr-1.5" /> Delete
+              </Button>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                <Button 
+                  size="sm" 
+                  onClick={() => {
+                    if (editingBlock.startHour >= editingBlock.endHour) {
+                      toast({ title: 'Invalid time', description: 'End time must be after start.', variant: 'destructive' });
+                      return;
+                    }
+                    if (!editingBlock.description.trim()) {
+                      toast({ title: 'Missing description', description: 'Please enter what you did.', variant: 'destructive' });
+                      return;
+                    }
+
+                    setBlocks(prev => {
+                      const exists = prev.find(b => b.id === editingBlock.id);
+                      if (exists) {
+                        return prev.map(b => b.id === editingBlock.id ? editingBlock : b);
+                      } else {
+                        const filtered = prev.filter(b => b.description.trim() !== '');
+                        return [...filtered, editingBlock];
+                      }
+                    });
+                    
+                    setIsModalOpen(false);
+                  }}
+                >
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 };

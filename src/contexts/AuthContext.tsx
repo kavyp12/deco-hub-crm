@@ -4,6 +4,7 @@ import api from '@/lib/api';
 type AppRole = 'super_admin' | 'sales' | 'accounting' | 'admin_hr';
 
 interface Profile {
+  role: string;
   id: string;
   name: string;
   email: string;

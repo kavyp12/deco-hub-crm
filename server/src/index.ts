@@ -583,15 +583,11 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
-    // Row 1 = group headers (Delear Price / Customer Rate / Design Repeat)
-    // Row 2 = actual column headers
-    // Row 3+ = data
-    // So range:1 means "use row index 1 (row 2) as headers"
     const data: any[] = xlsx.utils.sheet_to_json(worksheet, {
       raw: false,
       defval: '',
       blankrows: false,
-      range: 1  // Skip row 1 group headers, treat row 2 as column headers
+      range: 1
     });
 
     if (data.length === 0) {
@@ -599,8 +595,6 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
       return;
     }
 
-    // Skip the first item if it's the group header row leaking through
-    // (safety check: if Sr. No is not a number, skip it)
     const cleanData = data.filter(row => {
       const srNo = row['Sr. No'] ?? row['Sr No'];
       return srNo !== undefined && srNo !== '' && !isNaN(parseFloat(String(srNo)));
@@ -611,15 +605,17 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
 
     const SKIP_COLUMNS = new Set([
       'Sr. No', 'Sr No', 'Collection', 'Design/ Quality',
+      'SRL No',                           // ✅ ADDED: handled manually below
       'RRP', 'CL Landing Cost', 'RL Landing Cost',
-      'GST Amount', 'MRP'   // formula-derived, skip from attributes
+      'GST Amount', 'MRP'
     ]);
 
     for (let i = 0; i < cleanData.length; i++) {
       const row = cleanData[i];
-      const rowNumber = i + 3; // actual Excel row number
+      const rowNumber = i + 3;
 
-      const srNo = (row['Sr. No'] ?? row['Sr No'])?.toString().trim();
+      const srNo = (row['Sr. No'] ?? row['Sr No'])?.toString().trim();  // Row serial: 1, 2, 3...
+      const srlNo = row['SRL No']?.toString().trim();                     // ✅ Real SRL: "1, 17, 25, 40"
       const collection = row['Collection']?.toString().trim();
       const design = row['Design/ Quality']?.toString().trim();
       const rrpRaw = row['RRP']?.toString().trim();
@@ -639,7 +635,6 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
         continue;
       }
 
-      // Find or create catalog grouped by Collection name
       let catalog = await prisma.catalog.findFirst({ where: { name: collection, companyId } });
       if (!catalog) {
         catalog = await prisma.catalog.create({
@@ -647,7 +642,6 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
         });
       }
 
-      // Save all extra columns as attributes
       const attributes: any = {};
       for (const col in row) {
         if (SKIP_COLUMNS.has(col.trim())) continue;
@@ -657,8 +651,14 @@ app.post('/api/upload-catalog', authenticateToken, requireRole(['super_admin', '
         }
       }
 
-      // Store Sr. No explicitly
+      // ✅ Store row serial for the Catalog table display (Sr. No column)
       if (srNo) attributes['Sr. No'] = srNo;
+
+      // ✅ Store the REAL SRL numbers ("1, 17, 25, 40") under 'srlNo' for dropdown splitting
+      if (srlNo) attributes['srlNo'] = srlNo;
+
+      // ✅ Also keep original key for Catalogs.tsx display which reads 'SRL No'
+      if (srlNo) attributes['SRL No'] = srlNo;
 
       try {
         await prisma.product.create({
@@ -709,14 +709,24 @@ app.get('/api/catalogs/:id/products', authenticateToken, async (req: Request, re
           select: {
             id: true,
             name: true,
-            type: true, // Included so frontend knows if it's Curtains/Rugs
+            type: true,
             companyId: true
           }
         }
       },
       orderBy: { name: 'asc' }
     });
-    res.json(products);
+
+    // ✅ FIX 2: Lift srlNo out of attributes to a top-level field
+    // This is what utils.ts reads as product.srlNo
+    const mapped = products.map(p => ({
+      ...p,
+      srlNo: (p.attributes as any)?.srlNo
+        || (p.attributes as any)?.['Sr. No']
+        || ''
+    }));
+
+    res.json(mapped);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch products for catalog' });
   }
@@ -727,13 +737,13 @@ app.get('/api/products/all', authenticateToken, async (req: Request, res: Respon
       include: {
         catalog: {
           select: {
-            id: true,          // <--- ADDED THIS
+            id: true,
             name: true,
             type: true,
-            companyId: true,   // <--- ADDED THIS
+            companyId: true,
             company: {
               select: {
-                id: true,      // <--- ADDED THIS
+                id: true,
                 name: true
               }
             }
@@ -746,7 +756,16 @@ app.get('/api/products/all', authenticateToken, async (req: Request, res: Respon
         { name: 'asc' }
       ]
     });
-    res.json(products);
+
+    // ✅ FIX 3: Same srlNo lift as the catalog products route
+    const mapped = products.map(p => ({
+      ...p,
+      srlNo: (p.attributes as any)?.srlNo
+        || (p.attributes as any)?.['Sr. No']
+        || ''
+    }));
+
+    res.json(mapped);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch products' });
   }
@@ -1407,13 +1426,13 @@ app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) =>
 
     // Determine orderIndex: use provided value or place at end
     let finalOrderIndex = requestedOrderIndex;
-if (finalOrderIndex === undefined || finalOrderIndex === null) {
-  const maxResult = await prisma.inquiry.aggregate({
-    where: { stage: req.body.stage || 'Inquiry' },  // scoped to that column
-    _max: { orderIndex: true }
-  });
-  finalOrderIndex = (maxResult._max.orderIndex ?? 0) + 1000;
-}
+    if (finalOrderIndex === undefined || finalOrderIndex === null) {
+      const maxResult = await prisma.inquiry.aggregate({
+        where: { stage: req.body.stage || 'Inquiry' },  // scoped to that column
+        _max: { orderIndex: true }
+      });
+      finalOrderIndex = (maxResult._max.orderIndex ?? 0) + 1000;
+    }
 
     const newInquiry = await prisma.inquiry.create({
       data: {
@@ -1505,13 +1524,27 @@ app.get('/api/selections', authenticateToken, async (req: Request, res: Response
           }
         },
         items: {
-          orderBy: { orderIndex: 'asc' } // ✅ ADD THIS
+          orderBy: { orderIndex: 'asc' }
         },
         created_by: { select: { name: true } }
       },
       orderBy: { created_at: 'desc' }
     });
-    res.json(selections);
+
+    // ✅ Lift srlNo, catalogName, catalogType, companyId from details JSON to top-level fields
+    const mapped = selections.map((sel: any) => ({
+      ...sel,
+      items: (sel.items || []).map((item: any) => ({
+        ...item,
+        srlNo: item.srlNo ?? (item.details?.srlNo || ''),
+        catalogName: item.catalogName ?? (item.details?.catalogName || ''),
+        catalogType: item.catalogType ?? (item.details?.catalogType || ''),
+        companyId: item.companyId ?? (item.details?.companyId || ''),
+        areaName: item.areaName ?? (item.details?.areaName || '')
+      }))
+    }));
+
+    res.json(mapped);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch selections' });
   }
@@ -1527,13 +1560,31 @@ app.get('/api/selections/:id', authenticateToken, async (req: Request, res: Resp
           }
         },
         items: {
-          include: { product: true }, // <--- 🔥 THIS WAS MISSING. ADD IT!
-          orderBy: { orderIndex: 'asc' }
+          include: { product: true },
+          orderBy: [{ version: 'asc' }, { orderIndex: 'asc' }]
         },
         created_by: { select: { name: true } }
       }
     });
-    res.json(selection);
+
+    if (!selection) {
+      return res.status(404).json({ error: 'Selection not found' });
+    }
+
+    // ✅ Lift srlNo, catalogName, catalogType, companyId from details JSON to top-level fields
+    const mapped = {
+      ...selection,
+      items: (selection.items || []).map((item: any) => ({
+        ...item,
+        srlNo: item.srlNo ?? (item.details?.srlNo || ''),
+        catalogName: item.catalogName ?? (item.details?.catalogName || ''),
+        catalogType: item.catalogType ?? (item.details?.catalogType || ''),
+        companyId: item.companyId ?? (item.details?.companyId || ''),
+        areaName: item.areaName ?? (item.details?.areaName || '')
+      }))
+    };
+
+    res.json(mapped);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch selection' });
   }
@@ -1550,12 +1601,30 @@ app.get('/api/selections/by-inquiry/:inquiryId', authenticateToken, async (req: 
           }
         },
         items: {
-          orderBy: { orderIndex: 'asc' } // ✅ ADD THIS
+          orderBy: [{ version: 'asc' }, { orderIndex: 'asc' }]
         },
         created_by: { select: { name: true } }
       }
     });
-    res.json(selection);
+
+    if (!selection) {
+      return res.status(404).json({ error: 'No selection found for this inquiry' });
+    }
+
+    // ✅ Lift srlNo, catalogName, catalogType, companyId from details JSON to top-level fields
+    const mapped = {
+      ...selection,
+      items: (selection.items || []).map((item: any) => ({
+        ...item,
+        srlNo: item.srlNo ?? (item.details?.srlNo || ''),
+        catalogName: item.catalogName ?? (item.details?.catalogName || ''),
+        catalogType: item.catalogType ?? (item.details?.catalogType || ''),
+        companyId: item.companyId ?? (item.details?.companyId || ''),
+        areaName: item.areaName ?? (item.details?.areaName || '')
+      }))
+    };
+
+    res.json(mapped);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch selection' });
   }
@@ -1565,14 +1634,82 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
   const { inquiryId, delivery_date, notes, items, status } = req.body;
 
   try {
-    console.log('📥 Creating New Selection:', {
-      inquiryId,
-      itemsCount: items?.length,
-      items: items?.map((i: any) => ({
-        productName: i.productName || i.name,
-        calculationType: i.calculationType
-      }))
+    // ✅ CRITICAL FIX: Check if a selection already exists for this inquiry.
+    // If yes, UPDATE it (replace current version items) instead of creating a duplicate.
+    const existingSelection = await prisma.selection.findFirst({
+      where: { inquiryId },
+      include: { items: true }
     });
+
+    if (existingSelection) {
+      console.log(`⚡ Selection already exists for inquiry ${inquiryId}. Updating existing selection ${existingSelection.id} instead of creating new.`);
+
+      const currentVersion = existingSelection.version || 1;
+
+      // Delete only current-version items to replace them
+      await prisma.selectionItem.deleteMany({
+        where: { selectionId: existingSelection.id, version: currentVersion }
+      });
+
+      // Validate product IDs
+      let validProductIds = new Set<string>();
+      const potentialIds = (items || []).map((i: any) => i.productId).filter((pid: any) => pid && typeof pid === 'string' && !pid.startsWith('temp-') && pid !== 'manual');
+      if (potentialIds.length > 0) {
+        const foundProducts = await prisma.product.findMany({ where: { id: { in: potentialIds } }, select: { id: true } });
+        foundProducts.forEach(p => validProductIds.add(p.id));
+      }
+
+      if (items && items.length > 0) {
+        const itemsToCreate = items.map((item: any, index: number) => ({
+          selectionId: existingSelection.id,
+          version: currentVersion,
+          productId: (item.productId && validProductIds.has(item.productId)) ? item.productId : null,
+          productName: item.name || item.productName || 'Custom Item',
+          quantity: parseFloat(item.quantity) || 1,
+          price: parseFloat(item.price) || 0,
+          total: (parseFloat(item.quantity) || 1) * (parseFloat(item.price) || 0),
+          calculationType: item.calculationType || 'Local',
+          unit: item.unit || 'mm',
+          width: item.width ? parseFloat(item.width) : null,
+          height: item.height ? parseFloat(item.height) : null,
+          type: item.type || null,
+          motorizationMode: item.motorizationMode || null,
+          opsType: item.opsType || null,
+          pelmet: item.pelmet ? parseFloat(item.pelmet) : null,
+          openingType: item.openingType || null,
+          orderIndex: item.orderIndex !== undefined ? item.orderIndex : index,
+          details: {
+            ...(item.details || {}),
+            areaName: item.areaName || item.details?.areaName || '',
+            catalogName: item.catalogName || item.details?.catalogName || '',
+            catalogType: item.catalogType || item.details?.catalogType || '',
+            companyId: item.companyId || item.details?.companyId || '',
+            srlNo: item.srlNo || item.details?.srlNo || ''
+          }
+        }));
+        await prisma.selectionItem.createMany({ data: itemsToCreate });
+      }
+
+      await prisma.selection.update({
+        where: { id: existingSelection.id },
+        data: {
+          status: status || existingSelection.status,
+          delivery_date: delivery_date ? new Date(delivery_date) : existingSelection.delivery_date,
+          notes: notes !== undefined ? notes : existingSelection.notes,
+        }
+      });
+
+      const updated = await prisma.selection.findUnique({
+        where: { id: existingSelection.id },
+        include: { items: { orderBy: [{ version: 'asc' }, { orderIndex: 'asc' }] }, inquiry: true }
+      });
+
+      await logActivity(req.user.id, 'UPDATE', 'SELECTION', existingSelection.id, `Updated Selection #${existingSelection.selection_number} via Measurement Editor`);
+      return res.json(updated);
+    }
+
+    // ── No existing selection: create fresh ──
+    console.log('📥 Creating New Selection:', { inquiryId, itemsCount: items?.length });
 
     const date = new Date();
     const yearMonth = `${date.getFullYear().toString().slice(-2)}${(date.getMonth() + 1).toString().padStart(2, '0')}`;
@@ -1586,24 +1723,14 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
     const selectionNumber = `SEL-${yearMonth}${counterRecord.counter.toString().padStart(4, '0')}`;
 
     const mapItem = (item: any, index: number) => {
-      // ✅ Ensure calculationType is always set and supports all types
       const calculationType = item.calculationType || 'Local';
-
-      console.log(`✅ Mapping Item ${index + 1}:`, {
-        productName: item.name || item.productName,
-        calculationType: calculationType
-      });
-
       return {
         productId: item.id || item.productId || null,
         productName: item.name || item.productName || 'Custom Item',
         quantity: parseFloat(item.quantity) || 1,
         price: parseFloat(item.price) || 0,
         total: (parseFloat(item.quantity) || 1) * (parseFloat(item.price) || 0),
-
-        // ✅ Accept new calculation types including "Forest (Manual)" and "Forest (Auto)"
         calculationType: calculationType,
-
         unit: item.unit || 'mm',
         width: item.width ? parseFloat(item.width) : null,
         height: item.height ? parseFloat(item.height) : null,
@@ -1612,15 +1739,14 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
         opsType: item.opsType || null,
         pelmet: item.pelmet ? parseFloat(item.pelmet) : null,
         openingType: item.openingType || null,
-
         orderIndex: index,
-
         details: {
           ...(item.attributes || {}),
           ...(item.details || {}),
           areaName: item.areaName || item.details?.areaName || '',
           catalogName: item.catalogName || item.details?.catalogName || '',
-          catalogType: item.catalogType || item.details?.catalogType || ''
+          catalogType: item.catalogType || item.details?.catalogType || '',
+          srlNo: item.srlNo || item.details?.srlNo || ''
         }
       };
     };
@@ -1633,21 +1759,12 @@ app.post('/api/selections', authenticateToken, async (req: any, res: Response) =
         delivery_date: delivery_date ? new Date(delivery_date) : null,
         notes,
         created_by_id: req.user.id,
-        items: {
-          create: items.map(mapItem)
-        }
+        items: { create: items.map(mapItem) }
       },
       include: { items: true, inquiry: true }
     });
 
-    console.log('✅ Selection Created Successfully:', {
-      selectionNumber: newSelection.selection_number,
-      itemsCount: newSelection.items.length,
-      calculationTypes: newSelection.items.map(i => i.calculationType)
-    });
-
     await logActivity(req.user.id, 'CREATE', 'SELECTION', newSelection.id, `Created Selection #${newSelection.selection_number}`);
-
     res.json(newSelection);
   } catch (error) {
     console.error('❌ Selection creation error:', error);
@@ -1782,11 +1899,13 @@ app.put('/api/selections/:id', authenticateToken, async (req: any, res: Response
           orderIndex: item.orderIndex !== undefined ? item.orderIndex : index,
 
           details: {
-            areaName: item.details?.areaName || item.areaName || 'Unknown Area',
-            catalogName: item.details?.catalogName || item.catalogName || '',
-            catalogType: item.details?.catalogType || item.catalogType || '',
-            companyId: item.details?.companyId || item.companyId || '',
-            ...(item.details || {})
+            ...(item.details || {}),
+            // ✅ Explicit fields AFTER spread so they are never overwritten by stale details data
+            areaName: item.areaName || item.details?.areaName || '',
+            catalogName: item.catalogName || item.details?.catalogName || '',
+            catalogType: item.catalogType || item.details?.catalogType || '',
+            companyId: item.companyId || item.details?.companyId || '',
+            srlNo: item.srlNo || item.details?.srlNo || ''
           }
         };
       });
@@ -3491,18 +3610,16 @@ app.delete('/api/architects/:id', authenticateToken, async (req: any, res: Respo
 // 🆕 NEW PIPELINE & KANBAN ROUTES
 // ==========================================
 
-// [FILE: src/index.ts]
-
-// GET PIPELINE BOARD DATA
+// UPDATE: GET PIPELINE BOARD DATA
 app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
   try {
     const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
 
-    // Filter: Agents see Inquiries they own OR are assigned to
     const whereClause = isAdmin ? {} : {
       OR: [
         { sales_person_id: req.user.id },
-        { sales_persons: { some: { id: req.user.id } } }
+        { sales_persons: { some: { id: req.user.id } } },
+        { comments: { some: { mentions: { some: { userId: req.user.id } } } } } // Allow if mentioned
       ]
     };
 
@@ -3511,28 +3628,45 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
       include: {
         sales_person: { select: { id: true, name: true } },
         sales_persons: { select: { id: true, name: true } },
-        comments: {
-          include: { user: { select: { name: true } } },
-          orderBy: { createdAt: 'desc' }
-        },
-        checklists: {
-          include: { items: { orderBy: { id: 'asc' } } }
-        },
+
+        // ✅ RESTORED THESE LINES! This is what makes the UI remember on refresh!
         labels: true,
-        // ✅ FETCH LINKED QUOTATIONS (Removing 'select' to fetch full object)
-        selections: {
+        checklists: { include: { items: true } },
+        payments: true,
+        selections: { select: { id: true, selection_number: true, status: true, quotations: true } },
+
+        comments: {
           include: {
-            quotations: {
-              orderBy: { created_at: 'desc' }, // Latest quote first
-              take: 1
+            user: { select: { name: true } },
+            mentions: {
+              include: { user: { select: { id: true, name: true } } }
             }
-          }
+          },
+          orderBy: { createdAt: 'desc' }
         }
       },
       orderBy: { orderIndex: 'asc' }
     });
 
-    res.json(inquiries);
+    // ✅ MODIFIED: Filter data before sending to the frontend
+    const filteredInquiries = inquiries.map((inq: any) => {
+      const isAssigned = isAdmin || inq.sales_person_id === req.user.id || inq.sales_persons.some((u: any) => u.id === req.user.id);
+
+      if (isAssigned) {
+        return inq; // Assigned users see everything
+      } else {
+        // Not assigned (only here because they were @mentioned) -> Strip out all other comments
+        return {
+          ...inq,
+          comments: inq.comments.filter((c: any) =>
+            c.mentions.some((m: any) => m.userId === req.user.id) || c.userId === req.user.id
+          ),
+          checklists: [],
+        };
+      }
+    });
+
+    res.json(filteredInquiries);
   } catch (error) {
     console.error('Pipeline Error:', error);
     res.status(500).json({ error: 'Failed to fetch pipeline' });
@@ -3540,49 +3674,101 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
 });
 
 // 2. MOVE CARD (Update Stage and Position)
+// PUT /api/inquiries/:id/stage
+// Handles stage change + optional stageDueDate
 app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Response) => {
-  const { id } = req.params;
-  const { stage, orderIndex } = req.body; // e.g., "Quotation Submitted"
-
   try {
-    const updated = await prisma.inquiry.update({
-      where: { id },
-      data: {
-        ...(stage !== undefined && { stage }),
-        ...(orderIndex !== undefined && { orderIndex })
-      }
-    });
+    const { stage, orderIndex, stageDueDate } = req.body;
 
-    // Log the movement for Admin visibility
-    if (stage !== undefined) {
-      await logActivity(req.user.id, 'UPDATE', 'INQUIRY_STAGE', id, `Stage changed → "${stage}" for inquiry ${updated.inquiry_number}`);
-    }
+    const updated = await prisma.inquiry.update({
+      where: { id: req.params.id },
+      data: {
+        stage,
+        ...(orderIndex !== undefined && { orderIndex }),
+        // Save stageDueDate if provided, clear it if not sent
+        stageDueDate: stageDueDate ? new Date(stageDueDate) : null,
+      },
+    });
 
     res.json(updated);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to move card' });
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update stage' });
   }
 });
-
 // 3. ADD COMMENT TO INQUIRY
 app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { content, attachmentUrl } = req.body; // <--- Accept attachmentUrl
+  const { content, attachmentUrl, dueDate, mentionedUserIds, stage } = req.body;
 
   try {
     const comment = await prisma.inquiryComment.create({
       data: {
-        content: content || '', // Allow empty content if there is an image
+        content: content || '',
         attachmentUrl: attachmentUrl || null,
+        dueDate: dueDate ? new Date(dueDate) : null,
+        stage: stage || null,
         inquiryId: id,
-        userId: req.user.id
+        userId: req.user.id,
+        ...(mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0 && {
+          mentions: {
+            create: mentionedUserIds.map((uid: string) => ({ userId: uid }))
+          }
+        })
       },
-      include: { user: { select: { name: true } } }
+      include: {
+        user: { select: { name: true } },
+        mentions: {
+          include: { user: { select: { id: true, name: true } } }
+        }
+      }
     });
     await logActivity(req.user.id, 'CREATE', 'COMMENT', comment.id, `Added a comment to Inquiry`);
     res.json(comment);
   } catch (error) {
+    console.error('Comment create error:', error);
     res.status(500).json({ error: 'Failed to post comment' });
+  }
+});
+// EDIT COMMENT
+app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const comment = await prisma.inquiryComment.update({
+      where: { id: req.params.id },
+      data: { content: req.body.content }
+    });
+    await logActivity(req.user.id, 'UPDATE', 'COMMENT', comment.id, `Edited a comment`);
+    res.json(comment);
+  } catch (error) {
+    console.error('Comment edit error:', error);
+    res.status(500).json({ error: 'Failed to edit comment' });
+  }
+});
+
+
+// Mark mentions as read for a specific inquiry card
+app.put('/api/inquiries/:id/mentions/read', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { stage } = req.body;
+
+    // Build where clause to only clear mentions for this specific stage, or all if no stage provided
+    const whereClause: any = {
+      userId: req.user.id,
+      isRead: false,
+      comment: { inquiryId: req.params.id }
+    };
+
+    if (stage) {
+      whereClause.comment.stage = stage;
+    }
+
+    await (prisma as any).inquiryCommentMention.updateMany({
+      where: whereClause,
+      data: { isRead: true }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to mark mentions as read' });
   }
 });
 
@@ -3662,6 +3848,80 @@ app.post('/api/inquiries/:id/labels', authenticateToken, async (req: any, res: R
     res.json(label);
   } catch (error) {
     res.status(500).json({ error: 'Failed to add label' });
+  }
+});
+
+
+// ==========================================
+// PAYMENT TRACKING ROUTES
+// ==========================================
+
+// 1. Add a Payment to an Inquiry
+app.post('/api/inquiries/:id/payments', authenticateToken, async (req: any, res: Response) => {
+  const { id } = req.params;
+  const { amount, date } = req.body;
+
+  try {
+    const payment = await prisma.inquiryPayment.create({
+      data: {
+        inquiryId: id,
+        amount: parseFloat(amount),
+        date: new Date(date),
+        userId: req.user.id
+      },
+      include: { user: { select: { name: true } } }
+    });
+
+    await logActivity(req.user.id, 'CREATE', 'PAYMENT', payment.id, `Added payment follow-up of ₹${amount}`);
+    res.json(payment);
+  } catch (error) {
+    console.error('Payment create error:', error);
+    res.status(500).json({ error: 'Failed to add payment' });
+  }
+});
+
+// 2. Mark Payment as Collected
+app.put('/api/payments/:id/collect', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const payment = await prisma.inquiryPayment.update({
+      where: { id: req.params.id },
+      data: { status: 'collected' }
+    });
+    await logActivity(req.user.id, 'UPDATE', 'PAYMENT', payment.id, `Marked payment as collected`);
+    res.json(payment);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update payment status' });
+  }
+});
+
+// 3. Fetch Pending Payments for To-Do/Reports
+app.get('/api/payments/pending', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
+    const whereClause: any = {}; // Empty object means fetch ALL statuses
+    // If not admin, only show payments for inquiries they own or collaborate on
+    if (!isAdmin) {
+      whereClause.inquiry = {
+        OR: [
+          { sales_person_id: req.user.id },
+          { sales_persons: { some: { id: req.user.id } } }
+        ]
+      };
+    }
+
+    const payments = await prisma.inquiryPayment.findMany({
+      where: whereClause,
+      include: {
+        inquiry: { select: { inquiry_number: true, client_name: true, stage: true } },
+        user: { select: { name: true } }
+      },
+      orderBy: { date: 'asc' }
+    });
+
+    res.json(payments);
+  } catch (error) {
+    console.error('Pending payments error:', error);
+    res.status(500).json({ error: 'Failed to fetch pending payments' });
   }
 });
 
@@ -3933,289 +4193,117 @@ app.get('/api/users/all', authenticateToken, async (req: Request, res: Response)
 // ==========================================
 
 const getReportWindow = (dateInput?: string) => {
-  // If no date given, use "today"
   const base = dateInput ? new Date(dateInput) : new Date();
 
-  // 🚨 FIX: If it is past 6:00 PM (18:00), shift to tomorrow's report cycle
+  // After 6 PM with no explicit date → shift to next day's cycle
   if (!dateInput && base.getHours() >= 18) {
     base.setDate(base.getDate() + 1);
   }
 
-  // Normalize to just the date portion
   const year = base.getFullYear();
   const month = base.getMonth();
   const day = base.getDate();
 
-  // Window end = 6PM on the given day
-  const windowEnd = new Date(year, month, day, 18, 0, 0, 0);
+  const reportDate = new Date(year, month, day, 18, 0, 0, 0);
+  const windowStart = new Date(reportDate.getTime() - 24 * 60 * 60 * 1000);
+  const windowEnd = reportDate;
 
-  // Window start = 6PM on the previous day
-  const windowStart = new Date(windowEnd.getTime() - 24 * 60 * 60 * 1000);
-
-  // Canonical report date (stored as 6PM of the current day)
-  return { windowStart, windowEnd, reportDate: windowEnd };
+  return { windowStart, windowEnd, reportDate };
 };
 
-
 // ==========================================
-// ADMIN & EMPLOYEE: Inquiry Timeline
-// GET /api/daily-reports/inquiry/:inquiryId/timeline
+// POST /api/daily-reports/other-work
+// Employee submits hour-by-hour work blocks
 // ==========================================
-// Replace your existing /api/daily-reports/inquiry/:inquiryId/timeline route with this:
-
-app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/daily-reports/other-work', authenticateToken, async (req: any, res: Response) => {
   try {
-    // 1. Fetch Manual Daily Report Entries
-    const manualEntries = await (prisma as any).dailyReportEntry.findMany({
-      where: { inquiryId: req.params.inquiryId },
-      include: {
-        dailyReport: {
-          include: { user: { select: { id: true, name: true } } },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // Extract date from the body
+    const { entries, date } = req.body;
 
-    // 2. Fetch Automated Activity Logs for this Inquiry
-    const autoLogs = await prisma.activityLog.findMany({
-      where: {
-        entityId: req.params.inquiryId,
-        entity: { in: ['INQUIRY', 'INQUIRY_STAGE', 'INQUIRY_OWNER', 'INQUIRY_MEMBERS', 'COMMENT', 'CHECKLIST', 'LABEL'] }
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    // Map autoLogs to look like manualEntries so the frontend timeline UI doesn't break
-    const formattedAutoLogs = autoLogs.map(log => ({
-      id: log.id,
-      workDone: `[System Log] ${log.details}`,
-      status: 'system_action', // You can map this to a custom color in STATUS_COLORS in frontend
-      createdAt: log.createdAt,
-      dailyReport: {
-        reportDate: log.createdAt,
-        user: { id: log.userId, name: 'System / Staff' } // Ideally you fetch the user's name here if needed
-      }
-    }));
-
-    // Combine and sort by date
-    const combinedTimeline = [...manualEntries, ...formattedAutoLogs].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    const inquiry = await prisma.inquiry.findUnique({
-      where: { id: req.params.inquiryId },
-      select: {
-        id: true,
-        inquiry_number: true,
-        client_name: true,
-        stage: true,
-        sales_person: { select: { id: true, name: true } },
-      },
-    });
-
-    res.json({ inquiry, timeline: combinedTimeline });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch timeline' });
-  }
-});
-// ==========================================
-// EMPLOYEE: Get My History
-// GET /api/daily-reports/my-history
-// ==========================================
-
-app.get('/api/daily-reports/my-history', authenticateToken, async (req: any, res: Response) => {
-  try {
-    // Fetch the parent DailyReport to ensure we get days with ONLY Other Work
-    const reports = await (prisma as any).dailyReport.findMany({
-      where: {
-        userId: req.user.id
-      },
-      include: {
-        entries: {
-          include: {
-            inquiry: {
-              select: {
-                id: true,
-                inquiry_number: true,
-                client_name: true,
-                stage: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: {
-        reportDate: 'desc' // Newest first
-      }
-    });
-
-    res.json(reports);
-  } catch (error) {
-    console.error('My history error:', error);
-    res.status(500).json({ error: 'Failed to fetch history' });
-  }
-});
-
-// ==========================================
-// EMPLOYEE: Submit / Update Daily Report
-// POST /api/daily-reports
-// ==========================================
-// ==========================================
-// EMPLOYEE: Submit / Update Daily Report
-// POST /api/daily-reports
-// ==========================================
-app.post('/api/daily-reports', authenticateToken, async (req: any, res: Response) => {
-  try {
-    // 1. Extract entries AND otherWork from the request
-    const { entries, otherWork, reportDate: reportDateStr } = req.body;
-
-    // 2. Validate: They must submit EITHER inquiry entries OR otherWork text
-    const hasEntries = entries && Array.isArray(entries) && entries.length > 0;
-    const hasOtherWork = otherWork && typeof otherWork === 'string' && otherWork.trim().length > 0;
-
-    if (!hasEntries && !hasOtherWork) {
-      return res.status(400).json({ error: 'Please update inquiries or log other work' });
+    if (!entries || !Array.isArray(entries) || entries.length === 0) {
+      return res.status(400).json({ error: 'Please add at least one time block.' });
     }
 
-    const { reportDate } = getReportWindow(reportDateStr);
+    for (const e of entries) {
+      if (!e.startHour || !e.endHour || !e.description?.trim()) {
+        return res.status(400).json({ error: 'Each block needs start time, end time, and description.' });
+      }
+      if (e.startHour >= e.endHour) {
+        return res.status(400).json({ error: `End time must be after start time (${e.startHour} – ${e.endHour}).` });
+      }
+    }
 
-    // 3. Upsert the DailyReport record (Include otherWork here)
+    // Pass the selected date to get the correct window
+    const { reportDate } = getReportWindow(date);
+
     const report = await (prisma as any).dailyReport.upsert({
-      where: {
-        userId_reportDate: {
-          userId: req.user.id,
-          reportDate,
-        },
-      },
-      update: {
-        status: 'SUBMITTED',
-        otherWork: otherWork || null, // <--- ADDED THIS
-        submittedAt: new Date(),
-        updatedAt: new Date(),
-      },
-      create: {
-        userId: req.user.id,
-        reportDate,
-        status: 'SUBMITTED',
-        otherWork: otherWork || null, // <--- ADDED THIS
-      },
+      where: { userId_reportDate: { userId: req.user.id, reportDate } },
+      update: { status: 'SUBMITTED', submittedAt: new Date(), updatedAt: new Date() },
+      create: { userId: req.user.id, reportDate, status: 'SUBMITTED' },
     });
 
-    // 4. Handle Inquiry Entries (if any exist)
-    await (prisma as any).dailyReportEntry.deleteMany({
-      where: { dailyReportId: report.id },
+    await (prisma as any).otherWorkEntry.deleteMany({ where: { dailyReportId: report.id } });
+
+    await (prisma as any).otherWorkEntry.createMany({
+      data: entries.map((e: any) => ({
+        dailyReportId: report.id,
+        startHour: e.startHour,
+        endHour: e.endHour,
+        description: e.description.trim(),
+      })),
     });
-
-    if (hasEntries) {
-      await (prisma as any).dailyReportEntry.createMany({
-        data: entries.map((e: any) => ({
-          dailyReportId: report.id,
-          inquiryId: e.inquiryId,
-          workDone: e.workDone,
-          status: e.status,
-        })),
-      });
-    }
-
-    // 5. Activity Logging
-    const entryCount = hasEntries ? entries.length : 0;
-    let logMessage = `Submitted daily report. Updated ${entryCount} inquiries.`;
-    if (hasOtherWork) logMessage += ` Included other work activities.`;
-
-    await logActivity(req.user.id, 'CREATE', 'DAILY_REPORT', report.id, logMessage);
 
     res.json({ success: true, reportId: report.id });
   } catch (error) {
-    console.error('Daily report submit error:', error);
-    res.status(500).json({ error: 'Failed to submit report' });
+    console.error('other-work submit error:', error);
+    res.status(500).json({ error: 'Failed to submit work log' });
   }
 });
 
+
+
 // ==========================================
-// EMPLOYEE: Get today's assigned inquiries + existing report
 // GET /api/daily-reports/my-today
+// Employee: today's existing work entries
 // ==========================================
-
-
+// 1. UPDATE: GET /api/daily-reports/my-today
 app.get('/api/daily-reports/my-today', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { windowStart, windowEnd, reportDate } = getReportWindow();
+    // Look for a date in the query string (e.g., ?date=2026-04-23)
+    const { date } = req.query;
+    const { reportDate } = getReportWindow(date);
 
-    // Get inquiries assigned to this user (as sales_person OR member)
-    const inquiries = await prisma.inquiry.findMany({
-      where: {
-        OR: [
-          { sales_person_id: req.user.id },
-          { sales_persons: { some: { id: req.user.id } } },
-        ],
-      },
-      select: {
-        id: true,
-        inquiry_number: true,
-        client_name: true,
-        stage: true,
-        inquiry_date: true,
-        address: true,
-        reportEntries: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: {
-            status: true,
-            workDone: true,
-            createdAt: true,
-            dailyReport: { select: { reportDate: true } },
-          },
-        },
-      },
-      orderBy: { inquiry_date: 'desc' },
-    });
-
-    // Check for today's existing report
     const existingReport = await (prisma as any).dailyReport.findUnique({
       where: { userId_reportDate: { userId: req.user.id, reportDate } },
-      include: {
-        entries: {
-          include: {
-            inquiry: { select: { id: true, inquiry_number: true, client_name: true } },
-          },
-        },
-      },
+      include: { otherWorkEntries: { orderBy: { startHour: 'asc' } } },
     });
 
-    // Flag inquiries inactive (2 days = yellow, 3+ days = red)
-    const nowMs = Date.now();
-    const enriched = inquiries.map((inq: any) => {
-      const lastEntry = inq.reportEntries?.[0];
-      const lastUpdate = lastEntry ? new Date(lastEntry.createdAt) : null;
-
-      const daysInactive = lastUpdate ? Math.floor((nowMs - lastUpdate.getTime()) / (1000 * 60 * 60 * 24)) : 999;
-      const isInactive = daysInactive >= 3;
-
-      return {
-        ...inq,
-        lastStatus: lastEntry?.status || null,
-        lastWorkDone: lastEntry?.workDone || null,
-        lastUpdatedAt: lastUpdate,
-        daysInactive,
-        isInactive,
-      };
-    });
-
-    res.json({
-      inquiries: enriched,
-      existingReport: existingReport || null,
-      reportDate,
-    });
+    res.json({ existingReport: existingReport || null, reportDate });
   } catch (error) {
-    console.error('My today error:', error);
-    res.status(500).json({ error: 'Failed to fetch data' });
+    console.error('my-today error:', error);
+    res.status(500).json({ error: 'Failed to fetch report for date' });
   }
 });
-
-
 // ==========================================
-// ADMIN: Get all daily reports (filterable)
+// GET /api/daily-reports/my-history
+// Employee: all past reports
+// ==========================================
+app.get('/api/daily-reports/my-history', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const reports = await (prisma as any).dailyReport.findMany({
+      where: { userId: req.user.id },
+      include: { otherWorkEntries: { orderBy: { startHour: 'asc' } } },
+      orderBy: { reportDate: 'desc' },
+    });
+    res.json(reports);
+  } catch (error) {
+    console.error('my-history error:', error);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+// ==========================================
 // GET /api/daily-reports/admin
+// Admin: all reports filterable by date/user
 // ==========================================
 app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -4223,167 +4311,52 @@ app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Res
       return res.status(403).json({ error: 'Access Denied' });
     }
 
-    const { date, userId, inquiryId, status } = req.query as any;
+    const { date, userId } = req.query as any;
 
-    // Build where clause for entries
-    const entryWhere: any = {};
-    if (inquiryId) entryWhere.inquiryId = inquiryId;
-    if (status) entryWhere.status = status;
-
-    // 🚨 FIX: Only apply the reportDate filter if a date is actually passed
-    const reportWhere: any = {
-      ...(userId ? { userId } : {}),
-    };
-
+    const where: any = {};
+    if (userId) where.userId = userId;
     if (date) {
       const { reportDate } = getReportWindow(date);
-      reportWhere.reportDate = reportDate;
+      where.reportDate = reportDate;
     }
 
-    // Fetch submitted reports
     const reports = await (prisma as any).dailyReport.findMany({
-      where: reportWhere,
+      where,
       include: {
         user: { select: { id: true, name: true, role: true } },
-        entries: {
-          where: Object.keys(entryWhere).length > 0 ? entryWhere : undefined,
-          include: {
-            inquiry: {
-              select: {
-                id: true,
-                inquiry_number: true,
-                client_name: true,
-                stage: true,
-                address: true,
-              },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        },
+        otherWorkEntries: { orderBy: { startHour: 'asc' } },
       },
       orderBy: { submittedAt: 'desc' },
     });
 
-    // 🚨 FIX: Only calculate "Missing Users" if a specific date is selected
     let missingUsers: any[] = [];
     if (date) {
-      const salesUsers = await prisma.user.findMany({
+      const allUsers = await prisma.user.findMany({
         where: { role: { in: ['sales', 'accounting', 'admin_hr'] } },
-        select: { id: true, name: true, role: true, email: true },
+        select: { id: true, name: true, role: true },
       });
-      const targetUsers = userId ? salesUsers.filter((u: any) => u.id === userId) : salesUsers;
-      const submittedUserIds = new Set(reports.map((r: any) => r.userId));
-
-      missingUsers = targetUsers
-        .filter((u: any) => !submittedUserIds.has(u.id))
-        .map((u: any) => ({ ...u, status: 'MISSING' }));
+      const targeted = userId ? allUsers.filter((u: any) => u.id === userId) : allUsers;
+      const submittedSet = new Set(reports.map((r: any) => r.userId));
+      missingUsers = targeted.filter((u: any) => !submittedSet.has(u.id));
     }
 
-    res.json({ reports, missingUsers, reportDate: date ? getReportWindow(date).reportDate : null });
+    res.json({ reports, missingUsers });
   } catch (error) {
-    console.error('Admin reports error:', error);
+    console.error('admin reports error:', error);
     res.status(500).json({ error: 'Failed to fetch reports' });
   }
 });
 
-
 // ==========================================
-// ADMIN: Analytics Summary
-// GET /api/daily-reports/analytics
-// Query: ?date=YYYY-MM-DD
-// ==========================================
-app.get('/api/daily-reports/analytics', authenticateToken, async (req: any, res: Response) => {
-  try {
-    if (req.user.role !== 'super_admin' && req.user.role !== 'admin_hr') {
-      return res.status(403).json({ error: 'Access Denied' });
-    }
-
-    const { date } = req.query as any;
-    const { reportDate } = date ? getReportWindow(date) : getReportWindow();
-
-    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000); // Adjusted to 2 days
-
-    const [
-      totalEmployees,
-      submittedReports,
-      allEntries,
-      inactiveInquiries,
-      allInquiries,
-    ] = await Promise.all([
-      prisma.user.count({ where: { role: { in: ['sales', 'accounting', 'admin_hr'] } } }),
-      (prisma as any).dailyReport.count({ where: { reportDate, status: 'SUBMITTED' } }),
-      (prisma as any).dailyReportEntry.findMany({
-        where: { dailyReport: { reportDate } },
-        select: { status: true, inquiryId: true },
-      }),
-      // Inquiries with no report entry in last 2+ days
-      prisma.inquiry.findMany({
-        where: {
-          reportEntries: {
-            none: {
-              createdAt: { gte: twoDaysAgo },
-            },
-          },
-        },
-        select: {
-          id: true,
-          inquiry_number: true,
-          client_name: true,
-          stage: true,
-          sales_person: { select: { id: true, name: true } },
-          reportEntries: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: { createdAt: true, status: true },
-          },
-        },
-      }),
-      prisma.inquiry.count(),
-    ]);
-
-    // Status distribution
-    const statusMap: Record<string, number> = {};
-    for (const e of allEntries) {
-      statusMap[e.status] = (statusMap[e.status] || 0) + 1;
-    }
-
-    // Unique inquiries worked today
-    const uniqueInquiriesWorked = new Set(allEntries.map((e: any) => e.inquiryId)).size;
-
-    res.json({
-      totalEmployees,
-      reportsSubmitted: submittedReports,
-      reportsMissing: Math.max(0, totalEmployees - submittedReports),
-      totalInquiriesWorked: uniqueInquiriesWorked,
-      totalInquiries: allInquiries,
-      inactiveInquiries: inactiveInquiries.slice(0, 50), // Cap for performance
-      inactiveCount: inactiveInquiries.length,
-      statusDistribution: statusMap,
-      reportDate,
-    });
-  } catch (error) {
-    console.error('Analytics error:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics' });
-  }
-});
-
-
-// ==========================================
-// ADMIN: Inquiry Timeline
 // GET /api/daily-reports/inquiry/:inquiryId/timeline
+// Inquiry detail page timeline
 // ==========================================
 app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, async (req: any, res: Response) => {
   try {
-    if (req.user.role !== 'super_admin' && req.user.role !== 'admin_hr') {
-      return res.status(403).json({ error: 'Access Denied' });
-    }
-
     const entries = await (prisma as any).dailyReportEntry.findMany({
       where: { inquiryId: req.params.inquiryId },
       include: {
-        dailyReport: {
-          include: { user: { select: { id: true, name: true } } },
-        },
+        dailyReport: { include: { user: { select: { id: true, name: true } } } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -4391,10 +4364,7 @@ app.get('/api/daily-reports/inquiry/:inquiryId/timeline', authenticateToken, asy
     const inquiry = await prisma.inquiry.findUnique({
       where: { id: req.params.inquiryId },
       select: {
-        id: true,
-        inquiry_number: true,
-        client_name: true,
-        stage: true,
+        id: true, inquiry_number: true, client_name: true, stage: true,
         sales_person: { select: { id: true, name: true } },
       },
     });
@@ -4424,10 +4394,120 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
 
     const notifications: any[] = [];
 
-    // ── SUPER ADMIN / ADMIN HR ──────────────────────────────────────────────
+    // ── 1. Mentions (@me) ──
+    const newMentions = await (prisma as any).inquiryCommentMention.findMany({
+      where: { userId, isRead: false },
+      include: {
+        comment: {
+          include: {
+            user: { select: { name: true } },
+            inquiry: { select: { client_name: true } }
+          }
+        }
+      },
+      orderBy: { comment: { createdAt: 'desc' } },
+      take: 5
+    });
+
+    if (newMentions.length > 0) {
+      const names = [...new Set(newMentions.map((m: any) => m.comment.user.name))];
+      notifications.push({
+        id: 'new-mentions',
+        type: 'mention',
+        title: `New Mentions (${newMentions.length})`,
+        message: `${names.slice(0, 2).join(', ')}${names.length > 2 ? ' and others' : ''} tagged you in pipeline comments.`,
+        link: '/daily-report?tab=todo',
+        severity: 'info',
+        createdAt: newMentions[0].comment.createdAt,
+      });
+    }
+
+    // ── 2. Tasks Due Today & Overdue ──
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const taskCount = await (prisma as any).inquiryComment.count({
+      where: {
+        dueDate: { gte: today, lte: todayEnd },
+        OR: [{ userId }, { mentions: { some: { userId } } }]
+      }
+    });
+
+    const stageCount = await prisma.inquiry.count({
+      where: {
+        stageDueDate: { gte: today, lte: todayEnd },
+        OR: [
+          { sales_person_id: userId },
+          { sales_persons: { some: { id: userId } } }
+        ]
+      }
+    });
+
+    const totalDueToday = taskCount + stageCount;
+    if (totalDueToday > 0) {
+      notifications.push({
+        id: 'tasks-due-today',
+        type: 'todo_due',
+        title: `🔥 ${totalDueToday} Task${totalDueToday > 1 ? 's' : ''} Due Today`,
+        message: `You have pipeline follow-ups or tasks due today. Don't forget!`,
+        link: '/daily-report?tab=todo',
+        severity: 'warning',
+        createdAt: now.toISOString(),
+      });
+    }
+
+    const overdueTaskCount = await (prisma as any).inquiryComment.count({
+      where: {
+        dueDate: { lt: today },
+        OR: [{ userId }, { mentions: { some: { userId } } }]
+      }
+    });
+
+    const overdueStageCount = await prisma.inquiry.count({
+      where: {
+        stageDueDate: { lt: today },
+        OR: [
+          { sales_person_id: userId },
+          { sales_persons: { some: { id: userId } } }
+        ]
+      }
+    });
+
+    const totalOverdue = overdueTaskCount + overdueStageCount;
+    if (totalOverdue > 0) {
+      notifications.push({
+        id: 'tasks-overdue',
+        type: 'todo_overdue',
+        title: `⚠️ ${totalOverdue} Task${totalOverdue > 1 ? 's' : ''} Overdue`,
+        message: `You have overdue pipeline follow-ups! Please review them.`,
+        link: '/daily-report?tab=todo',
+        severity: 'error',
+        createdAt: now.toISOString(),
+      });
+    }
+
+    // ── 3. Work Log Reminder (All except Super Admin) ──
+    if (role !== 'super_admin' && now < todayAt6PM) {
+      const myReport = await (prisma as any).dailyReport.findUnique({
+        where: { userId_reportDate: { userId, reportDate } },
+      });
+      if (!myReport) {
+        notifications.push({
+          id: 'own-report-missing',
+          type: 'missing_report',
+          title: `📝 Daily Report Pending`,
+          message: `Today u forgot to fill the work u have done. Please update your daily report before 6 PM.`,
+          link: '/daily-report',
+          severity: 'error',
+          createdAt: now.toISOString(),
+        });
+      }
+    }
+
+    // ── 4. SUPER ADMIN / ADMIN HR ──────────────────────────────────────────────
     if (role === 'super_admin' || role === 'admin_hr') {
 
-      // 1. Missing daily reports — sales employees who haven't submitted today
+      // Missing daily reports — sales employees who haven't submitted today
       const salesUsers = await prisma.user.findMany({
         where: { role: { in: ['sales', 'accounting'] } },
         select: { id: true, name: true },
@@ -4443,17 +4523,17 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
 
       if (missingCount > 0 && now < todayAt6PM) {
         notifications.push({
-          id: 'missing-reports',
-          type: 'missing_report',
-          title: `${missingCount} Report${missingCount > 1 ? 's' : ''} Missing`,
-          message: `${missingNames.slice(0, 3).join(', ')}${missingNames.length > 3 ? ` +${missingNames.length - 3} more` : ''} ${missingCount === 1 ? 'has' : 'have'} not submitted today's report.`,
+          id: 'missing-reports-admin',
+          type: 'missing_report_admin',
+          title: `${missingCount} Teams Reports Missing`,
+          message: `${missingNames.slice(0, 3).join(', ')}${missingNames.length > 3 ? ` +${missingNames.length - 3} more` : ''} haven't submitted today.`,
           link: '/daily-reports/admin',
           severity: 'warning',
           createdAt: now.toISOString(),
         });
       }
 
-      // 2. Inactive inquiries (2+ days no update)
+      // Inactive inquiries (2+ days no update)
       const inactiveInquiries = await prisma.inquiry.findMany({
         where: {
           reportEntries: { none: { createdAt: { gte: twoDaysAgo } } },
@@ -4466,34 +4546,32 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
         notifications.push({
           id: 'inactive-inquiries',
           type: 'inactive_inquiry',
-          title: `${inactiveInquiries.length} Inactive Inquir${inactiveInquiries.length > 1 ? 'ies' : 'y'}`,
-          message: `No update for 2+ days: ${inactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}${inactiveInquiries.length > 2 ? ` +${inactiveInquiries.length - 2} more` : ''}.`,
+          title: `${inactiveInquiries.length} Inactive Inquiries`,
+          message: `No update for 2+ days: ${inactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}.`,
           link: '/daily-reports/admin?tab=inactive',
           severity: 'error',
           createdAt: now.toISOString(),
         });
       }
 
-      // 3. Pending leave requests
-      const pendingLeaves = await prisma.leaveRequest.count({
-        where: { status: 'PENDING' },
-      });
+      // Pending leave requests
+      const pendingLeaves = await prisma.leaveRequest.count({ where: { status: 'PENDING' } });
       if (pendingLeaves > 0) {
         notifications.push({
           id: 'pending-leaves',
           type: 'leave_request',
-          title: `${pendingLeaves} Pending Leave${pendingLeaves > 1 ? 's' : ''}`,
-          message: `${pendingLeaves} leave request${pendingLeaves > 1 ? 's' : ''} awaiting your approval.`,
+          title: `${pendingLeaves} Pending Leaves`,
+          message: `${pendingLeaves} leave request${pendingLeaves > 1 ? 's' : ''} awaiting approval.`,
           link: '/attendance',
           severity: 'info',
           createdAt: now.toISOString(),
         });
       }
 
-      // 4. Client birthdays today
+      // Client birthdays
       const allInquiries = await prisma.inquiry.findMany({
         where: { client_birth_date: { not: null } },
-        select: { id: true, client_name: true, client_birth_date: true, inquiry_number: true },
+        select: { id: true, client_name: true, client_birth_date: true },
       });
       const birthdaysToday = allInquiries.filter((inq: any) => {
         if (!inq.client_birth_date) return false;
@@ -4505,138 +4583,8 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
           id: 'birthdays-today',
           type: 'birthday',
           title: `🎂 ${birthdaysToday.length} Birthday${birthdaysToday.length > 1 ? 's' : ''} Today`,
-          message: birthdaysToday.slice(0, 3).map((i: any) => i.client_name).join(', ') + (birthdaysToday.length > 3 ? ` +${birthdaysToday.length - 3} more` : ''),
+          message: birthdaysToday.slice(0, 2).map((i: any) => i.client_name).join(', '),
           link: '/inquiries',
-          severity: 'info',
-          createdAt: now.toISOString(),
-        });
-      }
-
-      // 5. Client anniversaries today
-      const anniversariesToday = allInquiries.filter((inq: any) => {
-        if (!inq.client_anniversary_date) return false;
-        const ad = new Date(inq.client_anniversary_date);
-        return ad.getDate() === now.getDate() && ad.getMonth() === now.getMonth();
-      });
-      if (anniversariesToday.length > 0) {
-        notifications.push({
-          id: 'anniversaries-today',
-          type: 'anniversary',
-          title: `💍 ${anniversariesToday.length} Anniversary Today`,
-          message: anniversariesToday.slice(0, 3).map((i: any) => i.client_name).join(', ') + (anniversariesToday.length > 3 ? ` +${anniversariesToday.length - 3} more` : ''),
-          link: '/inquiries',
-          severity: 'info',
-          createdAt: now.toISOString(),
-        });
-      }
-    }
-
-    // ── SALES ───────────────────────────────────────────────────────────────
-    if (role === 'sales') {
-
-      // 1. Own daily report not submitted today (within window)
-      if (now < todayAt6PM) {
-        const myReport = await (prisma as any).dailyReport.findUnique({
-          where: { userId_reportDate: { userId, reportDate } },
-        });
-        if (!myReport) {
-          const msLeft = todayAt6PM.getTime() - now.getTime();
-          const hoursLeft = Math.floor(msLeft / (1000 * 60 * 60));
-          const minsLeft = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
-          notifications.push({
-            id: 'own-report-missing',
-            type: 'missing_report',
-            title: `🚨 Compulsory Daily Report Pending`,
-            message: `You MUST submit your report. ${hoursLeft}h ${minsLeft}m left before the window closes. If no work was done, submit an empty update.`,
-            link: '/daily-report',
-            severity: 'error',
-            createdAt: now.toISOString(),
-          });
-        }
-      }
-
-      // 2. Own inactive inquiries (2+ days)
-      const myInactiveInquiries = await prisma.inquiry.findMany({
-        where: {
-          OR: [
-            { sales_person_id: userId },
-            { sales_persons: { some: { id: userId } } },
-          ],
-          reportEntries: { none: { createdAt: { gte: twoDaysAgo } } },
-        },
-        select: { id: true, inquiry_number: true, client_name: true },
-      });
-      if (myInactiveInquiries.length > 0) {
-        notifications.push({
-          id: 'my-inactive-inquiries',
-          type: 'inactive_inquiry',
-          title: `${myInactiveInquiries.length} Inactive Inquir${myInactiveInquiries.length > 1 ? 'ies' : 'y'}`,
-          message: `Action needed! No update in 2+ days: ${myInactiveInquiries.slice(0, 2).map((i: any) => i.inquiry_number).join(', ')}.`,
-          link: '/daily-report',
-          severity: 'error',
-          createdAt: now.toISOString(),
-        });
-      }
-
-      // 3. Birthdays/anniversaries for own clients today
-      const myInquiries = await prisma.inquiry.findMany({
-        where: {
-          OR: [
-            { sales_person_id: userId },
-            { sales_persons: { some: { id: userId } } },
-          ],
-          client_birth_date: { not: null },
-        },
-        select: { id: true, client_name: true, client_birth_date: true, client_anniversary_date: true },
-      });
-      const myBirthdays = myInquiries.filter((inq: any) => {
-        if (!inq.client_birth_date) return false;
-        const bd = new Date(inq.client_birth_date);
-        return bd.getDate() === now.getDate() && bd.getMonth() === now.getMonth();
-      });
-      if (myBirthdays.length > 0) {
-        notifications.push({
-          id: 'my-client-birthdays',
-          type: 'birthday',
-          title: `🎂 Client Birthday Today`,
-          message: myBirthdays.map((i: any) => i.client_name).join(', '),
-          link: '/inquiries',
-          severity: 'info',
-          createdAt: now.toISOString(),
-        });
-      }
-    }
-
-    // ── ACCOUNTING ──────────────────────────────────────────────────────────
-    if (role === 'accounting') {
-
-      // 1. Pending selections
-      const pendingSelections = await prisma.selection.count({
-        where: { status: 'pending' },
-      });
-      if (pendingSelections > 0) {
-        notifications.push({
-          id: 'pending-selections',
-          type: 'pending_selection',
-          title: `${pendingSelections} Pending Selection${pendingSelections > 1 ? 's' : ''}`,
-          message: `${pendingSelections} selection${pendingSelections > 1 ? 's' : ''} waiting to be confirmed.`,
-          link: '/selections',
-          severity: 'warning',
-          createdAt: now.toISOString(),
-        });
-      }
-
-      // 2. Draft quotations
-      const draftQuotations = await prisma.quotation.count({
-        where: { status: 'draft' },
-      });
-      if (draftQuotations > 0) {
-        notifications.push({
-          id: 'draft-quotations',
-          type: 'draft_quotation',
-          title: `${draftQuotations} Draft Quotation${draftQuotations > 1 ? 's' : ''}`,
-          message: `${draftQuotations} quotation${draftQuotations > 1 ? 's are' : ' is'} still in draft.`,
-          link: '/quotations',
           severity: 'info',
           createdAt: now.toISOString(),
         });
@@ -4644,13 +4592,155 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
     }
 
     // Sort: errors first, then warnings, then info
-    const order = { error: 0, warning: 1, info: 2 };
-    notifications.sort((a, b) => (order[a.severity as keyof typeof order] ?? 3) - (order[b.severity as keyof typeof order] ?? 3));
+    const severityOrder = { error: 0, warning: 1, info: 2 };
+    notifications.sort((a, b) => (severityOrder[a.severity as keyof typeof severityOrder] ?? 3) - (severityOrder[b.severity as keyof typeof severityOrder] ?? 3));
 
     res.json({ notifications, count: notifications.length });
   } catch (error) {
     console.error('Notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// New Route: Mark all mentions as read
+app.put('/api/notifications/mentions/read-all', authenticateToken, async (req: any, res: Response) => {
+  try {
+    await (prisma as any).inquiryCommentMention.updateMany({
+      where: { userId: req.user.id, isRead: false },
+      data: { isRead: true }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update mentions' });
+  }
+});
+
+// ==========================================
+// GET /api/pipeline/todo-items
+// Returns inquiry comments with due dates (for To-Do list in reports)
+// ==========================================
+app.get('/api/pipeline/todo-items', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const isAdmin = req.user.role === 'super_admin' || req.user.role === 'admin_hr';
+    const userId = req.user.id;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    // ── Part 1: Comment-based todo items (existing) ──────────────────────────
+    const commentWhere: any = { dueDate: { not: null } };
+    if (!isAdmin) {
+      commentWhere.OR = [
+        { userId: req.user.id },
+        { mentions: { some: { userId: req.user.id } } }
+      ];
+    }
+
+    const comments = await (prisma as any).inquiryComment.findMany({
+      where: commentWhere,
+      include: {
+        user: { select: { id: true, name: true } },
+        mentions: { include: { user: { select: { id: true, name: true } } } },
+        inquiry: {
+          select: { id: true, inquiry_number: true, client_name: true, stage: true, stageDueDate: true }
+        }
+      },
+      orderBy: { dueDate: 'asc' }
+    });
+
+    // ── Part 2: Stage-based due dates ────────────────────────────────────────
+    const stageWhere: any = { stageDueDate: { not: null } };
+    if (!isAdmin) {
+      stageWhere.OR = [
+        { sales_person_id: userId },
+        { sales_persons: { some: { id: userId } } }
+      ];
+    }
+
+    const stageInquiries = await prisma.inquiry.findMany({
+      where: stageWhere,
+      include: {
+        sales_person: { select: { id: true, name: true } },
+        sales_persons: { select: { id: true, name: true } },
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+
+    // Classify helper
+    const classify = (dateVal: Date | string) => {
+      const d = new Date(dateVal);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      if (d < todayStart) return 'overdue';
+      if (d <= todayEnd) return 'today';
+      return 'upcoming';
+    };
+
+    // Shape comment todos
+    const commentTodos = comments.map((c: any) => ({
+      id: `comment-${c.id}`,
+      type: 'comment',
+      dueDate: c.dueDate,
+      dueDateStatus: classify(c.dueDate),
+      content: c.content,
+      user: c.user,
+      mentions: c.mentions,
+      inquiry: c.inquiry,
+      createdAt: c.createdAt,
+    }));
+
+    // Shape stage todos
+    const stageTodos = stageInquiries.map((inq: any) => ({
+      id: `stage-${inq.id}`,
+      type: 'stage',
+      dueDate: inq.stageDueDate,
+      dueDateStatus: classify(inq.stageDueDate),
+      content: `Stage: "${inq.stage}" — follow up required`,
+      user: inq.sales_person,
+      mentions: (inq.sales_persons || []).map((u: any) => ({ user: u })),
+      inquiry: {
+        id: inq.id,
+        inquiry_number: inq.inquiry_number,
+        client_name: inq.client_name,
+        stage: inq.stage,
+      },
+      createdAt: inq.updated_at || inq.created_at,
+    }));
+
+    // Merge & sort by newest added first (createdAt descending)
+    const all = [...commentTodos, ...stageTodos].sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+
+    res.json(all);
+  } catch (error) {
+    console.error('Todo items error:', error);
+    res.status(500).json({ error: 'Failed to fetch todo items' });
+  }
+});
+// ==========================================
+// PUT /api/pipeline/todo-items/:type/:id/complete
+// ==========================================
+app.put('/api/pipeline/todo-items/:type/:id/complete', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type, id } = req.params;
+    if (type === 'comment') {
+      const dbId = id.replace('comment-', '');
+      await (prisma as any).inquiryComment.update({
+        where: { id: dbId },
+        data: { dueDate: null }
+      });
+    } else if (type === 'stage') {
+      const dbId = id.replace('stage-', '');
+      await prisma.inquiry.update({
+        where: { id: dbId },
+        data: { stageDueDate: null }
+      });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Complete todo error:', error);
+    res.status(500).json({ error: 'Failed to complete task' });
   }
 });
 

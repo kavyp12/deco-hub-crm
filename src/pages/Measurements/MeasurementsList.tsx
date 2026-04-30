@@ -57,6 +57,8 @@ const MeasurementsList: React.FC = () => {
     navigate(`/measurements/new/${selectedInquiryId}`);
   };
 
+  
+
   return (
     <DashboardLayout>
       <div className="animate-fade-in max-w-6xl mx-auto">

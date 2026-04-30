@@ -1,13 +1,12 @@
 // [FILE: src/pages/reports/AdminDailyReports.tsx]
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { format, subDays, startOfWeek, endOfWeek } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import {
-  BarChart3, Users, AlertTriangle, CheckCircle2, XCircle,
-  Clock, ChevronDown, ChevronUp, Search, TrendingUp,
-  Activity, FileWarning, Eye, Filter, X, RefreshCw,
-  CalendarDays, User, Hash, Tag, ChevronRight,
-  FileText, FileOutput, Download, ChevronLeft
+  BarChart3, XCircle, ChevronDown, ChevronUp,
+  Search, RefreshCw, CalendarDays, User, Filter, X,
+  Download, FileOutput, ListTodo, IndianRupee,
+  CheckCircle2
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -16,214 +15,158 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent,
+  DropdownMenu, DropdownMenuContent, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import EmployeeActivityReport from './EmployeeActivityReport';
 import ReportCalendar from './ReportCalendar';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const STATUS_LABELS: Record<string, string> = {
-  contacted:         '📞 Contacted',
-  follow_up:         '🔄 Follow-up',
-  meeting_scheduled: '📅 Meeting Scheduled',
-  proposal_sent:     '📄 Proposal Sent',
-  negotiation:       '🤝 Negotiation',
-  closed_won:        '✅ Closed Won',
-  closed_lost:       '❌ Closed Lost',
-  no_response:       '🔇 No Response',
-  on_hold:           '⏸️ On Hold',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  contacted:         'bg-blue-100 text-blue-700 border-blue-200',
-  follow_up:         'bg-yellow-100 text-yellow-700 border-yellow-200',
-  meeting_scheduled: 'bg-purple-100 text-purple-700 border-purple-200',
-  proposal_sent:     'bg-indigo-100 text-indigo-700 border-indigo-200',
-  negotiation:       'bg-orange-100 text-orange-700 border-orange-200',
-  closed_won:        'bg-green-100 text-green-700 border-green-200',
-  closed_lost:       'bg-red-100 text-red-700 border-red-200',
-  no_response:       'bg-gray-100 text-gray-600 border-gray-200',
-  on_hold:           'bg-slate-100 text-slate-600 border-slate-200',
-};
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface ReportEntry {
+interface OtherWorkEntry {
   id: string;
-  inquiryId: string;
-  workDone: string;
-  status: string;
-  createdAt: string;
-  inquiry: { id: string; inquiry_number: string; client_name: string; stage: string; address?: string };
+  startHour: string;
+  endHour: string;
+  description: string;
 }
 
 interface Report {
   id: string;
   userId: string;
   reportDate: string;
-  status: string;
   submittedAt: string;
-  otherWork?: string; // <--- ADD THIS LINE
   user: { id: string; name: string; role: string };
-  entries: ReportEntry[];
+  otherWorkEntries: OtherWorkEntry[];
 }
 
 interface MissingUser { id: string; name: string; role: string; }
 
-interface Analytics {
-  totalEmployees: number;
-  reportsSubmitted: number;
-  reportsMissing: number;
-  totalInquiriesWorked: number;
-  totalInquiries: number;
-  inactiveInquiries: any[];
-  inactiveCount: number;
-  statusDistribution: Record<string, number>;
-  reportDate: string;
-}
-
-interface TimelineEntry {
-  id: string;
-  workDone: string;
-  status: string;
-  createdAt: string;
-  dailyReport: { reportDate: string; user: { id: string; name: string } };
-}
-
-// ─── Stat Card ───────────────────────────────────────────────────────────────
-
-const StatCard: React.FC<{
-  label: string; value: number | string; icon: React.ReactNode;
-  accent: string; sub?: string; onClick?: () => void;
-}> = ({ label, value, icon, accent, sub, onClick }) => (
-  <div
-    onClick={onClick}
-    className={cn(
-      'card-premium p-5 flex items-start gap-4 border-l-4 transition-all',
-      accent,
-      onClick && 'cursor-pointer hover:shadow-md hover:-translate-y-0.5'
-    )}
-  >
-    <div className="p-2.5 rounded-xl bg-muted/60 flex-shrink-0">{icon}</div>
-    <div>
-      <p className="text-2xl font-bold leading-none">{value}</p>
-      <p className="text-sm font-medium text-muted-foreground mt-1">{label}</p>
-      {sub && <p className="text-xs text-muted-foreground/60 mt-0.5">{sub}</p>}
-    </div>
-  </div>
-);
-
-// ─── Active Filter Pill ──────────────────────────────────────────────────────
+// ─── Filter Pill ──────────────────────────────────────────────────────────────
 
 const FilterPill: React.FC<{ label: string; onRemove: () => void }> = ({ label, onRemove }) => (
   <span className="inline-flex items-center gap-1 text-xs bg-accent/10 text-accent border border-accent/20 px-2.5 py-1 rounded-full font-medium">
     {label}
-    <button onClick={onRemove} className="hover:text-red-500 transition-colors"><X className="h-3 w-3" /></button>
+    <button onClick={onRemove} className="hover:text-red-500 transition-colors">
+      <X className="h-3 w-3" />
+    </button>
   </span>
 );
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminDailyReports: React.FC = () => {
   const { toast } = useToast();
 
-  // ── Filters ──────────────────────────────────────────────────────────────
-const [date, setDate]                 = useState(''); 
-  const [filterUser, setFilterUser]     = useState('__all__');
-  const [filterStatus, setFilterStatus] = useState('__all__');
-  const [filterInquiry, setFilterInquiry] = useState('__all__');
-  const [searchQuery, setSearchQuery]   = useState('');
-  const [showFilters, setShowFilters]   = useState(false);
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [date, setDate] = useState('');
+  const [filterUser, setFilterUser] = useState('__all__');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
 
-  // ── Data ─────────────────────────────────────────────────────────────────
-  const [reports, setReports]           = useState<Report[]>([]);
+  // ── Data ──────────────────────────────────────────────────────────────────
+  const [reports, setReports] = useState<Report[]>([]);
   const [missingUsers, setMissingUsers] = useState<MissingUser[]>([]);
-  const [analytics, setAnalytics]       = useState<Analytics | null>(null);
-  const [users, setUsers]               = useState<{ id: string; name: string; role: string }[]>([]);
-  const [allInquiries, setAllInquiries] = useState<{ id: string; inquiry_number: string; client_name: string }[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [expandedIds, setExpandedIds]   = useState<Set<string>>(new Set());
+  const [users, setUsers] = useState<{ id: string; name: string; role: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  // ── UI ───────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'reports' | 'analytics' | 'inactive' | 'calendar'>('reports');
+  // ── Tab ───────────────────────────────────────────────────────────────────
+  const [tab, setTab] = useState<'reports' | 'calendar' | 'todo' | 'payments'>('reports');
 
-  // ── Timeline ─────────────────────────────────────────────────────────────
-  const [timelineOpen, setTimelineOpen]         = useState(false);
-  const [timelineData, setTimelineData]         = useState<{ inquiry: any; timeline: TimelineEntry[] } | null>(null);
-  const [timelineLoading, setTimelineLoading]   = useState(false);
+  // Add state for payments
+  const [pendingPayments, setPendingPayments] = useState<any[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
 
-  // ── Entry detail dialog ───────────────────────────────────────────────────
-  const [entryDetailOpen, setEntryDetailOpen]   = useState(false);
-  const [selectedEntry, setSelectedEntry]       = useState<ReportEntry | null>(null);
-  const [selectedEntryUser, setSelectedEntryUser] = useState<string>('');
+  // ── PDF export ────────────────────────────────────────────────────────────
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [selectedEmpIds, setSelectedEmpIds] = useState<Set<string>>(new Set());
 
   // ─── Fetch ────────────────────────────────────────────────────────────────
+
+
+  const [todoItems, setTodoItems] = useState<any[]>([]);
+  const [todoLoading, setTodoLoading] = useState(false);
+
+  // Add these near your other useState declarations
+const [paymentSearch, setPaymentSearch] = useState('');
+const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'collected'>('all');
+
+const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
+
+  const fetchTodoItems = async () => {
+    setTodoLoading(true);
+    try {
+      const { data } = await api.get('/pipeline/todo-items');
+      setTodoItems(data);
+      // Mark mentions as read when checking the list
+      await api.put('/notifications/mentions/read-all');
+    } catch {
+      toast({ title: 'Error fetching pipeline tasks', variant: 'destructive' });
+    } finally {
+      setTodoLoading(false);
+    }
+  };
+
+  const fetchPendingPayments = async () => {
+    setPaymentsLoading(true);
+    try {
+      const { data } = await api.get('/payments/pending');
+      setPendingPayments(data);
+    } catch {
+      toast({ title: 'Error', description: 'Could not load payments', variant: 'destructive' });
+    } finally {
+      setPaymentsLoading(false);
+    }
+  };
+
+  const handleCompleteTodo = async (id: string, type: string) => {
+    try {
+      await api.put(`/pipeline/todo-items/${type}/${id}/complete`);
+      toast({ title: 'Task Completed', description: 'Task has been marked as complete.' });
+      fetchTodoItems(); // refresh
+    } catch {
+      toast({ title: 'Error', description: 'Failed to complete task', variant: 'destructive' });
+    }
+  };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
       const params: any = {};
-      
-      // 🚨 FIX: Only attach date to API call if one is selected
-      if (date) params.date = date; 
-      if (filterUser   !== '__all__') params.userId    = filterUser;
-      if (filterStatus !== '__all__') params.status    = filterStatus;
-      if (filterInquiry !== '__all__') params.inquiryId = filterInquiry;
-
-      const [reportsRes, analyticsRes] = await Promise.all([
-        api.get('/daily-reports/admin', { params }),
-        // Analytics always defaults to 'today' if viewing All Time so the charts don't break
-        api.get('/daily-reports/analytics', { params: { date: date || format(new Date(), 'yyyy-MM-dd') } }),
-      ]);
-      setReports(reportsRes.data.reports || []);
-      setMissingUsers(reportsRes.data.missingUsers || []);
-      const analyticsData = analyticsRes.data;
-      if (analyticsData && analyticsData.inactiveInquiries) {
-        analyticsData.inactiveInquiries = analyticsData.inactiveInquiries.filter((inq: any) => inq.stage !== 'Completed');
-        analyticsData.inactiveCount = analyticsData.inactiveInquiries.length;
-      }
-      setAnalytics(analyticsData);
+      if (date) params.date = date;
+      if (filterUser !== '__all__') params.userId = filterUser;
+      const res = await api.get('/daily-reports/admin', { params });
+      setReports(res.data.reports || []);
+      setMissingUsers(res.data.missingUsers || []);
     } catch {
       toast({ title: 'Error', description: 'Failed to load reports', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [date, filterUser, filterStatus, filterInquiry]);
+  }, [date, filterUser]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
-
   useEffect(() => {
-    api.get('/users/all').then(r => setUsers(r.data)).catch(() => {});
-    api.get('/inquiries').then(r => setAllInquiries(r.data)).catch(() => {});
+    api.get('/users/all').then(r => setUsers(r.data)).catch(() => { });
   }, []);
 
-  // ─── Timeline ─────────────────────────────────────────────────────────────
+  // ─── Filtering ────────────────────────────────────────────────────────────
 
-  const openTimeline = async (inquiryId: string) => {
-    setTimelineLoading(true);
-    setTimelineOpen(true);
-    setTimelineData(null);
-    try {
-      const { data } = await api.get(`/daily-reports/inquiry/${inquiryId}/timeline`);
-      setTimelineData(data);
-    } catch {
-      toast({ title: 'Error', description: 'Could not load timeline', variant: 'destructive' });
-    } finally {
-      setTimelineLoading(false);
-    }
-  };
+  const filteredReports = reports.filter(r => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      r.user.name.toLowerCase().includes(q) ||
+      r.otherWorkEntries?.some(e => e.description.toLowerCase().includes(q))
+    );
+  });
+
+  const activeFilterCount = [filterUser !== '__all__'].filter(Boolean).length;
+
+  // ─── Expand helpers ───────────────────────────────────────────────────────
 
   const toggleExpand = (id: string) =>
     setExpandedIds(prev => {
@@ -232,64 +175,29 @@ const [date, setDate]                 = useState('');
       return next;
     });
 
-  const expandAll  = () => setExpandedIds(new Set(reports.map(r => r.id)));
+  const expandAll = () => setExpandedIds(new Set(filteredReports.map(r => r.id)));
   const collapseAll = () => setExpandedIds(new Set());
 
-  // ─── Quick date shortcuts ──────────────────────────────────────────────────
+  // ─── PDF ─────────────────────────────────────────────────────────────────
 
-  const setQuickDate = (d: Date) => setDate(format(d, 'yyyy-MM-dd'));
-
-  // ─── Filtered reports ─────────────────────────────────────────────────────
-
-  const filteredReports = reports.filter(r => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      r.user.name.toLowerCase().includes(q) ||
-      (r.otherWork && r.otherWork.toLowerCase().includes(q)) || // <--- Allows searching Other Work text
-      r.entries.some(e =>
-        e.inquiry.client_name.toLowerCase().includes(q) ||
-        e.inquiry.inquiry_number.toLowerCase().includes(q) ||
-        e.workDone.toLowerCase().includes(q)
-      )
-    );
-  });
-
-  // Active filters count
-  const activeFilterCount = [
-    filterUser !== '__all__',
-    filterStatus !== '__all__',
-    filterInquiry !== '__all__',
-  ].filter(Boolean).length;
-
-  // Total entries across all reports
-  const totalEntries = filteredReports.reduce((sum, r) => sum + r.entries.length, 0);
-
-  // ─── PDF Generation Utilities ──────────────────────────────────────────────
-
-  const buildPDF = (reportsToExport: Report[], title: string, subtitle: string) => {
+  const buildPDF = (data: Report[], title: string, subtitle: string) => {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 14;
 
-    // ── Header band
     doc.setFillColor(24, 24, 27);
     doc.rect(0, 0, pageW, 28, 'F');
-
-    // Company / report title
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(15);
     doc.setFont('helvetica', 'bold');
-    doc.text('DECO HUB · Daily Reports', margin, 12);
-
+    doc.text('DECO HUB · Daily Work Logs', margin, 12);
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(200, 200, 200);
     doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy, hh:mm a')}`, margin, 19);
     doc.text(subtitle, pageW - margin, 19, { align: 'right' });
 
-    // ── Coloured title section
     doc.setFillColor(245, 245, 250);
     doc.rect(0, 28, pageW, 16, 'F');
     doc.setTextColor(24, 24, 27);
@@ -299,186 +207,110 @@ const [date, setDate]                 = useState('');
 
     let startY = 48;
 
-    if (reportsToExport.length === 0) {
+    if (data.length === 0) {
       doc.setFontSize(10);
       doc.setTextColor(150, 150, 150);
-      doc.text('No data available for the selected filters.', margin, startY + 10);
-      doc.save(`Daily_Report_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+      doc.text('No data available.', margin, startY + 10);
+      doc.save(`WorkLog_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
       return;
     }
 
-    reportsToExport.forEach((report, rIdx) => {
-      // ── Per-employee block header
+    data.forEach((report, rIdx) => {
       if (rIdx > 0) startY += 6;
-
-      // Employee name banner
       doc.setFillColor(63, 63, 70);
       doc.roundedRect(margin, startY, pageW - margin * 2, 10, 2, 2, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      doc.text(
-        `${report.user.name.toUpperCase()}  (${report.user.role.replace('_', ' ')})`,
-        margin + 4, startY + 7
-      );
+      doc.text(`${report.user.name.toUpperCase()}  (${report.user.role.replace('_', ' ')})`, margin + 4, startY + 7);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.text(
-        `Report Date: ${format(new Date(report.reportDate), 'dd MMM yyyy')}   Submitted: ${format(new Date(report.submittedAt), 'h:mm a')}`,
+        `Report Date: ${format(new Date(report.reportDate), 'dd MMM yyyy')}`,
         pageW - margin - 4, startY + 7, { align: 'right' }
       );
-
       startY += 13;
 
-      // ── Entries table
-      const tableRows: any[] = report.entries.map(entry => [
-        entry.inquiry.inquiry_number,
-        entry.inquiry.client_name,
-        entry.inquiry.stage || '—',
-        STATUS_LABELS[entry.status]?.replace(/^\S+\s/, '') || entry.status,
-        doc.splitTextToSize(entry.workDone, 72).join('\n'),
+      const rows = (report.otherWorkEntries || []).map(e => [
+        `${e.startHour} – ${e.endHour}`,
+        doc.splitTextToSize(e.description, 120).join('\n'),
       ]);
 
-      if (tableRows.length > 0) {
+      if (rows.length > 0) {
         autoTable(doc, {
           startY,
           margin: { left: margin, right: margin },
-          head: [['Inquiry No', 'Client', 'Stage', 'Status', 'Work Done']],
-          body: tableRows,
+          head: [['Time Block', 'Activity / Description']],
+          body: rows,
           styles: { fontSize: 7.5, cellPadding: 2.5, overflow: 'linebreak', valign: 'top' },
           headStyles: { fillColor: [99, 102, 241], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
           alternateRowStyles: { fillColor: [248, 248, 252] },
           columnStyles: {
-            0: { cellWidth: 22, fontStyle: 'bold' },
-            1: { cellWidth: 35 },
-            2: { cellWidth: 24 },
-            3: { cellWidth: 26 },
-            4: { cellWidth: 'auto' },
-          },
-          didParseCell: (data: any) => {
-            if (data.section === 'body' && data.column.index === 3) {
-              const statusVal = report.entries[data.row.index]?.status;
-              const colorMap: Record<string, [number,number,number]> = {
-                closed_won:  [22, 163, 74],
-                closed_lost: [220, 38, 38],
-                follow_up:   [202, 138, 4],
-                contacted:   [37, 99, 235],
-              };
-              if (colorMap[statusVal]) data.cell.styles.textColor = colorMap[statusVal];
-            }
+            0: { cellWidth: 32, fontStyle: 'bold' },
+            1: { cellWidth: 'auto' },
           },
         });
         startY = (doc as any).lastAutoTable.finalY + 4;
+      } else {
+        doc.setFontSize(8);
+        doc.setTextColor(150, 150, 150);
+        doc.text('No work entries recorded.', margin + 4, startY + 4);
+        startY += 10;
       }
 
-      // other work
-      if (report.otherWork?.trim()) {
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(100, 100, 120);
-        doc.text('OTHER WORK / GENERAL:', margin, startY + 4);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(50, 50, 60);
-        const lines = doc.splitTextToSize(report.otherWork, pageW - margin * 2 - 4);
-        doc.text(lines, margin + 4, startY + 9);
-        startY += 9 + lines.length * 4 + 2;
-      }
-
-      // Page overflow
-      if (startY > pageH - 20 && rIdx < reportsToExport.length - 1) {
+      if (startY > pageH - 20 && rIdx < data.length - 1) {
         doc.addPage();
         startY = 14;
       }
     });
 
-    // ── Footer on each page
     const pageCount = (doc.internal as any).getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFontSize(7);
       doc.setTextColor(180, 180, 180);
-      doc.setFont('helvetica', 'normal');
       doc.text(`Page ${i} of ${pageCount}  ·  Deco Hub CRM`, pageW / 2, pageH - 6, { align: 'center' });
     }
-
     return doc;
   };
 
-  const downloadAllTime = () => {
-    const doc = buildPDF(
-      filteredReports,
-      `All Employee Reports (${filteredReports.length} reports · ${totalEntries} entries)`,
-      'All Time'
-    );
-    doc?.save(`DailyReports_AllTime_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
-  };
-
   const downloadByDate = () => {
-    if (!date) {
-      toast({ title: 'Select a date first', description: 'Pick a date from the filter to download date-wise report', variant: 'destructive' });
-      return;
-    }
-    const doc = buildPDF(
+    if (!date) { toast({ title: 'Select a date first', variant: 'destructive' }); return; }
+    buildPDF(
       filteredReports,
-      `Reports for ${format(new Date(date), 'dd MMMM yyyy')} (${filteredReports.length} reports)`,
+      `Work Logs for ${format(new Date(date), 'dd MMMM yyyy')}`,
       `Date: ${format(new Date(date), 'dd MMM yyyy')}`
-    );
-    doc?.save(`DailyReports_${format(new Date(date), 'dd_MMM_yyyy')}.pdf`);
+    )?.save(`WorkLogs_${format(new Date(date), 'dd_MMM_yyyy')}.pdf`);
   };
 
-  const downloadIndividual = (report: Report) => {
-    const doc = buildPDF(
-      [report],
-      `${report.user.name} — ${format(new Date(report.reportDate), 'dd MMMM yyyy')}`,
-      `${report.user.role.replace('_', ' ')} · ${report.entries.length} entries`
-    );
-    doc?.save(`Report_${report.user.name.replace(/\s+/g, '_')}_${format(new Date(report.reportDate), 'dd_MMM_yyyy')}.pdf`);
+  const downloadCurrentView = () => {
+    buildPDF(filteredReports, `Work Logs — Current View (${filteredReports.length} reports)`, 'Filtered View')
+      ?.save(`WorkLogs_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
   };
 
-  // Fetch all-time data for a full all-employee download
-  const downloadAllEmployeesAllTime = async () => {
-    try {
-      toast({ title: 'Preparing PDF...', description: 'Fetching all records, please wait.' });
-      const res = await api.get('/daily-reports/admin', { params: {} });
-      const allReports: Report[] = res.data.reports || [];
-      const doc = buildPDF(
-        allReports,
-        `Complete Report — All Employees, All Time (${allReports.length} reports)`,
-        'All Employees · All Time'
-      );
-      doc?.save(`DailyReports_Complete_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
-    } catch {
-      toast({ title: 'Error', description: 'Failed to fetch all data', variant: 'destructive' });
-    }
+  const downloadSelected = () => {
+    if (selectedEmpIds.size === 0) { toast({ title: 'Select at least one employee', variant: 'destructive' }); return; }
+    const subset = filteredReports.filter(r => selectedEmpIds.has(r.userId));
+    buildPDF(subset, `Selected Employees (${subset.length})`, subset.map(r => r.user.name).join(', ').slice(0, 50))
+      ?.save(`WorkLogs_Selected_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
+    setDownloadMenuOpen(false);
   };
 
-  // Multi-select employee state for custom PDF download
-  const [selectedEmpIds, setSelectedEmpIds] = useState<Set<string>>(new Set());
-  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
-
-  const toggleEmpSelect = (id: string) => {
+  const toggleEmpSelect = (id: string) =>
     setSelectedEmpIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
 
-  const downloadSelected = () => {
-    if (selectedEmpIds.size === 0) {
-      toast({ title: 'No employee selected', description: 'Please check at least one employee', variant: 'destructive' });
-      return;
-    }
-    const subset = filteredReports.filter(r => selectedEmpIds.has(r.userId));
-    const names = subset.map(r => r.user.name).join(', ');
-    const doc = buildPDF(
-      subset,
-      `Selected Employees Report (${subset.length})`,
-      names.length > 40 ? names.slice(0, 40) + '…' : names
-    );
-    doc?.save(`DailyReports_Selected_${format(new Date(), 'dd_MMM_yyyy')}.pdf`);
-    setDownloadMenuOpen(false);
-  };
+  // ─── Calendar data ────────────────────────────────────────────────────────
+
+  const calendarReports = filteredReports.map(r => ({
+    ...r,
+    reportDate: r.reportDate,
+    otherWork: r.otherWorkEntries?.map(e => `${e.startHour}–${e.endHour}: ${e.description}`).join('\n') || '',
+    entries: [],
+  }));
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -493,16 +325,16 @@ const [date, setDate]                 = useState('');
               <BarChart3 className="h-6 w-6 text-accent" /> Daily Reports
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Track employee activity across all assigned inquiries
+              Employee work logs — what they did, hour by hour
             </p>
           </div>
           <div className="flex gap-2">
-            {/* ── Download Report Dropdown ── */}
-            <DropdownMenu open={downloadMenuOpen} onOpenChange={open => { setDownloadMenuOpen(open); }}>
+            {/* Download dropdown */}
+            <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-2">
                   <Download className="h-4 w-4" />
-                  Download Report
+                  Download
                   {selectedEmpIds.size > 0 && (
                     <span className="bg-accent text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center ml-0.5">
                       {selectedEmpIds.size}
@@ -511,121 +343,70 @@ const [date, setDate]                 = useState('');
                   <ChevronDown className="h-3.5 w-3.5 opacity-70" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className="w-72 p-0"
-                onCloseAutoFocus={e => e.preventDefault()}
-                onInteractOutside={() => setDownloadMenuOpen(false)}
-              >
-                {/* Header */}
+              <DropdownMenuContent align="end" className="w-72 p-0" onInteractOutside={() => setDownloadMenuOpen(false)}>
                 <div className="px-3 py-2.5 border-b border-border/50 flex items-center gap-2">
                   <FileOutput className="h-3.5 w-3.5 text-accent" />
                   <span className="text-xs font-semibold text-foreground">Export as PDF</span>
                 </div>
-
-                {/* Quick options */}
                 <div className="p-1.5 space-y-0.5">
-                  <button
-                    onClick={() => { downloadByDate(); setDownloadMenuOpen(false); }}
-                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
-                  >
+                  <button onClick={() => { downloadByDate(); setDownloadMenuOpen(false); }}
+                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left">
                     <span className="text-sm font-medium">📅 By Selected Date</span>
                     <span className="text-[11px] text-muted-foreground">
                       {date ? format(new Date(date), 'dd MMM yyyy') : 'Pick a date from filter first'}
                     </span>
                   </button>
-                  <button
-                    onClick={() => { downloadAllTime(); setDownloadMenuOpen(false); }}
-                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
-                  >
-                    <span className="text-sm font-medium">📋 Current View (All filters)</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {filteredReports.length} reports · {totalEntries} entries
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => { downloadAllEmployeesAllTime(); setDownloadMenuOpen(false); }}
-                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left"
-                  >
-                    <span className="text-sm font-medium">🗂️ All Time (Complete)</span>
-                    <span className="text-[11px] text-muted-foreground">All employees · full history</span>
+                  <button onClick={() => { downloadCurrentView(); setDownloadMenuOpen(false); }}
+                    className="w-full flex flex-col items-start gap-0 px-3 py-2 rounded-md hover:bg-muted/60 transition-colors text-left">
+                    <span className="text-sm font-medium">📋 Current View</span>
+                    <span className="text-[11px] text-muted-foreground">{filteredReports.length} reports visible</span>
                   </button>
                 </div>
 
-                {/* Multi-select employee section */}
                 {filteredReports.length > 0 && (
                   <>
                     <div className="border-t border-border/50 px-3 py-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Select Employees
-                      </span>
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Select Employees</span>
                       <div className="flex gap-2 text-[11px]">
-                        <button
-                          className="text-accent hover:underline font-medium"
-                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set(filteredReports.map(r => r.userId))); }}
-                        >All</button>
+                        <button className="text-accent hover:underline font-medium"
+                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set(filteredReports.map(r => r.userId))); }}>All</button>
                         <span className="text-muted-foreground">·</span>
-                        <button
-                          className="text-muted-foreground hover:underline"
-                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set()); }}
-                        >None</button>
+                        <button className="text-muted-foreground hover:underline"
+                          onClick={e => { e.stopPropagation(); setSelectedEmpIds(new Set()); }}>None</button>
                       </div>
                     </div>
-
-                    {/* Scrollable employee checkboxes */}
-                    <div className="max-h-52 overflow-y-auto px-1.5 space-y-0.5 pb-1">
+                    <div className="max-h-48 overflow-y-auto px-1.5 space-y-0.5 pb-1">
                       {filteredReports.map(report => {
                         const checked = selectedEmpIds.has(report.userId);
                         return (
-                          <label
-                            key={report.id}
-                            className={cn(
-                              'flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors select-none',
-                              checked ? 'bg-accent/10 border border-accent/25' : 'hover:bg-muted/60'
-                            )}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleEmpSelect(report.userId)}
-                              className="rounded accent-accent w-4 h-4 cursor-pointer shrink-0"
-                            />
+                          <label key={report.id}
+                            className={cn('flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors select-none',
+                              checked ? 'bg-accent/10 border border-accent/25' : 'hover:bg-muted/60')}
+                            onClick={e => e.stopPropagation()}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleEmpSelect(report.userId)}
+                              className="rounded accent-accent w-4 h-4 cursor-pointer shrink-0" />
                             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-accent to-accent/60 text-white text-xs font-bold flex items-center justify-center shrink-0">
                               {report.user.name.charAt(0).toUpperCase()}
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate leading-tight">{report.user.name}</p>
                               <p className="text-[10px] text-muted-foreground">
-                                {format(new Date(report.reportDate), 'dd MMM')} · {report.entries.length} {report.entries.length === 1 ? 'entry' : 'entries'}
+                                {format(new Date(report.reportDate), 'dd MMM')} · {report.otherWorkEntries?.length || 0} blocks
                               </p>
                             </div>
-                            <button
-                              onClick={e => { e.preventDefault(); e.stopPropagation(); downloadIndividual(report); setDownloadMenuOpen(false); }}
-                              className="shrink-0 text-[10px] text-muted-foreground hover:text-accent px-1.5 py-1 rounded border border-border/60 hover:border-accent/40 transition-colors font-medium"
-                              title="Download only this employee"
-                            >PDF</button>
                           </label>
                         );
                       })}
                     </div>
-
-                    {/* Download Selected action */}
                     <div className="border-t border-border/50 p-2">
-                      <button
-                        onClick={downloadSelected}
+                      <button onClick={downloadSelected}
                         disabled={selectedEmpIds.size === 0}
-                        className={cn(
-                          'w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all',
+                        className={cn('w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all',
                           selectedEmpIds.size > 0
-                            ? 'bg-accent text-white hover:bg-accent/90 shadow-sm cursor-pointer'
-                            : 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
-                        )}
-                      >
+                            ? 'bg-accent text-white hover:bg-accent/90 cursor-pointer'
+                            : 'bg-muted text-muted-foreground cursor-not-allowed opacity-60')}>
                         <Download className="h-4 w-4" />
-                        {selectedEmpIds.size > 0
-                          ? `Download Selected (${selectedEmpIds.size} employee${selectedEmpIds.size > 1 ? 's' : ''})`
-                          : 'Select employees above'}
+                        {selectedEmpIds.size > 0 ? `Download (${selectedEmpIds.size})` : 'Select employees above'}
                       </button>
                     </div>
                   </>
@@ -633,136 +414,75 @@ const [date, setDate]                 = useState('');
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-2 text-muted-foreground hover:text-foreground"
-              onClick={fetchAll}
-            >
+            <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground" onClick={fetchAll}>
               <RefreshCw className="h-4 w-4" /> Refresh
             </Button>
           </div>
         </div>
 
-        {/* ── Analytics Cards ── */}
-        {analytics && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-            <StatCard
-              label="Submitted"
-              value={analytics.reportsSubmitted}
-              icon={<CheckCircle2 className="h-5 w-5 text-green-600" />}
-              accent="border-l-green-400"
-              sub={`of ${analytics.totalEmployees} employees`}
-              onClick={() => setTab('reports')}
-            />
-            <StatCard
-              label="Missing Reports"
-              value={analytics.reportsMissing}
-              icon={<FileWarning className="h-5 w-5 text-red-500" />}
-              accent="border-l-red-400"
-              onClick={() => setTab('reports')}
-            />
-            <StatCard
-              label="Inquiries Worked"
-              value={analytics.totalInquiriesWorked}
-              icon={<Activity className="h-5 w-5 text-blue-500" />}
-              accent="border-l-blue-400"
-              sub="today"
-              onClick={() => setTab('analytics')}
-            />
-            <StatCard
-              label="Inactive Inquiries"
-              value={analytics.inactiveCount}
-              icon={<AlertTriangle className="h-5 w-5 text-orange-500" />}
-              accent="border-l-orange-400"
-              sub="3+ days no update"
-              onClick={() => setTab('inactive')}
-            />
-          </div>
-        )}
-
-        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
-          {(['reports', 'analytics', 'inactive'] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors relative',
-                tab === t ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              {t === 'reports' ? '📋 Reports' : t === 'analytics' ? '📊 Analytics' : '🚨 Inactive'}
-              {t === 'inactive' && analytics && analytics.inactiveCount > 0 && (
-                <span className="absolute -top-1 -right-1 text-xs bg-red-500 text-white w-4 h-4 rounded-full flex items-center justify-center font-bold">
-                  {analytics.inactiveCount > 9 ? '9+' : analytics.inactiveCount}
-                </span>
-              )}
+        {/* ── Tabs ── */}
+        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
+          {(['reports', 'calendar'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+                tab === t ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+              {t === 'reports' ? '📋 Reports' : '📅 Calendar'}
             </button>
           ))}
           <button
-            onClick={() => setTab('activity' as any)}
-            className={cn(
-              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              tab === ('activity' as any) ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            )}
+            onClick={() => { setTab('todo'); fetchTodoItems(); }}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2',
+              tab === 'todo' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
-            <Activity className="h-3.5 w-3.5 inline mr-1.5" />
-            Employee Activity
+            <ListTodo className="h-4 w-4" /> Pipeline Tasks
           </button>
           <button
-            onClick={() => setTab('calendar')}
-            className={cn(
-              'px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
-              tab === 'calendar' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            )}
+            onClick={() => { setTab('payments'); fetchPendingPayments(); }}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2',
+              tab === 'payments' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
-            📅 Calendar
+            💳 Payments
           </button>
         </div>
-        {/* ════════════════════════════════════════
-            TAB: REPORTS
-        ════════════════════════════════════════ */}
+
+        {/* ════════ TAB: REPORTS ════════ */}
         {tab === 'reports' && (
           <>
-            {/* ── Filter bar ── */}
+            {/* Filter bar */}
             <div className="card-premium p-4 mb-4 space-y-3">
-{/* Row 1: date + search + filter toggle */}
               <div className="flex flex-col sm:flex-row gap-3">
+                {/* Date picker */}
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                  <Input
-                    type="date"
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    className="h-9 text-sm w-40"
-                  />
+                  <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 text-sm w-40" />
                 </div>
 
-                {/* 🚨 FIX: Updated Quick date buttons with "All Time" */}
+                {/* Quick dates */}
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <button onClick={() => setDate('')} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === '' ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>All Time</button>
-                  <button onClick={() => setQuickDate(new Date())} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === format(new Date(), 'yyyy-MM-dd') ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>Today</button>
-                  <button onClick={() => setQuickDate(subDays(new Date(), 1))} className={cn("text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium", date === format(subDays(new Date(), 1), 'yyyy-MM-dd') ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground')}>Yesterday</button>
+                  {[
+                    { label: 'All Time', val: '' },
+                    { label: 'Today', val: format(new Date(), 'yyyy-MM-dd') },
+                    { label: 'Yesterday', val: format(subDays(new Date(), 1), 'yyyy-MM-dd') },
+                  ].map(q => (
+                    <button key={q.label} onClick={() => setDate(q.val)}
+                      className={cn('text-xs px-2.5 py-1.5 rounded-md transition-colors font-medium',
+                        date === q.val ? 'bg-accent text-white shadow-sm' : 'bg-muted/60 hover:bg-muted text-muted-foreground')}>
+                      {q.label}
+                    </button>
+                  ))}
                 </div>
 
+                {/* Search */}
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search employee, client, inquiry, work done..."
-                    className="pl-9 h-9 text-sm"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                  />
+                  <Input placeholder="Search employee, activity…" className="pl-9 h-9 text-sm"
+                    value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
                 </div>
 
-                <Button
-                  variant={showFilters ? 'default' : 'outline'}
-                  size="sm"
-                  className="gap-2 h-9 flex-shrink-0"
-                  onClick={() => setShowFilters(p => !p)}
-                >
-                  <Filter className="h-4 w-4" />
-                  Filters
+                {/* Filters toggle */}
+                <Button variant={showFilters ? 'default' : 'outline'} size="sm" className="gap-2 h-9 flex-shrink-0"
+                  onClick={() => setShowFilters(p => !p)}>
+                  <Filter className="h-4 w-4" /> Filters
                   {activeFilterCount > 0 && (
                     <span className="bg-accent text-accent-foreground text-xs w-4 h-4 rounded-full flex items-center justify-center font-bold">
                       {activeFilterCount}
@@ -771,62 +491,21 @@ const [date, setDate]                 = useState('');
                 </Button>
               </div>
 
-              {/* Row 2: Advanced filters (collapsible) */}
               {showFilters && (
-                <div className="pt-2 border-t border-border/50 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Employee filter */}
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                      <User className="h-3 w-3" /> Employee
-                    </label>
-                    <Select value={filterUser} onValueChange={setFilterUser}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All Employees</SelectItem>
-                        {users.map(u => (
-                          <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Status filter */}
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                      <Tag className="h-3 w-3" /> Inquiry Status
-                    </label>
-                    <Select value={filterStatus} onValueChange={setFilterStatus}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All Statuses</SelectItem>
-                        {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                          <SelectItem key={v} value={v}>{l}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Inquiry filter */}
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                      <Hash className="h-3 w-3" /> Specific Inquiry
-                    </label>
-                    <Select value={filterInquiry} onValueChange={setFilterInquiry}>
-                      <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent className="max-h-64">
-                        <SelectItem value="__all__">All Inquiries</SelectItem>
-                        {allInquiries.map(inq => (
-                          <SelectItem key={inq.id} value={inq.id}>
-                            {inq.inquiry_number} — {inq.client_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="pt-2 border-t border-border/50 max-w-xs">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1 mb-1">
+                    <User className="h-3 w-3" /> Employee
+                  </label>
+                  <Select value={filterUser} onValueChange={setFilterUser}>
+                    <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All Employees</SelectItem>
+                      {users.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
 
-              {/* Active filter pills */}
               {activeFilterCount > 0 && (
                 <div className="flex items-center gap-2 flex-wrap pt-1">
                   <span className="text-xs text-muted-foreground">Active filters:</span>
@@ -836,34 +515,20 @@ const [date, setDate]                 = useState('');
                       onRemove={() => setFilterUser('__all__')}
                     />
                   )}
-                  {filterStatus !== '__all__' && (
-                    <FilterPill
-                      label={`Status: ${STATUS_LABELS[filterStatus] || filterStatus}`}
-                      onRemove={() => setFilterStatus('__all__')}
-                    />
-                  )}
-                  {filterInquiry !== '__all__' && (
-                    <FilterPill
-                      label={`Inquiry: ${allInquiries.find(i => i.id === filterInquiry)?.inquiry_number || filterInquiry}`}
-                      onRemove={() => setFilterInquiry('__all__')}
-                    />
-                  )}
-                  <button
-                    onClick={() => { setFilterUser('__all__'); setFilterStatus('__all__'); setFilterInquiry('__all__'); }}
-                    className="text-xs text-muted-foreground hover:text-destructive transition-colors underline"
-                  >
+                  <button onClick={() => setFilterUser('__all__')}
+                    className="text-xs text-muted-foreground hover:text-destructive transition-colors underline">
                     Clear all
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Missing reports banner */}
+            {/* Missing users banner */}
             {missingUsers.length > 0 && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
                 <p className="font-semibold text-red-700 flex items-center gap-2 mb-2 text-sm">
                   <XCircle className="h-4 w-4" />
-                  ❗ {missingUsers.length} {missingUsers.length === 1 ? 'employee has' : 'employees have'} not submitted a report
+                  {missingUsers.length} {missingUsers.length === 1 ? 'employee has' : 'employees have'} not submitted a report
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {missingUsers.map(u => (
@@ -875,75 +540,68 @@ const [date, setDate]                 = useState('');
               </div>
             )}
 
-            {/* Results summary + expand controls */}
+            {/* Summary + expand controls */}
             {!loading && filteredReports.length > 0 && (
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm text-muted-foreground">
-                  <span className="font-semibold text-foreground">{filteredReports.length}</span> report{filteredReports.length !== 1 ? 's' : ''} · {' '}
-                  <span className="font-semibold text-foreground">{totalEntries}</span> total entries
+                  <span className="font-semibold text-foreground">{filteredReports.length}</span> report{filteredReports.length !== 1 ? 's' : ''}
                 </p>
                 <div className="flex items-center gap-2">
-                  <button onClick={expandAll}  className="text-xs text-accent hover:underline">Expand all</button>
+                  <button onClick={expandAll} className="text-xs text-accent hover:underline">Expand all</button>
                   <span className="text-muted-foreground text-xs">·</span>
                   <button onClick={collapseAll} className="text-xs text-accent hover:underline">Collapse all</button>
                 </div>
               </div>
             )}
 
+            {/* Reports list */}
             {loading ? (
-              <div className="text-center py-20 text-muted-foreground text-sm">Loading reports...</div>
+              <div className="text-center py-20 text-muted-foreground text-sm">Loading reports…</div>
             ) : filteredReports.length === 0 ? (
               <div className="text-center py-20 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
                 <BarChart3 className="h-10 w-10 mx-auto mb-3 opacity-20" />
                 <p className="font-medium">No reports found</p>
-                <p className="text-sm mt-1 opacity-70">Try a different date or clear the filters</p>
+                <p className="text-sm mt-1 opacity-70">Try a different date or clear filters</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {filteredReports.map(report => {
                   const isExpanded = expandedIds.has(report.id);
-                  const submittedTime = format(new Date(report.submittedAt), 'h:mm a');
                   return (
                     <div key={report.id} className="card-premium overflow-hidden">
-
-                      {/* ── Report Header Row ── */}
+                      {/* Report header */}
                       <div
                         className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-muted/20 transition-colors"
                         onClick={() => toggleExpand(report.id)}
                       >
-                        {/* Avatar */}
                         <div className="flex-shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-accent to-accent/60 text-white text-sm font-bold flex items-center justify-center shadow-sm">
                           {report.user.name.charAt(0).toUpperCase()}
                         </div>
 
-                        {/* Name + role */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-semibold text-sm">{report.user.name}</p>
                             <span className="text-xs text-muted-foreground capitalize bg-muted/60 px-2 py-0.5 rounded-full">
                               {report.user.role.replace('_', ' ')}
                             </span>
-                            
-                            {/* 🚨 FIX: Added Date Badge so Admin knows when this report was from */}
                             <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md font-medium flex items-center gap-1">
                               <CalendarDays className="h-3 w-3" />
                               {format(new Date(report.reportDate), 'dd MMM yyyy')}
                             </span>
                           </div>
-                          
-                          {/* Entry previews */}
-                          {!isExpanded && report.entries.length > 0 && (
+                          {!isExpanded && report.otherWorkEntries?.length > 0 && (
                             <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                              {report.entries.map(e => e.inquiry.inquiry_number).join(' · ')}
+                              {report.otherWorkEntries.map(e => `${e.startHour}–${e.endHour}`).join(' · ')}
                             </p>
                           )}
                         </div>
 
-                        {/* Right meta */}
                         <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
-                          <span className="text-xs text-muted-foreground">{submittedTime}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {format(new Date(report.submittedAt), 'h:mm a')}
+                          </span>
                           <span className="text-xs bg-muted/60 text-muted-foreground px-2.5 py-1 rounded-full font-medium">
-                            {report.entries.length} {report.entries.length === 1 ? 'entry' : 'entries'}
+                            {report.otherWorkEntries?.length || 0} blocks
                           </span>
                           <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-full font-medium">
                             ✅ Submitted
@@ -956,84 +614,33 @@ const [date, setDate]                 = useState('');
                         }
                       </div>
 
-                      {/* ── Expanded Entries ── */}
+                      {/* Expanded entries */}
                       {isExpanded && (
                         <div className="border-t border-border/50">
-                          {/* Table header */}
-                          <div className="hidden sm:grid grid-cols-[180px_1fr_160px_100px] gap-4 px-5 py-2.5 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            <span>Inquiry</span>
-                            <span>Work Done</span>
-                            <span>Status</span>
-                            <span className="text-right">Actions</span>
-                          </div>
-
-                          <div className="divide-y divide-border/30">
-                            {report.entries.map(entry => (
-                              <div
-                                key={entry.id}
-                                className="flex flex-col gap-3 sm:grid sm:grid-cols-[180px_1fr_160px_100px] sm:gap-4 sm:items-start px-5 py-4 hover:bg-muted/10 transition-colors"
-                              >
-                                {/* Inquiry */}
-                                <div className="min-w-0">
-                                  <p className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded inline-block mb-1">
-                                    {entry.inquiry.inquiry_number}
-                                  </p>
-                                  <p className="text-sm font-semibold leading-tight truncate">{entry.inquiry.client_name}</p>
-                                  <p className="text-xs text-muted-foreground mt-0.5">{entry.inquiry.stage}</p>
-                                </div>
-
-                                {/* Work done */}
-                                <div>
-                                  <p className="text-sm text-foreground/80 bg-muted/30 rounded-lg px-3 py-2.5 whitespace-pre-wrap leading-relaxed line-clamp-4">
-                                    {entry.workDone}
-                                  </p>
-                                </div>
-
-                                {/* Status */}
-                                <div className="flex items-start pt-0.5">
-                                  <span className={cn(
-                                    'text-xs px-2.5 py-1 rounded-full border font-medium',
-                                    STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border'
-                                  )}>
-                                    {STATUS_LABELS[entry.status] || entry.status}
-                                  </span>
-                                </div>
-
-                                {/* Actions */}
-                                <div className="flex items-center sm:justify-end gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-accent"
-                                    onClick={() => {
-                                      setSelectedEntry(entry);
-                                      setSelectedEntryUser(report.user.name);
-                                      setEntryDetailOpen(true);
-                                    }}
-                                  >
-                                    <Eye className="h-3.5 w-3.5" /> Detail
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-accent"
-                                    onClick={() => openTimeline(entry.inquiryId)}
-                                  >
-                                    <Clock className="h-3.5 w-3.5" /> History
-                                  </Button>
-                                </div>
+                          {report.otherWorkEntries?.length > 0 ? (
+                            <>
+                              <div className="hidden sm:grid grid-cols-[120px_1fr] gap-4 px-5 py-2.5 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                <span>Time Block</span>
+                                <span>Activity</span>
                               </div>
-                            ))}
-                          </div>
-                          {/* NEW: Display Other Work if it exists */}
-                          {report.otherWork && report.otherWork.trim().length > 0 && (
-                            <div className="bg-muted/10 px-5 py-4 border-t border-border/50">
-                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                                <FileText className="h-3.5 w-3.5" /> Other Work / General Activities
-                              </p>
-                              <div className="text-sm text-foreground/80 bg-background border border-border/50 rounded-lg px-4 py-3 whitespace-pre-wrap leading-relaxed shadow-sm">
-                                {report.otherWork}
+                              <div className="divide-y divide-border/30">
+                                {report.otherWorkEntries.map((entry, i) => (
+                                  <div key={entry.id || i} className="flex gap-4 px-5 py-4 hover:bg-muted/10 transition-colors">
+                                    <div className="flex-shrink-0 w-24 text-center">
+                                      <span className="text-xs font-bold text-accent block">{entry.startHour}</span>
+                                      <div className="my-1 h-5 w-px bg-border mx-auto" />
+                                      <span className="text-xs font-bold text-muted-foreground block">{entry.endHour}</span>
+                                    </div>
+                                    <p className="flex-1 text-sm text-foreground/80 bg-muted/30 rounded-lg px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
+                                      {entry.description}
+                                    </p>
+                                  </div>
+                                ))}
                               </div>
+                            </>
+                          ) : (
+                            <div className="p-6 text-center text-sm text-muted-foreground italic">
+                              No work entries recorded for this report.
                             </div>
                           )}
                         </div>
@@ -1046,367 +653,244 @@ const [date, setDate]                 = useState('');
           </>
         )}
 
-        {/* ════════════════════════════════════════
-            TAB: ANALYTICS
-        ════════════════════════════════════════ */}
-        {tab === 'analytics' && analytics && (
-          <div className="space-y-5">
-
-            {/* Date selector */}
-            <div className="flex items-center gap-3">
-              <CalendarDays className="h-4 w-4 text-muted-foreground" />
-              <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 text-sm w-44" />
-              <div className="flex gap-1.5">
-                <button onClick={() => setQuickDate(new Date())} className="text-xs px-2.5 py-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground font-medium">Today</button>
-                <button onClick={() => setQuickDate(subDays(new Date(), 1))} className="text-xs px-2.5 py-1.5 rounded-md bg-muted/60 hover:bg-muted text-muted-foreground font-medium">Yesterday</button>
-              </div>
-            </div>
-
-            {/* Submission rate */}
-            <div className="card-premium p-6">
-              <h3 className="font-semibold mb-1 text-sm flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-accent" /> Report Submission Rate
-              </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                {/* 🚨 FIX: Safe date formatting. If "All Time" is selected, it falls back to showing Today's analytics date */}
-                {date 
-                  ? format(new Date(date), 'EEEE, dd MMM yyyy') 
-                  : format(new Date(analytics.reportDate), 'EEEE, dd MMM yyyy') + ' (Showing Today)'
-                }
-              </p>
-              <div className="flex items-center gap-4 mb-3">
-                <div className="flex-1 bg-muted/40 rounded-full h-4 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full transition-all duration-700"
-                    style={{ width: analytics.totalEmployees ? `${(analytics.reportsSubmitted / analytics.totalEmployees) * 100}%` : '0%' }}
-                  />
-                </div>
-                <span className="text-lg font-bold text-green-600 w-14 text-right">
-                  {analytics.totalEmployees ? Math.round((analytics.reportsSubmitted / analytics.totalEmployees) * 100) : 0}%
-                </span>
-              </div>
-              <div className="flex items-center gap-4 text-sm">
-                <span className="flex items-center gap-1.5 text-green-600"><span className="w-2 h-2 rounded-full bg-green-500" />{analytics.reportsSubmitted} submitted</span>
-                <span className="flex items-center gap-1.5 text-red-500"><span className="w-2 h-2 rounded-full bg-red-400" />{analytics.reportsMissing} missing</span>
-                <span className="flex items-center gap-1.5 text-muted-foreground"><span className="w-2 h-2 rounded-full bg-muted" />{analytics.totalEmployees} total</span>
-              </div>
-            </div>
-
-            {/* Status distribution */}
-            <div className="card-premium p-6">
-              <h3 className="font-semibold mb-4 text-sm flex items-center gap-2">
-                <Activity className="h-4 w-4 text-accent" /> Inquiry Status Breakdown
-              </h3>
-              {Object.keys(analytics.statusDistribution).length === 0 ? (
-                <p className="text-sm text-muted-foreground italic">No entries recorded for this day.</p>
-              ) : (
-                <div className="space-y-3">
-                  {Object.entries(analytics.statusDistribution)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([status, count]) => {
-                      const total = Object.values(analytics.statusDistribution).reduce((a, b) => a + b, 0);
-                      const pct = total ? Math.round((count / total) * 100) : 0;
-                      return (
-                        <div key={status} className="flex items-center gap-3">
-                          <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium w-48 text-center flex-shrink-0', STATUS_COLORS[status] || 'bg-muted text-muted-foreground border-border')}>
-                            {STATUS_LABELS[status] || status}
-                          </span>
-                          <div className="flex-1 bg-muted/40 rounded-full h-2 overflow-hidden">
-                            <div className="h-full bg-accent rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className="text-sm font-bold w-6 text-right">{count}</span>
-                          <span className="text-xs text-muted-foreground w-8 text-right">{pct}%</span>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-
-            {/* Employee detail */}
-            <div className="card-premium p-6">
-              <h3 className="font-semibold mb-4 text-sm flex items-center gap-2">
-                <Users className="h-4 w-4 text-accent" /> Employee Performance
-              </h3>
-              <div className="divide-y divide-border/40">
-                {reports.map(r => (
-                  <div key={r.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">
-                        {r.user.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{r.user.name}</p>
-                        <p className="text-xs text-muted-foreground capitalize">{r.user.role.replace('_', ' ')}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <p className="text-sm font-bold">{r.entries.length}</p>
-                        <p className="text-xs text-muted-foreground">entries</p>
-                      </div>
-                      <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-full font-medium">✅</span>
-                      <button
-                        onClick={() => { setFilterUser(r.userId); setTab('reports'); setShowFilters(true); }}
-                        className="text-xs text-accent hover:underline flex items-center gap-0.5"
-                      >
-                        View <ChevronRight className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {missingUsers.map(u => (
-                  <div key={u.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-red-100 text-red-500 text-xs font-bold flex items-center justify-center">
-                        {u.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{u.name}</p>
-                        <p className="text-xs text-muted-foreground capitalize">{u.role.replace('_', ' ')}</p>
-                      </div>
-                    </div>
-                    <span className="text-xs bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-full font-medium">❗ Missing</span>
-                  </div>
-                ))}
-                {reports.length === 0 && missingUsers.length === 0 && (
-                  <p className="text-sm text-muted-foreground italic text-center py-4">No data for this date.</p>
-                )}
-              </div>
-            </div>
-          </div>
+        {/* ════════ TAB: CALENDAR ════════ */}
+        {tab === 'calendar' && (
+          <ReportCalendar
+            reports={calendarReports}
+            loading={loading}
+            showUserName
+          />
         )}
 
-        {/* ════════════════════════════════════════
-            TAB: INACTIVE
-        ════════════════════════════════════════ */}
-        {tab === 'inactive' && analytics && (
-          <div>
-            {/* Date selector */}
-            <div className="flex items-center gap-3 mb-5">
-              <CalendarDays className="h-4 w-4 text-muted-foreground" />
-              <Input type="date" value={date} onChange={e => setDate(e.target.value)} className="h-9 text-sm w-44" />
+        {tab === 'todo' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <ListTodo className="h-4 w-4 text-accent" /> All Stage & Comment Due Dates
+              </h2>
+              <div className="flex gap-2 items-center">
+                <Select value={todoFilter} onValueChange={(v: any) => setTodoFilter(v)}>
+                  <SelectTrigger className="h-8 text-xs w-32 bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Tasks</SelectItem>
+                    <SelectItem value="overdue">Overdue Only</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="sm" variant="outline" onClick={fetchTodoItems} className="h-7 text-xs gap-1">
+                  <RefreshCw className="h-3 w-3" /> Refresh
+                </Button>
+              </div>
             </div>
 
-            {analytics.inactiveInquiries.length === 0 ? (
-              <div className="text-center py-20 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
-                <CheckCircle2 className="h-10 w-10 mx-auto mb-3 opacity-25" />
-                <p className="font-medium">All inquiries are active!</p>
-                <p className="text-sm mt-1 opacity-70">Every inquiry has been updated within the last 3 days</p>
-              </div>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground mb-3">
-                  🚨 <strong>{analytics.inactiveCount}</strong> {analytics.inactiveCount === 1 ? 'inquiry has' : 'inquiries have'} had no update for 3+ consecutive days
-                </p>
-               <div className="space-y-3">
-                  {analytics.inactiveInquiries.map((inq: any) => {
-                    const lastEntry = inq.reportEntries?.[0];
-                    const daysSince = lastEntry
-                      ? Math.floor((Date.now() - new Date(lastEntry.createdAt).getTime()) / (1000 * 60 * 60 * 24))
-                      : null;
-                      
-                    const severity = daysSince === null ? 'extreme' : daysSince >= 3 ? 'high' : daysSince === 2 ? 'medium' : 'low';
-                    
-                    return (
-                      <div key={inq.id} className={cn(
-                        'card-premium p-5 border-l-4',
-                        severity === 'extreme' ? 'border-l-gray-400' :
-                        severity === 'high'    ? 'border-l-red-500' :
-                        severity === 'medium'  ? 'border-l-yellow-400' : 'border-l-blue-400'
+            {todoLoading ? (
+              <div className="text-center py-16 text-sm text-muted-foreground">Loading...</div>
+            ) : todoItems.length === 0 ? (
+              <div className="text-center py-16 text-muted-foreground">No pipeline tasks found.</div>
+            ) : (() => {
+              let filteredTodos = todoItems;
+              if (todoFilter === 'overdue') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus === 'overdue');
+              }
+              return (
+              <div className="space-y-3">
+                {filteredTodos.map((item: any) => (
+                  <div key={item.id} className={cn(
+                    'rounded-xl border p-4 space-y-2',
+                    item.dueDateStatus === 'overdue' && 'border-red-200 bg-red-50/50',
+                    item.dueDateStatus === 'today' && 'border-orange-200 bg-orange-50/50',
+                    item.dueDateStatus === 'upcoming' && 'border-blue-100 bg-blue-50/30',
+                  )}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">{item.inquiry?.client_name}</p>
+                        <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">
+                          {item.inquiry?.inquiry_number}
+                        </span>
+                        <span className={cn(
+                          'ml-2 text-[10px] px-2 py-0.5 rounded-full border font-medium',
+                          item.type === 'stage' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-600 border-gray-200'
+                        )}>
+                          {item.type === 'stage' ? '📌 Stage Task' : '💬 Comment Task'}
+                        </span>
+                      </div>
+                      <div className={cn(
+                        'shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
+                        item.dueDateStatus === 'overdue' && 'bg-red-100 text-red-600 border-red-200',
+                        item.dueDateStatus === 'today' && 'bg-orange-100 text-orange-600 border-orange-200',
+                        item.dueDateStatus === 'upcoming' && 'bg-blue-100 text-blue-600 border-blue-200',
                       )}>
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-2 flex-wrap">
-                              <span className="text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded">{inq.inquiry_number}</span>
-                              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">{inq.stage}</span>
-                              
-                              {severity === 'high' && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">🔴 Critical (3+ days)</span>}
-                              {severity === 'medium' && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold">🟡 Warning (2 days)</span>}
-                            </div>
-                            <p className="font-semibold">{inq.client_name}</p>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              Assigned: <span className="font-medium text-foreground">{inq.sales_person?.name || 'N/A'}</span>
-                            </p>
-                            {lastEntry?.status && (
-                              <div className="mt-2">
-                                <span className={cn('text-xs px-2 py-0.5 rounded-full border font-medium', STATUS_COLORS[lastEntry.status] || 'bg-muted text-muted-foreground border-border')}>
-                                  Last: {STATUS_LABELS[lastEntry.status] || lastEntry.status}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex sm:flex-col items-center sm:items-end gap-3 sm:gap-1 flex-shrink-0">
-                            <div className="text-right">
-                              <p className={cn('text-base font-bold', daysSince === null ? 'text-muted-foreground' : daysSince >= 3 ? 'text-red-600' : daysSince === 2 ? 'text-yellow-600' : 'text-blue-600')}>
-                                {daysSince !== null ? `${daysSince} day${daysSince !== 1 ? 's' : ''} ago` : 'Never updated'}
-                              </p>
-                              {lastEntry && (
-                                <p className="text-xs text-muted-foreground">{format(new Date(lastEntry.createdAt), 'dd MMM yyyy')}</p>
-                              )}
-                            </div>
-                            <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5 mt-1" onClick={() => openTimeline(inq.id)}>
-                              <Clock className="h-3 w-3" /> Full History
-                            </Button>
-                          </div>
-                        </div>
+                        <CalendarDays className="h-3 w-3 inline mr-1" />
+                        {format(new Date(item.dueDate), 'dd MMM yyyy')}
+                        {item.dueDateStatus === 'overdue' && ' · Overdue'}
+                        {item.dueDateStatus === 'today' && ' · Today'}
                       </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                    </div>
+                    <p className="text-sm text-foreground/80 bg-white/60 rounded px-3 py-2 border border-border/40">
+                      {item.content}
+                    </p>
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                        <span>Assigned to: <strong>{item.user?.name}</strong></span>
+                        <span className="bg-muted px-2 py-0.5 rounded-full">{item.inquiry?.stage}</span>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-7 text-xs gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
+                        onClick={() => handleCompleteTodo(item.id, item.type)}
+                      >
+                        <CheckCircle2 className="h-3 w-3" /> Complete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )})()}
           </div>
         )}
 
-        {/* ════════════════════════════════════════
-            TAB: EMPLOYEE ACTIVITY
-        ════════════════════════════════════════ */}
-        {tab === ('activity' as any) && (
-          <EmployeeActivityReport />
-        )}
+        {/* ══════════ TAB: PAYMENTS ══════════ */}
+        {tab === 'payments' && (() => {
+  // 1. Filter the payments based on search and status
+  const filteredPayments = pendingPayments.filter((payment: any) => {
+    const matchesSearch = 
+      payment.inquiry?.client_name?.toLowerCase().includes(paymentSearch.toLowerCase()) ||
+      payment.inquiry?.inquiry_number?.toLowerCase().includes(paymentSearch.toLowerCase());
+    const matchesStatus = paymentFilter === 'all' || payment.status === paymentFilter;
+    return matchesSearch && matchesStatus;
+  });
 
-        {/* ════════════════════════════════════════
-            TAB: CALENDAR (Admin)
-        ════════════════════════════════════════ */}
-        {tab === 'calendar' && (() => {
-          // Flatten all reports into one consolidated grouped-by-date structure
-          // so the admin see a unified view of ALL employees on the calendar
-          const dateMap = new Map<string, any>();
-          reports.forEach((report: Report) => {
-            const key = format(new Date(report.reportDate), 'yyyy-MM-dd');
-            if (!dateMap.has(key)) {
-              dateMap.set(key, {
-                id: key,
-                reportDate: key,
-                entries: [],
-                otherWork: '',
-                users: [],
-              });
-            }
-            const slot = dateMap.get(key);
-            // Attach entries with user name injected
-            report.entries.forEach(e => {
-              slot.entries.push({ ...e, _userName: report.user.name });
-            });
-            if (report.otherWork?.trim()) {
-              slot.otherWork += (slot.otherWork ? '\n\n' : '') + `[${report.user.name}]: ${report.otherWork}`;
-            }
-            slot.users.push(report.user.name);
-          });
-          const calReports = Array.from(dateMap.values()).sort(
-            (a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime()
-          );
-          return (
-            <div>
-              <p className="text-xs text-muted-foreground mb-3">
-                Showing activity from <strong>all employees</strong>.
-                {date ? ` Filtered to ${format(new Date(date), 'dd MMM yyyy')}.` : ' Showing all available data.'}
-                {' '}Click any highlighted date to see details.
-              </p>
-              <ReportCalendar reports={calReports} loading={loading} showUserName />
-            </div>
-          );
-        })()}
+  return (
+    <div className="animate-fade-in space-y-5">
+      {/* HEADER & CONTROLS */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <IndianRupee className="h-4 w-4 text-accent" /> Payments Ledger
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Track and manage all scheduled and collected payments</p>
+        </div>
+        <Button size="sm" variant="outline" onClick={fetchPendingPayments} className="h-8 text-xs gap-1">
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </Button>
       </div>
 
-      {/* ── Entry Detail Dialog ── */}
-      <Dialog open={entryDetailOpen} onOpenChange={setEntryDetailOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base flex items-center gap-2">
-              <Eye className="h-4 w-4 text-accent" />
-              {selectedEntry?.inquiry.inquiry_number} — {selectedEntry?.inquiry.client_name}
-            </DialogTitle>
-          </DialogHeader>
-          {selectedEntry && (
-            <div className="space-y-4 pt-1">
-              <div className="flex items-center gap-3 text-sm bg-muted/30 rounded-lg px-3 py-2.5">
-                <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-muted-foreground">Reported by:</span>
-                <span className="font-semibold">{selectedEntryUser}</span>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Status</p>
-                <span className={cn('text-sm px-3 py-1.5 rounded-full border font-medium inline-block', STATUS_COLORS[selectedEntry.status] || 'bg-muted border-border')}>
-                  {STATUS_LABELS[selectedEntry.status] || selectedEntry.status}
-                </span>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Work Done</p>
-                <p className="text-sm bg-muted/40 rounded-xl p-4 whitespace-pre-wrap leading-relaxed min-h-[80px]">
-                  {selectedEntry.workDone}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Inquiry Details</p>
-                <div className="text-sm space-y-1 text-muted-foreground">
-                  <p>Stage: <span className="text-foreground font-medium">{selectedEntry.inquiry.stage}</span></p>
+      {/* SEARCH & FILTERS */}
+      <div className="flex flex-col sm:flex-row gap-3 bg-muted/20 p-3 rounded-xl border border-border/50">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Search by client or inquiry number..." 
+            className="pl-9 h-9 text-sm bg-background"
+            value={paymentSearch}
+            onChange={(e) => setPaymentSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2">
+          {['all', 'pending', 'collected'].map((f) => (
+            <button
+              key={f}
+              onClick={() => setPaymentFilter(f as any)}
+              className={cn(
+                "px-4 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all border",
+                paymentFilter === f 
+                  ? "bg-primary text-primary-foreground border-primary shadow-sm" 
+                  : "bg-background text-muted-foreground border-border hover:border-primary/50"
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* PAYMENTS GRID */}
+      {paymentsLoading ? (
+        <div className="text-center py-16 text-sm text-muted-foreground">Loading payments…</div>
+      ) : filteredPayments.length === 0 ? (
+        <div className="text-center py-16 text-muted-foreground bg-muted/20 rounded-xl border border-dashed border-border">
+          <IndianRupee className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          <p className="font-medium text-sm">No payments found</p>
+          <p className="text-xs mt-1 opacity-70">Try adjusting your search or filters.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredPayments.map((payment: any) => {
+            const isOverdue = new Date(payment.date) < new Date(new Date().setHours(0,0,0,0)) && payment.status !== 'collected';
+            const isToday = new Date(payment.date).toDateString() === new Date().toDateString() && payment.status !== 'collected';
+            const isCollected = payment.status === 'collected';
+
+            return (
+              <div 
+                key={payment.id} 
+                className={cn(
+                  'rounded-xl border p-4 flex flex-col justify-between h-full space-y-4 shadow-sm hover:shadow-md transition-all',
+                  isCollected ? 'bg-muted/30 border-border/50' : 
+                  isOverdue ? 'border-red-200 bg-red-50/30' : 
+                  isToday ? 'border-orange-200 bg-orange-50/30' : 
+                  'bg-background border-border hover:border-primary/40'
+                )}
+              >
+                {/* Top Half: Details */}
+                <div>
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <p className={cn("text-sm font-bold truncate", isCollected && "text-muted-foreground")}>
+                      {payment.inquiry?.client_name || "Unknown Client"}
+                    </p>
+                    {isCollected ? (
+                       <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold uppercase shrink-0 border border-green-200">
+                         Collected
+                       </span>
+                    ) : (
+                       <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold uppercase shrink-0 border border-amber-200">
+                         Pending
+                       </span>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono bg-muted/80 px-1.5 py-0.5 rounded border text-muted-foreground">
+                      {payment.inquiry?.inquiry_number}
+                    </span>
+                    <span className="text-[10px] bg-muted/50 px-2 py-0.5 rounded-full font-medium text-muted-foreground">
+                      {payment.inquiry?.stage}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <Button variant="outline" size="sm" className="w-full gap-2" onClick={() => { setEntryDetailOpen(false); openTimeline(selectedEntry.inquiryId); }}>
-                <Clock className="h-4 w-4" /> View Full Timeline for this Inquiry
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
-      {/* ── Timeline Dialog ── */}
-      <Dialog open={timelineOpen} onOpenChange={setTimelineOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="text-base flex items-center gap-2">
-              <Clock className="h-4 w-4 text-accent" />
-              {timelineData?.inquiry
-                ? `${timelineData.inquiry.inquiry_number} — ${timelineData.inquiry.client_name}`
-                : 'Activity Timeline'}
-            </DialogTitle>
-            {timelineData?.inquiry && (
-              <p className="text-xs text-muted-foreground">Assigned to: {timelineData.inquiry.sales_person?.name}</p>
-            )}
-          </DialogHeader>
-
-          <div className="overflow-y-auto flex-1 pr-1 mt-2">
-            {timelineLoading ? (
-              <div className="text-center py-10 text-muted-foreground text-sm">Loading...</div>
-            ) : !timelineData || timelineData.timeline.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground text-sm">No history recorded yet.</div>
-            ) : (
-              <div className="relative pb-2">
-                <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
-                <div className="space-y-5">
-                  {timelineData.timeline.map((entry, i) => (
-                    <div key={entry.id} className="flex gap-4 pl-10 relative">
-                      <div className={cn(
-                        'absolute left-[13px] w-3 h-3 rounded-full border-2 border-background mt-1',
-                        i === 0 ? 'bg-accent' : 'bg-muted-foreground/40'
-                      )} />
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between mb-1.5 gap-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold">{entry.dailyReport.user.name}</span>
-                            {i === 0 && <span className="text-xs bg-accent/10 text-accent px-1.5 py-0.5 rounded font-medium">Latest</span>}
-                          </div>
-                          <span className="text-xs text-muted-foreground flex-shrink-0">
-                            {format(new Date(entry.createdAt), 'dd MMM yyyy, h:mm a')}
-                          </span>
-                        </div>
-                        <span className={cn('text-xs px-2.5 py-1 rounded-full border font-medium inline-block mb-2', STATUS_COLORS[entry.status] || 'bg-muted text-muted-foreground border-border')}>
-                          {STATUS_LABELS[entry.status] || entry.status}
-                        </span>
-                        <p className="text-sm text-muted-foreground bg-muted/30 rounded-lg px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
-                          {entry.workDone}
-                        </p>
-                      </div>
+                {/* Bottom Half: Amount and Date */}
+                <div className="pt-3 border-t border-border/50 flex items-end justify-between">
+                  <div className={cn(
+                    'text-[11px] font-semibold flex items-center gap-1',
+                    isCollected ? 'text-muted-foreground' :
+                    isOverdue ? 'text-red-600' : 
+                    isToday ? 'text-orange-600' : 'text-blue-600'
+                  )}>
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    <div className="flex flex-col">
+                      <span>{format(new Date(payment.date), 'dd MMM yyyy')}</span>
+                      {!isCollected && (isOverdue ? <span>(Overdue)</span> : isToday ? <span>(Due Today)</span> : null)}
                     </div>
-                  ))}
+                  </div>
+
+                  <div className={cn(
+                    "font-bold text-xl flex items-center",
+                    isCollected ? "text-muted-foreground opacity-60 line-through" : "text-green-600"
+                  )}>
+                    ₹{payment.amount.toLocaleString()}
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  );
+})()}
+      </div>
     </DashboardLayout>
   );
 };
