@@ -34,6 +34,8 @@ interface Task {
   stage: string;
   updated_at: string;
 
+  orderIndex?: number; // ADDED: Ensures Strict Ordering Support
+
   sales_person?: { id: string, name: string };
   sales_persons?: { id: string, name: string }[];
 
@@ -53,17 +55,16 @@ interface Task {
     }[]
   }[];
 
-  // === ADD THIS LINE ===
   payments?: { id: string; amount: number; date: string; status: string; }[];
 }
 interface Comment {
   id: string;
   content: string;
   attachmentUrl?: string;
+  attachmentUrls?: string[];    // ADDED: For multiple attachments
   dueDate?: string | null;
   createdAt: string;
-  user: { name: string };
-  // ADD isRead: boolean HERE 👇
+  user: { id: string; name: string };
   mentions?: { isRead?: boolean; user: { id: string; name: string } }[];
   stage?: string;
   checklists?: { id: string; title: string; items: { id: string; text: string; isCompleted: boolean }[] }[];
@@ -105,7 +106,6 @@ const LABEL_COLORS = [
   'bg-sky-500', 'bg-lime-600', 'bg-pink-500', 'bg-slate-500'
 ];
 
-// ✅ CORRECTED PERMANENT COLUMNS (Only the 4 you requested)
 const DEFAULT_COLUMNS: ColumnDef[] = [
   { id: "Inquiry", title: "Inquiry", color: "border-t-4 border-blue-500", isSystem: true },
   { id: "Quotation Submitted", title: "Quotation Submitted", color: "border-t-4 border-purple-500", isSystem: true },
@@ -174,13 +174,13 @@ const checkHasFullAccess = (task: Task | null, currentUser: any) => {
   if (currentUser.role === 'super_admin' || currentUser.role === 'admin_hr') return true;
   if (task.sales_person?.id === currentUser.id) return true;
   if (task.sales_persons?.some(p => p.id === currentUser.id)) return true;
-  return false; // Restricted to read-only if they are only here because of a mention
+  return false;
 };
 
 const Pipeline: React.FC = () => {
   const { toast } = useToast();
   const { profile } = useAuth();
-  const currentUser = profile; // logged-in user (has id & name)
+  const currentUser = profile;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -195,6 +195,7 @@ const Pipeline: React.FC = () => {
   const [insertAfterTaskId, setInsertAfterTaskId] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardAssignees, setNewCardAssignees] = useState<string[]>([]);
+
   // Modal State
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedTaskColumn, setSelectedTaskColumn] = useState<string | null>(null);
@@ -207,9 +208,13 @@ const Pipeline: React.FC = () => {
 
   // Comment State
   const [newComment, setNewComment] = useState('');
+  const [commentAttachments, setCommentAttachments] = useState<string[]>([]); // CHANGED to array
   const [commentAttachment, setCommentAttachment] = useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = useState('');
+  const [editingCommentDueDate, setEditingCommentDueDate] = useState<string>(''); // ADDED
+  const [editingCommentAttachments, setEditingCommentAttachments] = useState<string[]>([]); // ADDED
+
   // Due date & @mention state
   const [commentDueDate, setCommentDueDate] = useState<string>('');
   const [mentionQuery, setMentionQuery] = useState<string>('');
@@ -238,14 +243,13 @@ const Pipeline: React.FC = () => {
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
-
   // --- FILTER STATE ---
   const [filterUser, setFilterUser] = useState<string>('all');
   const [filterLabel, setFilterLabel] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStage, setFilterStage] = useState<string>('all');
-  const [filterSearch, setFilterSearch] = useState<string>(''); // unified with search
-  const [isFilterOpen, setIsFilterOpen] = useState(false); // controls fixed panel
+  const [filterSearch, setFilterSearch] = useState<string>('');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   const [filterActivity, setFilterActivity] = useState<string>('all');
   const [filterChecklist, setFilterChecklist] = useState<string>('all');
@@ -258,18 +262,21 @@ const Pipeline: React.FC = () => {
   const [newPaymentAmount, setNewPaymentAmount] = useState('');
   const [newPaymentDate, setNewPaymentDate] = useState('');
 
-  // Add this near your other comment states (around line ~160)
   const STAGE_KEYWORDS = ['Measurement Taken', 'Quotation Submitted', 'Payment Follow Up', 'Quotation Confirmed', 'Final Measurement by Labour'];
-  const [stageSuggestions, setStageSuggestions] = useState<string[]>([]); // <-- Changed to array
+  const [stageSuggestions, setStageSuggestions] = useState<string[]>([]);
+
+  // Payment Edit State
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [editPaymentAmount, setEditPaymentAmount] = useState('');
+  const [editPaymentDate, setEditPaymentDate] = useState('');
 
   useEffect(() => {
     fetchPipeline();
     fetchUsers();
   }, []);
 
-
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevents the card modal from opening when you click the trash icon
+    e.stopPropagation();
     if (!confirm('Are you sure you want to delete this card?')) return;
 
     try {
@@ -281,13 +288,16 @@ const Pipeline: React.FC = () => {
     }
   };
 
-
   const fetchPipeline = async () => {
     try {
       const { data } = await api.get('/pipeline');
-      setTasks(data);
+      // ✅ BOOTSTRAP: Assign default orderIndex if missing to ensure stable sorting
+      const normalizedData = data.map((t: Task, i: number) => ({
+        ...t,
+        orderIndex: t.orderIndex ?? (i * 1000)
+      }));
+      setTasks(normalizedData);
 
-      // Auto-discover extra stages from DB that aren't in our default list
       const systemIds = new Set(DEFAULT_COLUMNS.map(c => c.id));
       const foundStages = new Set(data.map((t: Task) => t.stage));
       const customStages: ColumnDef[] = [];
@@ -322,7 +332,6 @@ const Pipeline: React.FC = () => {
   };
 
   // --- COLUMN ACTIONS ---
-
   const handleAddColumn = () => {
     if (!newColumnTitle.trim()) return;
     const newId = newColumnTitle.trim();
@@ -355,36 +364,37 @@ const Pipeline: React.FC = () => {
   };
 
   // --- MANUAL CARD ACTIONS ---
-
   const handleQuickCreateCard = async (stageId: string) => {
     if (!newCardTitle.trim()) return;
 
     try {
-      // 1. Force the current user to be in the assignees list
       const finalAssignees = currentUser
         ? Array.from(new Set([...newCardAssignees, currentUser.id]))
         : newCardAssignees;
 
       const primaryAssignee = finalAssignees.length > 0 ? finalAssignees[0] : null;
 
-      // 2. Calculate orderIndex using the UNFILTERED ordered task list
-      //    so active search/filter state can never corrupt the position.
       let orderIndex: number;
       const colTasks = getOrderedTasksByStage(stageId);
 
       if (insertAfterTaskId) {
         const afterTaskIndex = colTasks.findIndex(t => t.id === insertAfterTaskId);
-        const afterTask = colTasks[afterTaskIndex];
-        const nextTask = colTasks[afterTaskIndex + 1];
+        if (afterTaskIndex !== -1) {
+          const afterTask = colTasks[afterTaskIndex];
+          const nextTask = colTasks[afterTaskIndex + 1];
 
-        const afterIdx = (afterTask as any).orderIndex ?? 0;
-        const nextIdx = nextTask ? ((nextTask as any).orderIndex ?? afterIdx + 1000) : afterIdx + 1000;
+          const afterIdx = afterTask.orderIndex ?? 0;
+          const nextIdx = nextTask ? (nextTask.orderIndex ?? afterIdx + 1000) : afterIdx + 1000;
 
-        orderIndex = Math.round((afterIdx + nextIdx) / 2);
-        if (orderIndex === afterIdx) orderIndex = afterIdx + 1;
+          orderIndex = Math.round((afterIdx + nextIdx) / 2);
+          if (orderIndex === afterIdx) orderIndex = afterIdx + 1;
+        } else {
+          // Fallback to bottom if not found
+          const maxIdx = colTasks.length > 0 ? colTasks[colTasks.length - 1].orderIndex ?? 0 : -1000;
+          orderIndex = maxIdx + 1000;
+        }
       } else {
-        // Adding at the bottom of the column
-        const maxIdx = colTasks.reduce((max, t) => Math.max(max, (t as any).orderIndex ?? 0), -1);
+        const maxIdx = colTasks.length > 0 ? colTasks[colTasks.length - 1].orderIndex ?? 0 : -1000;
         orderIndex = maxIdx + 1000;
       }
 
@@ -393,7 +403,7 @@ const Pipeline: React.FC = () => {
         mobile_number: "0000000000",
         inquiry_date: new Date().toISOString(),
         address: "Manual Entry",
-        stage: stageId,   // ← send stage so backend fallback scopes correctly
+        stage: stageId,
         orderIndex,
         ...(primaryAssignee && { sales_person_id: primaryAssignee }),
       };
@@ -414,7 +424,7 @@ const Pipeline: React.FC = () => {
 
       const newTask: Task = {
         ...newInquiry,
-        orderIndex,  // ← always stamp the calculated orderIndex onto local task
+        orderIndex,
         sales_person: assignedUsers[0] ? { id: assignedUsers[0].id, name: assignedUsers[0].name } : undefined,
         sales_persons: assignedUsers.map(u => ({ id: u.id, name: u.name })),
         stage: stageId,
@@ -424,7 +434,6 @@ const Pipeline: React.FC = () => {
         selections: []
       };
 
-      // Just append — getTasksByStage sorts by orderIndex so position is automatic
       setTasks(prev => [...prev, newTask]);
 
       setNewCardTitle('');
@@ -459,7 +468,6 @@ const Pipeline: React.FC = () => {
     setEditingCommentId(null);
     fetchTimeline(task.id);
 
-    // --- NEW: Check if there are unread mentions and mark them as read ---
     const hasUnread = task.comments?.some(c =>
       (c.stage === columnId || (!c.stage && task.stage === columnId)) &&
       c.mentions?.some(m => m.user?.id === currentUser?.id && m.isRead === false)
@@ -469,7 +477,6 @@ const Pipeline: React.FC = () => {
       try {
         await api.put(`/inquiries/${task.id}/mentions/read`, { stage: columnId });
 
-        // Update local state to remove the glow instantly without refreshing
         const updatedComments = task.comments?.map(c => {
           const isMatchingStage = c.stage === columnId || (!c.stage && task.stage === columnId);
           return {
@@ -487,7 +494,6 @@ const Pipeline: React.FC = () => {
   };
 
   // --- ACTIONS ---
-
   const handleAddPayment = async () => {
     if (!selectedTask || !newPaymentAmount || !newPaymentDate) return;
     try {
@@ -535,13 +541,11 @@ const Pipeline: React.FC = () => {
   const handleToggleMember = async (userId: string) => {
     if (!selectedTask) return;
 
-    // Combine primary owner and collaborators into one array
     const currentMemberIds = [
       ...(selectedTask.sales_person ? [selectedTask.sales_person.id] : []),
       ...(selectedTask.sales_persons || []).map(p => p.id)
     ];
 
-    // Ensure unique IDs
     const uniqueMembers = Array.from(new Set(currentMemberIds));
     const isAssigned = uniqueMembers.includes(userId);
 
@@ -620,6 +624,57 @@ const Pipeline: React.FC = () => {
     } catch (e) { console.error(e); }
   };
 
+  // Function 1: Delete individual checklist items
+  const handleDeleteChecklistItem = async (checklistId: string, itemId: string) => {
+    try {
+      await api.delete(`/checklist-items/${itemId}`);
+
+      const updatedChecklists = (selectedTask?.checklists || []).map(cl => {
+        if (cl.id === checklistId) {
+          return {
+            ...cl,
+            items: cl.items.filter(item => item.id !== itemId)
+          };
+        }
+        return cl;
+      });
+
+      const updatedTask = { ...selectedTask!, checklists: updatedChecklists };
+      updateLocalTask(updatedTask);
+      toast({ title: "Deleted", description: "Checklist item deleted." });
+    } catch (e) {
+      console.error("Failed to delete item", e);
+      toast({ title: "Error", description: "Failed to delete item", variant: "destructive" });
+    }
+  };
+
+  // Function 2: Edit existing payment
+  const handleUpdatePayment = async (paymentId: string) => {
+    if (!selectedTask || !editPaymentAmount || !editPaymentDate) return;
+
+    try {
+      const { data } = await api.put(`/payments/${paymentId}`, {
+        amount: Number(editPaymentAmount),
+        date: editPaymentDate
+      });
+
+      const updatedPayments = (selectedTask.payments || []).map(p =>
+        p.id === paymentId ? { ...p, amount: data.amount, date: data.date } : p
+      );
+
+      const updatedTask = { ...selectedTask, payments: updatedPayments };
+      updateLocalTask(updatedTask);
+
+      setEditingPaymentId(null);
+      setEditPaymentAmount('');
+      setEditPaymentDate('');
+      toast({ title: "Payment Updated", description: "Payment details updated successfully." });
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Error", description: "Failed to update payment", variant: "destructive" });
+    }
+  };
+
   const handleAddChecklistItem = async (checklistId: string) => {
     if (!newItemText.trim()) return;
     try {
@@ -662,25 +717,46 @@ const Pipeline: React.FC = () => {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    // ✅ FIX: Loop through ALL selected files and upload them
+    const uploadPromises = Array.from(files).map(async (file) => {
+      const formData = new FormData();
+      formData.append('file', file);
+
       const { data } = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setCommentAttachment(data.url);
-    } catch (error) { toast({ title: "Upload Failed", variant: "destructive" }); }
+      return data.url;
+    });
+
+    try {
+      // Wait for all images to upload
+      const uploadedUrls = await Promise.all(uploadPromises);
+
+      // Route the attachments to either the new comment or the edit mode
+      if (editingCommentId) {
+        setEditingCommentAttachments(prev => [...prev, ...uploadedUrls]);
+      } else {
+        setCommentAttachments(prev => [...prev, ...uploadedUrls]);
+      }
+    } catch (error) {
+      toast({ title: "Upload Failed", variant: "destructive" });
+    }
+
+    // Clear the file input so you can select the same file again if needed
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
+
   const handleAddComment = async () => {
     if (!selectedTask) return;
 
     let updatedTask = { ...selectedTask };
     let hasUpdates = false;
 
-    // Check if the typed comment exactly matches a stage keyword
     const matchedStage = STAGE_KEYWORDS.find(s => s.toLowerCase() === newComment.trim().toLowerCase());
 
-    // 1. Update Stage if a stage name was typed
     if (matchedStage) {
       try {
         await api.put(`/inquiries/${selectedTask.id}/stage`, {
@@ -689,57 +765,71 @@ const Pipeline: React.FC = () => {
         });
         updatedTask.stage = matchedStage;
         hasUpdates = true;
-        toast({
-          title: 'Stage updated',
-          description: commentDueDate
-            ? `Moved to "${matchedStage}" — due ${format(new Date(commentDueDate), 'dd MMM yyyy')}`
-            : `Moved to "${matchedStage}"`
-        });
+        toast({ title: 'Stage updated', description: `Moved to "${matchedStage}"` });
       } catch (e) {
         toast({ title: 'Error', variant: 'destructive', description: 'Failed to update stage' });
       }
     }
 
-    // 2. Add Comment if typed or attached
-    if (newComment.trim() || commentAttachment) {
+    if (newComment.trim() || commentAttachments.length > 0) {
       try {
         const { data } = await api.post(`/inquiries/${selectedTask.id}/comments`, {
           content: newComment,
-          attachmentUrl: commentAttachment,
+          attachmentUrls: commentAttachments, // Send array of attachments
+          attachmentUrl: commentAttachments.length > 0 ? commentAttachments[0] : null, // Fallback for old API
           dueDate: commentDueDate || null,
           mentionedUserIds: mentionedUsers.map(u => u.id),
           stage: selectedTaskColumn
         });
+
+        // Ensure frontend displays attachments immediately even if backend doesn't return the array yet
+        const newCommentObj = { ...data, attachmentUrls: data.attachmentUrls || commentAttachments };
+
         const currentComments = updatedTask.comments || [];
-        updatedTask.comments = [data, ...currentComments];
+        updatedTask.comments = [newCommentObj, ...currentComments];
         hasUpdates = true;
       } catch (e) {
         toast({ title: "Error", variant: "destructive", description: 'Failed to post comment' });
       }
     }
 
-    // 3. Sync UI and Reset Inputs
-    if (hasUpdates) {
-      updateLocalTask(updatedTask);
-    }
+    if (hasUpdates) updateLocalTask(updatedTask);
 
+    // Reset states
     setNewComment('');
-    setCommentAttachment(null);
+    setCommentAttachments([]);
     setCommentDueDate('');
     setMentionedUsers([]);
     setPendingStage(null);
-    setStageSuggestions([]); // Clear suggestion
+    setStageSuggestions([]);
   };
 
-  // Handle @mention typing in the comment textarea
   const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setNewComment(val);
 
-    // 1. Stage Autocomplete Check (Google Maps style)
-    if (val.length >= 2) {
+    const lastAt = val.lastIndexOf('@');
+    let isMentioning = false;
+
+    // Handle @ Mentions
+    if (lastAt !== -1) {
+      const afterAt = val.slice(lastAt + 1);
+      if (!afterAt.includes(' ')) {
+        setMentionQuery(afterAt);
+        setShowMentionPicker(true);
+        isMentioning = true;
+      } else {
+        setShowMentionPicker(false);
+        setMentionQuery('');
+      }
+    } else {
+      setShowMentionPicker(false);
+      setMentionQuery('');
+    }
+
+    // ONLY show stage suggestions if we are NOT currently mentioning someone
+    if (!isMentioning && val.length >= 2) {
       const matches = STAGE_KEYWORDS.filter(stage => stage.toLowerCase().includes(val.toLowerCase()));
-      // Hide if exactly matches to close dropdown
       if (matches.length === 1 && matches[0].toLowerCase() === val.toLowerCase()) {
         setStageSuggestions([]);
       } else {
@@ -748,24 +838,9 @@ const Pipeline: React.FC = () => {
     } else {
       setStageSuggestions([]);
     }
-
-    // 2. Mention Check
-    const lastAt = val.lastIndexOf('@');
-    if (lastAt !== -1) {
-      const afterAt = val.slice(lastAt + 1);
-      if (!afterAt.includes(' ')) {
-        setMentionQuery(afterAt);
-        setShowMentionPicker(true);
-        return;
-      }
-    }
-    setShowMentionPicker(false);
-    setMentionQuery('');
   };
 
-
   const handleSelectMention = (user: AppUser) => {
-    // Replace the @query text with @name
     const lastAt = newComment.lastIndexOf('@');
     const before = newComment.slice(0, lastAt);
     setNewComment(`${before}@${user.name} `);
@@ -777,32 +852,52 @@ const Pipeline: React.FC = () => {
     commentInputRef.current?.focus();
   };
 
-  const removeMentionedUser = (userId: string) => {
-    setMentionedUsers(prev => prev.filter(u => u.id !== userId));
-  };
-
   const handleEditComment = async (commentId: string) => {
     if (!selectedTask) return;
 
     try {
-      // 1. Send the updated text to the backend
       await api.put(`/comments/${commentId}`, {
-        content: editingCommentText
+        content: editingCommentText,
+        dueDate: editingCommentDueDate || null,
+        attachmentUrls: editingCommentAttachments,
+        attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : null
       });
 
-      // 2. Update the local UI state so it shows instantly without refreshing
       const currentComments = selectedTask.comments || [];
       const updatedComments = currentComments.map(c =>
-        c.id === commentId ? { ...c, content: editingCommentText } : c
+        c.id === commentId ? {
+          ...c,
+          content: editingCommentText,
+          dueDate: editingCommentDueDate || null,
+          attachmentUrls: editingCommentAttachments,
+          attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : undefined
+        } : c
       );
 
-      const updatedTask = { ...selectedTask, comments: updatedComments };
-      updateLocalTask(updatedTask);
+      updateLocalTask({ ...selectedTask, comments: updatedComments });
+
+      // Close edit mode
       setEditingCommentId(null);
+      setEditingCommentAttachments([]);
+      setEditingCommentDueDate('');
 
     } catch (e) {
-      console.error(e);
       toast({ title: "Error", description: "Failed to save comment", variant: "destructive" });
+    }
+  };
+
+  // ADD THIS NEW FUNCTION FOR DELETION
+  const handleDeleteComment = async (commentId: string) => {
+    if (!selectedTask) return;
+    if (!confirm('Are you sure you want to delete this comment?')) return;
+
+    try {
+      await api.delete(`/comments/${commentId}`);
+      const updatedComments = (selectedTask.comments || []).filter(c => c.id !== commentId);
+      updateLocalTask({ ...selectedTask, comments: updatedComments });
+      toast({ title: "Deleted", description: "Comment deleted successfully." });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to delete comment", variant: "destructive" });
     }
   };
 
@@ -811,6 +906,7 @@ const Pipeline: React.FC = () => {
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
   };
 
+  // ✅ FIXED onDragEnd: Smooth mapping instead of clunky slicing
   const onDragEnd = async (result: any) => {
     const { destination, source, draggableId, type } = result;
 
@@ -832,54 +928,29 @@ const Pipeline: React.FC = () => {
     // --- HANDLE CARD DRAGGING ---
     const realId = draggableId.split('::')[1];
     const destStage = destination.droppableId;
-    const srcStage = source.droppableId;
 
     const currentDestTasks = getOrderedTasksByStage(destStage).filter(t => t.id !== realId);
 
-    // Calculate the new orderIndex
     let newOrderIndex = 0;
     if (currentDestTasks.length === 0) {
       newOrderIndex = 1000;
     } else if (destination.index === 0) {
-      newOrderIndex = ((currentDestTasks[0] as any).orderIndex ?? 1000) - 1000;
+      newOrderIndex = (currentDestTasks[0].orderIndex ?? 1000) - 1000;
     } else if (destination.index >= currentDestTasks.length) {
-      newOrderIndex = ((currentDestTasks[currentDestTasks.length - 1] as any).orderIndex ?? 0) + 1000;
+      newOrderIndex = (currentDestTasks[currentDestTasks.length - 1].orderIndex ?? 0) + 1000;
     } else {
-      const prevIdx = (currentDestTasks[destination.index - 1] as any).orderIndex ?? 0;
-      const nextIdx = (currentDestTasks[destination.index] as any).orderIndex ?? 0;
+      const prevIdx = currentDestTasks[destination.index - 1].orderIndex ?? 0;
+      const nextIdx = currentDestTasks[destination.index].orderIndex ?? 0;
       newOrderIndex = Math.round((prevIdx + nextIdx) / 2);
       if (newOrderIndex === prevIdx) newOrderIndex = prevIdx + 1;
     }
 
-    // ✅ FIX: Physically reorder the tasks array so the rendered order
-    // matches immediately — prevents the snap-back flicker on re-render.
-    setTasks(prev => {
-      // 1. Pull out the moved task and stamp its new values
-      const movedTask = prev.find(t => t.id === realId);
-      if (!movedTask) return prev;
-
-      const updatedMovedTask = {
-        ...movedTask,
-        stage: destStage,
-        orderIndex: newOrderIndex,
-        updated_at: new Date().toISOString(),
-      };
-
-      // 2. Remove the moved task from the array
-      const rest = prev.filter(t => t.id !== realId);
-
-      // 3. Get the destination column tasks (excluding moved), sorted
-      const destColumnTasks = rest
-        .filter(t => t.stage === destStage)
-        .sort((a, b) => ((a as any).orderIndex ?? 0) - ((b as any).orderIndex ?? 0));
-
-      // 4. Insert the moved task at the exact destination index
-      destColumnTasks.splice(destination.index, 0, updatedMovedTask);
-
-      // 5. Rebuild: all tasks NOT in dest column + newly ordered dest column
-      const otherTasks = rest.filter(t => t.stage !== destStage);
-      return [...otherTasks, ...destColumnTasks];
-    });
+    // Efficient UI mapping update (Rendering dynamically handles sorting now)
+    setTasks(prev => prev.map(t =>
+      t.id === realId
+        ? { ...t, stage: destStage, orderIndex: newOrderIndex, updated_at: new Date().toISOString() }
+        : t
+    ));
 
     // Persist to backend
     try {
@@ -891,6 +962,7 @@ const Pipeline: React.FC = () => {
       fetchPipeline(); // Rollback on failure
     }
   };
+
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     mouseDownEvent.preventDefault();
     setIsResizing(true);
@@ -925,7 +997,7 @@ const Pipeline: React.FC = () => {
     return task.selections[0];
   };
 
-  // ✅ CORRECT FILTERING LOGIC
+  // ✅ ADDED SORT FUNCTION HERE: Dynamically sorts everything ensuring stickiness 
   const getTasksByStage = (stage: string) => {
     return tasks.filter(t => {
       if (t.stage === stage) return true;
@@ -961,7 +1033,6 @@ const Pipeline: React.FC = () => {
           matchesDate = (t.updated_at || '').startsWith(filterDate);
         }
 
-        // NEW: filter by has/no comments
         let matchesActivity = true;
         if (filterActivity === 'has_comments') {
           matchesActivity = (t.comments || []).length > 0;
@@ -969,7 +1040,6 @@ const Pipeline: React.FC = () => {
           matchesActivity = (t.comments || []).length === 0;
         }
 
-        // NEW: filter by has/no checklist
         let matchesChecklist = true;
         if (filterChecklist === 'has_checklist') {
           matchesChecklist = (t.checklists || []).length > 0;
@@ -981,12 +1051,10 @@ const Pipeline: React.FC = () => {
 
         return matchesSearch && matchesUser && matchesLabel && matchesDate && matchesActivity && matchesChecklist;
       })
-
+      .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)); // 👈 THE MAGIC KEY FOR DRAG & DROP STICKINESS
   };
 
-  // NEW FUNCTION — add right after getTasksByStage
-  // Used internally for orderIndex calculations — NO filters applied,
-  // so drag/create positions are never thrown off by active search/filter state.
+  // ✅ Used internally for orderIndex logic WITHOUT filters applied
   const getOrderedTasksByStage = (stage: string) => {
     return tasks
       .filter(t => {
@@ -1000,7 +1068,7 @@ const Pipeline: React.FC = () => {
         }
         return false;
       })
-      .sort((a, b) => ((a as any).orderIndex ?? 0) - ((b as any).orderIndex ?? 0));
+      .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
   };
 
   return (
@@ -1026,75 +1094,44 @@ const Pipeline: React.FC = () => {
               </Button>
             </div>
 
-            {/* FIXED FILTER PANEL — renders outside the header flow */}
+            {/* FIXED FILTER PANEL */}
             {isFilterOpen && (
               <>
-                {/* Backdrop */}
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setIsFilterOpen(false)}
-                />
+                <div className="fixed inset-0 z-40" onClick={() => setIsFilterOpen(false)} />
 
-                {/* Fixed Panel */}
                 <div className="fixed top-20 right-6 z-50 w-[340px] bg-background border border-border rounded-xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200">
 
-                  {/* Header */}
                   <div className="flex justify-between items-center px-4 py-3 border-b border-border bg-muted/30 rounded-t-xl">
                     <h4 className="font-semibold text-sm">Filter Cards</h4>
                     <div className="flex items-center gap-2">
                       <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
+                        variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
                         onClick={() => {
-                          setFilterUser('all');
-                          setFilterLabel('all');
-                          setFilterDate('');
-                          setFilterActivity('all');
-                          setFilterChecklist('all');
+                          setFilterUser('all'); setFilterLabel('all'); setFilterDate('');
+                          setFilterActivity('all'); setFilterChecklist('all');
                         }}
                       >
                         Clear all
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-full"
-                        onClick={() => setIsFilterOpen(false)}
-                      >
+                      <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full" onClick={() => setIsFilterOpen(false)}>
                         <X className="h-4 w-4 text-muted-foreground" />
                       </Button>
                     </div>
                   </div>
 
-                  {/* Filter Body */}
                   <div className="p-4 space-y-4 max-h-[75vh] overflow-y-auto">
-
-                    {/* 1. Assigned User */}
+                    {/* Filter Forms */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        👤 Assigned User
-                      </label>
-                      <select
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                        value={filterUser}
-                        onChange={e => setFilterUser(e.target.value)}
-                      >
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">👤 Assigned User</label>
+                      <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
                         <option value="all">All Users</option>
                         {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                       </select>
                     </div>
 
-                    {/* 2. Label */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        🏷️ Label
-                      </label>
-                      <select
-                        className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                        value={filterLabel}
-                        onChange={e => setFilterLabel(e.target.value)}
-                      >
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">🏷️ Label</label>
+                      <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filterLabel} onChange={e => setFilterLabel(e.target.value)}>
                         <option value="all">All Labels</option>
                         {getUniqueLabels().map((l: any, i) => (
                           <option key={i} value={l.text}>{l.text}</option>
@@ -1102,108 +1139,46 @@ const Pipeline: React.FC = () => {
                       </select>
                     </div>
 
-                    {/* 3. Month */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        📅 Month
-                      </label>
-                      <Input
-                        type="month"
-                        className="h-9 text-sm w-full bg-background"
-                        value={filterDate}
-                        onChange={e => setFilterDate(e.target.value)}
-                      />
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">📅 Month</label>
+                      <Input type="month" className="h-9 text-sm w-full bg-background" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
                     </div>
 
-                    {/* 4. Activity / Comments */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        💬 Comments
-                      </label>
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">💬 Comments</label>
                       <div className="flex gap-2 flex-wrap">
-                        {[
-                          { value: 'all', label: 'Any' },
-                          { value: 'has_comments', label: 'Has Comments' },
-                          { value: 'no_comments', label: 'No Comments' },
-                        ].map(opt => (
-                          <button
-                            key={opt.value}
-                            onClick={() => setFilterActivity(opt.value)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
-                              filterActivity === opt.value
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                            )}
-                          >
-                            {opt.label}
-                          </button>
+                        {[{ value: 'all', label: 'Any' }, { value: 'has_comments', label: 'Has Comments' }, { value: 'no_comments', label: 'No Comments' }].map(opt => (
+                          <button key={opt.value} onClick={() => setFilterActivity(opt.value)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterActivity === opt.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>{opt.label}</button>
                         ))}
                       </div>
                     </div>
 
-                    {/* 5. Checklist */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        ✅ Checklist
-                      </label>
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">✅ Checklist</label>
                       <div className="flex gap-2 flex-wrap">
-                        {[
-                          { value: 'all', label: 'Any' },
-                          { value: 'has_checklist', label: 'Has Checklist' },
-                          { value: 'incomplete', label: 'Has Incomplete' },
-                        ].map(opt => (
-                          <button
-                            key={opt.value}
-                            onClick={() => setFilterChecklist(opt.value)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
-                              filterChecklist === opt.value
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                            )}
-                          >
-                            {opt.label}
-                          </button>
+                        {[{ value: 'all', label: 'Any' }, { value: 'has_checklist', label: 'Has Checklist' }, { value: 'incomplete', label: 'Has Incomplete' }].map(opt => (
+                          <button key={opt.value} onClick={() => setFilterChecklist(opt.value)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterChecklist === opt.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>{opt.label}</button>
                         ))}
                       </div>
                     </div>
 
-                    {/* 6. Stage Quick-jump */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                        📌 Stage
-                      </label>
+                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">📌 Stage</label>
                       <div className="flex gap-2 flex-wrap">
                         {['all', ...columns.map(c => c.id)].map(stageId => (
-                          <button
-                            key={stageId}
-                            onClick={() => setFilterStage(stageId)}
-                            className={cn(
-                              "px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
-                              filterStage === stageId
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                            )}
-                          >
+                          <button key={stageId} onClick={() => setFilterStage(stageId)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterStage === stageId ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>
                             {stageId === 'all' ? 'All Stages' : columns.find(c => c.id === stageId)?.title || stageId}
                           </button>
                         ))}
                       </div>
                     </div>
-
                   </div>
 
-                  {/* Footer */}
                   <div className="px-4 py-3 border-t border-border bg-muted/20 rounded-b-xl flex justify-between items-center">
                     <span className="text-xs text-muted-foreground">
-                      {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all' || filterStage !== 'all')
-                        ? '🔵 Filters active'
-                        : 'No filters applied'}
+                      {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all' || filterStage !== 'all') ? '🔵 Filters active' : 'No filters applied'}
                     </span>
-                    <Button size="sm" className="h-7 px-4 text-xs" onClick={() => setIsFilterOpen(false)}>
-                      Done
-                    </Button>
+                    <Button size="sm" className="h-7 px-4 text-xs" onClick={() => setIsFilterOpen(false)}>Done</Button>
                   </div>
                 </div>
               </>
@@ -1212,19 +1187,12 @@ const Pipeline: React.FC = () => {
             {/* ADD STAGE DROPDOWN */}
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" className="gap-2 border-dashed w-full sm:w-auto">
-                  <PlusCircle className="h-4 w-4" /> Add Stage
-                </Button>
+                <Button variant="outline" className="gap-2 border-dashed w-full sm:w-auto"><PlusCircle className="h-4 w-4" /> Add Stage</Button>
               </PopoverTrigger>
               <PopoverContent className="w-64 p-3" align="end">
                 <h4 className="font-semibold text-sm mb-2">Create New Stage</h4>
                 <div className="flex gap-2">
-                  <Input
-                    placeholder="Stage Name (e.g. Queries)"
-                    value={newColumnTitle}
-                    onChange={(e) => setNewColumnTitle(e.target.value)}
-                    className="h-8 text-xs"
-                  />
+                  <Input placeholder="Stage Name (e.g. Queries)" value={newColumnTitle} onChange={(e) => setNewColumnTitle(e.target.value)} className="h-8 text-xs" />
                   <Button size="sm" className="h-8" onClick={handleAddColumn}>Add</Button>
                 </div>
               </PopoverContent>
@@ -1255,7 +1223,7 @@ const Pipeline: React.FC = () => {
                         className="flex-shrink-0 w-80 flex flex-col rounded-xl bg-muted/40 border border-border/50 group/col relative"
                       >
 
-                        {/* Column Header - Drag Handle is attached here */}
+                        {/* Column Header */}
                         <div
                           {...provided.dragHandleProps}
                           className={`p-3 font-semibold text-xs flex justify-between items-center bg-background rounded-t-xl border-b ${column.color} border-t-4`}
@@ -1265,7 +1233,6 @@ const Pipeline: React.FC = () => {
                             <Badge variant="secondary" className="ml-2 h-5">{getTasksByStage(column.id).length}</Badge>
                           </span>
 
-                          {/* Delete Option for Custom Columns ONLY */}
                           {!column.isSystem && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -1297,8 +1264,6 @@ const Pipeline: React.FC = () => {
                                 const isQuoteStage = column.id === 'Quotation Submitted';
                                 const isOngoingStage = column.id === 'Ongoing Projects';
                                 const uniqueDraggableId = `${column.id}::${task.id}`;
-
-                                // ✅ NEW: Check if they have full edit access
                                 const hasFullAccess = checkHasFullAccess(task, currentUser);
 
                                 return (
@@ -1310,14 +1275,14 @@ const Pipeline: React.FC = () => {
                                         c.mentions?.some(m => m.user?.id === currentUser?.id && m.isRead === false)
                                       );
 
-                                      const hasPendingPayment = (task.payments || []).some(p => p.status !== 'collected');
-
                                       return (
                                         <div
                                           ref={provided.innerRef}
                                           {...provided.draggableProps}
                                           {...provided.dragHandleProps}
+                                          className="flex flex-col gap-2" // ✅ Wrapped to maintain clean inline addition
                                         >
+                                          {/* --- THE ACTUAL CARD --- */}
                                           <div
                                             onClick={() => handleTaskClick(task, column.id)}
                                             className={cn(
@@ -1326,7 +1291,7 @@ const Pipeline: React.FC = () => {
                                               hasUnreadMention && "ring-2 ring-blue-500 animate-pulse bg-blue-50/60 shadow-[0_0_15px_rgba(59,130,246,0.5)] border-blue-400"
                                             )}
                                           >
-                                            {/* ACTIONS (Shows on Hover) - HIDE IF NO ACCESS */}
+                                            {/* ACTIONS (Shows on Hover) */}
                                             {hasFullAccess && (
                                               <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                                                 <Button
@@ -1369,13 +1334,49 @@ const Pipeline: React.FC = () => {
                                                 </span>
 
                                                 {(() => {
-                                                  const pendingPaymentsCount = (task.payments || []).filter(p => p.status !== 'collected').length;
+                                                  const pendingPayments = (task.payments || []).filter(p => p.status !== 'collected');
+                                                  const pendingPaymentsCount = pendingPayments.length;
                                                   if (pendingPaymentsCount === 0) return null;
 
+                                                  const today = new Date();
+                                                  today.setHours(0, 0, 0, 0);
+
+                                                  // Defaults
+                                                  let bellColor = 'text-blue-500';
+                                                  let badgeBg = 'bg-blue-600';
+                                                  let animation = '';
+
+                                                  let minDiffDays = Infinity;
+
+                                                  // Find the most urgent payment
+                                                  pendingPayments.forEach(p => {
+                                                    const pDate = new Date(p.date);
+                                                    pDate.setHours(0, 0, 0, 0);
+                                                    const diffTime = pDate.getTime() - today.getTime();
+                                                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                                    if (diffDays < minDiffDays) minDiffDays = diffDays;
+                                                  });
+
+                                                  if (minDiffDays <= 0) {
+                                                    // Red: On the same day or overdue
+                                                    bellColor = 'text-red-500';
+                                                    badgeBg = 'bg-red-600';
+                                                    animation = 'animate-bounce';
+                                                  } else if (minDiffDays === 1) {
+                                                    // Orange: 1 day before
+                                                    bellColor = 'text-orange-500';
+                                                    badgeBg = 'bg-orange-600';
+                                                    animation = 'animate-pulse';
+                                                  } else if (minDiffDays === 2) {
+                                                    // Yellow: 2 days before
+                                                    bellColor = 'text-yellow-500';
+                                                    badgeBg = 'bg-yellow-600';
+                                                  }
+
                                                   return (
-                                                    <div className="relative flex items-center justify-center text-red-500 animate-bounce" title={`${pendingPaymentsCount} Pending Payment(s)`}>
+                                                    <div className={`relative flex items-center justify-center ${bellColor} ${animation}`} title={`${pendingPaymentsCount} Pending Payment(s)`}>
                                                       <BellRing className="w-5 h-5" />
-                                                      <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[9px] font-bold h-4 w-4 flex items-center justify-center rounded-full leading-none shadow-sm border border-background">
+                                                      <span className={`absolute -top-1.5 -right-1.5 ${badgeBg} text-white text-[9px] font-bold h-4 w-4 flex items-center justify-center rounded-full leading-none shadow-sm border border-background`}>
                                                         {pendingPaymentsCount}
                                                       </span>
                                                     </div>
@@ -1439,6 +1440,29 @@ const Pipeline: React.FC = () => {
                                               </div>
                                             </div>
                                           </div>
+                                          {/* --- END OF ACTUAL CARD --- */}
+
+                                          {/* ✅ INLINE ADD CARD INPUT */}
+                                          {addingCardToColumn === column.id && insertAfterTaskId === task.id && (
+                                            <div className="p-2 bg-background rounded-lg border border-primary shadow-sm animate-in fade-in zoom-in-95 mt-1">
+                                              <Input
+                                                autoFocus
+                                                placeholder="Enter client name..."
+                                                value={newCardTitle}
+                                                onChange={e => setNewCardTitle(e.target.value)}
+                                                className="h-8 text-xs mb-2"
+                                                onKeyDown={e => {
+                                                  if (e.key === 'Enter') handleQuickCreateCard(column.id);
+                                                  if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }
+                                                }}
+                                              />
+                                              <div className="flex gap-2">
+                                                <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
+                                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }}>Cancel</Button>
+                                              </div>
+                                            </div>
+                                          )}
+
                                         </div>
                                       )
                                     }}
@@ -1447,7 +1471,8 @@ const Pipeline: React.FC = () => {
                               })}
                               {provided.placeholder}
 
-                              {addingCardToColumn === column.id ? (
+                              {/* ✅ BOTTOM ADD CARD INPUT */}
+                              {addingCardToColumn === column.id && !insertAfterTaskId ? (
                                 <div className="p-2 bg-background rounded-lg border border-primary shadow-sm animate-in fade-in zoom-in-95 mt-2">
                                   <Input
                                     autoFocus
@@ -1457,12 +1482,12 @@ const Pipeline: React.FC = () => {
                                     className="h-8 text-xs mb-2"
                                     onKeyDown={e => {
                                       if (e.key === 'Enter') handleQuickCreateCard(column.id);
-                                      if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); }
+                                      if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }
                                     }}
                                   />
                                   <div className="flex gap-2">
                                     <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); }}>Cancel</Button>
+                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }}>Cancel</Button>
                                   </div>
                                 </div>
                               ) : (
@@ -1498,7 +1523,6 @@ const Pipeline: React.FC = () => {
         }}>
           <DialogContent className="max-w-[95vw] md:max-w-5xl h-[90vh] md:h-[85vh] p-0 bg-background border-border flex flex-col overflow-hidden text-foreground">
             {selectedTask && (() => {
-              // ✅ NEW: Verify Access for the Modal
               const hasFullAccess = checkHasFullAccess(selectedTask, currentUser);
 
               return (
@@ -1531,7 +1555,6 @@ const Pipeline: React.FC = () => {
 
                       <div className="flex flex-col sm:flex-row flex-wrap items-start gap-6 sm:gap-8">
 
-                        {/* 1. MEMBERS */}
                         <div className="space-y-1.5 w-full sm:w-auto">
                           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members</h4>
                           <div className="flex items-center gap-1">
@@ -1548,7 +1571,6 @@ const Pipeline: React.FC = () => {
                               ));
                             })()}
 
-                            {/* NEW UI: ADD MEMBER BUTTON */}
                             {hasFullAccess && (
                               <Popover>
                                 <PopoverTrigger asChild>
@@ -1580,7 +1602,6 @@ const Pipeline: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* 2. LABELS */}
                         <div className="space-y-1.5 w-full sm:w-auto">
                           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Labels</h4>
                           <div className="flex items-center gap-2 flex-wrap">
@@ -1590,7 +1611,6 @@ const Pipeline: React.FC = () => {
                               </div>
                             ))}
 
-                            {/* NEW UI: ADD LABEL BUTTON */}
                             {hasFullAccess && (
                               <Popover open={isCreatingLabel} onOpenChange={setIsCreatingLabel}>
                                 <PopoverTrigger asChild>
@@ -1634,7 +1654,6 @@ const Pipeline: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* 3. ADD TO CARD (HIDDEN IF NO ACCESS) */}
                         {hasFullAccess && (
                           <div className="space-y-1.5 w-full sm:w-auto">
                             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add to card</h4>
@@ -1738,7 +1757,7 @@ const Pipeline: React.FC = () => {
                                   <CheckSquare className="h-5 w-5 text-muted-foreground" /> {checklist.title}
                                 </h3>
                                 {hasFullAccess && (
-                                  <Button variant="ghost" size="sm" className="opacity-0 group-hover/chk:opacity-100 h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => handleDeleteChecklist(checklist.id)}>Delete</Button>
+                                  <Button variant="ghost" size="sm" className="opacity-0 group-hover/chk:opacity-100 h-8 text-xs text-destructive hover:bg-destructive/10" onClick={() => handleDeleteChecklist(checklist.id)}>Delete Checklist</Button>
                                 )}
                               </div>
 
@@ -1749,14 +1768,28 @@ const Pipeline: React.FC = () => {
 
                               <div className="space-y-2 pl-0">
                                 {checklist.items.map(item => (
-                                  <div key={item.id} className="flex items-start gap-3 group/item hover:bg-muted/20 p-1.5 rounded -ml-1.5 transition-colors">
-                                    <Checkbox
-                                      checked={item.isCompleted}
-                                      onCheckedChange={() => handleToggleChecklistItem(checklist.id, item.id, item.isCompleted)}
-                                      className="mt-0.5"
-                                      disabled={!hasFullAccess}
-                                    />
-                                    <span className={cn("text-sm transition-all", item.isCompleted && "line-through text-muted-foreground")}>{item.text}</span>
+                                  <div key={item.id} className="flex items-start justify-between group/item hover:bg-muted/20 p-1.5 rounded -ml-1.5 transition-colors">
+                                    <div className="flex items-start gap-3">
+                                      <Checkbox
+                                        checked={item.isCompleted}
+                                        onCheckedChange={() => handleToggleChecklistItem(checklist.id, item.id, item.isCompleted)}
+                                        className="mt-0.5"
+                                        disabled={!hasFullAccess}
+                                      />
+                                      <span className={cn("text-sm transition-all", item.isCompleted && "line-through text-muted-foreground")}>{item.text}</span>
+                                    </div>
+
+                                    {/* Added 1-by-1 Delete Button */}
+                                    {hasFullAccess && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 opacity-0 group-hover/item:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                                        onClick={() => handleDeleteChecklistItem(checklist.id, item.id)}
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </Button>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1787,35 +1820,82 @@ const Pipeline: React.FC = () => {
                         })}
                       </div>
 
-                      {/* PAYMENTS */}
-                      {(selectedTask.payments || []).length > 0 && (
+                      {/* PAYMENTS - Wrapped in hasFullAccess for assigned members only */}
+                      {hasFullAccess && (selectedTask.payments || []).length > 0 && (
                         <div className="space-y-3 mt-6">
                           <h3 className="font-semibold flex items-center gap-2 text-lg">
                             <IndianRupee className="h-5 w-5 text-muted-foreground" /> Payments
                           </h3>
                           <div className="space-y-2">
                             {selectedTask.payments!.map((payment: any) => (
-                              <div key={payment.id} className="flex items-center justify-between p-2.5 border border-border rounded-lg bg-background shadow-sm hover:border-primary/50 transition-colors">
-                                <div className="flex items-center gap-3">
-                                  <Checkbox
-                                    checked={payment.status === 'collected'}
-                                    onCheckedChange={() => handleTogglePaymentStatus(payment.id)}
-                                    disabled={payment.status === 'collected' || !hasFullAccess}
-                                  />
-                                  <div className={cn("flex flex-col", payment.status === 'collected' && "opacity-50 line-through")}>
-                                    <span className="font-bold text-sm text-green-600 flex items-center">
-                                      ₹{payment.amount.toLocaleString()}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                      <CalendarDays className="h-3 w-3" /> Due: {format(new Date(payment.date), 'dd MMM yyyy')}
-                                    </span>
+                              <div key={payment.id} className="flex flex-col p-2.5 border border-border rounded-lg bg-background shadow-sm hover:border-primary/50 transition-colors group">
+
+                                {editingPaymentId === payment.id ? (
+                                  <div className="flex flex-col gap-2">
+                                    <div className="flex gap-2 items-center">
+                                      <Input
+                                        type="number"
+                                        value={editPaymentAmount}
+                                        onChange={(e) => setEditPaymentAmount(e.target.value)}
+                                        className="h-8 text-sm w-32"
+                                        placeholder="Amount"
+                                      />
+                                      <Input
+                                        type="date"
+                                        value={editPaymentDate}
+                                        onChange={(e) => setEditPaymentDate(e.target.value)}
+                                        className="h-8 text-sm flex-1"
+                                      />
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleUpdatePayment(payment.id)}>Save</Button>
+                                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditingPaymentId(null)}>Cancel</Button>
+                                    </div>
                                   </div>
-                                </div>
-                                {payment.status === 'collected' ? (
-                                  <span className="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold uppercase">Collected</span>
                                 ) : (
-                                  <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold uppercase">Pending</span>
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                      <Checkbox
+                                        checked={payment.status === 'collected'}
+                                        onCheckedChange={() => handleTogglePaymentStatus(payment.id)}
+                                        disabled={payment.status === 'collected'}
+                                      />
+                                      <div className={cn("flex flex-col", payment.status === 'collected' && "opacity-50 line-through")}>
+                                        <span className="font-bold text-sm text-green-600 flex items-center">
+                                          ₹{payment.amount.toLocaleString()}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                          <CalendarDays className="h-3 w-3" /> Due: {format(new Date(payment.date), 'dd MMM yyyy')}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+
+                                      {/* Edit Pencil Icon (Only shows on hover if not collected) */}
+                                      {payment.status !== 'collected' && (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={() => {
+                                            setEditingPaymentId(payment.id);
+                                            setEditPaymentAmount(payment.amount.toString());
+                                            setEditPaymentDate(new Date(payment.date).toISOString().split('T')[0]);
+                                          }}
+                                        >
+                                          <Pencil className="h-3 w-3 text-muted-foreground" />
+                                        </Button>
+                                      )}
+
+                                      {payment.status === 'collected' ? (
+                                        <span className="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold uppercase">Collected</span>
+                                      ) : (
+                                        <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold uppercase">Pending</span>
+                                      )}
+                                    </div>
+                                  </div>
                                 )}
+
                               </div>
                             ))}
                           </div>
@@ -1845,7 +1925,6 @@ const Pipeline: React.FC = () => {
                         <TabsContent value="comments" className="m-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=inactive]:hidden flex-col">
                           <ScrollArea className="flex-1 p-4">
 
-                            {/* ✅ CHAT BOX: HIDE IF NO ACCESS */}
                             {hasFullAccess ? (
                               <div className="bg-background border border-border rounded-lg shadow-sm p-3 mb-6 focus-within:ring-2 focus-within:ring-primary/20 transition-all relative flex flex-col z-50">
 
@@ -1878,7 +1957,6 @@ const Pipeline: React.FC = () => {
                                   className="min-h-[40px] border-none focus-visible:ring-0 p-0 resize-none text-sm shadow-none flex-1"
                                 />
 
-                                {/* @Mention Dropdown (Restored & Updated to allow tagging ANYONE) */}
                                 {showMentionPicker && (
                                   <div className="absolute left-3 z-[150] bg-popover border border-border rounded-xl shadow-2xl w-56 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
                                     style={{ top: '100%', marginTop: 8 }}
@@ -1888,7 +1966,6 @@ const Pipeline: React.FC = () => {
                                     </div>
                                     <div className="py-1 max-h-44 overflow-y-auto">
                                       {(() => {
-                                        // We removed the "assigned users only" restriction so anyone can tag anyone
                                         const visibleUsers = allUsers.filter(u =>
                                           u.name.toLowerCase().includes(mentionQuery.toLowerCase())
                                         );
@@ -1915,9 +1992,26 @@ const Pipeline: React.FC = () => {
                                   </div>
                                 )}
 
+                                {/* Image Previews for New Comment */}
+                                {commentAttachments.length > 0 && (
+                                  <div className="w-full flex flex-wrap gap-2 mt-2 px-2 pb-2">
+                                    {commentAttachments.map((url, idx) => (
+                                      <div key={idx} className="relative group/newimg">
+                                        <img src={getFileUrl(url)} alt="Attached" className="h-10 w-10 object-cover rounded border" />
+                                        <button
+                                          onClick={() => setCommentAttachments(prev => prev.filter((_, i) => i !== idx))}
+                                          className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/newimg:opacity-100 transition-opacity"
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
                                 <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-2 border-t border-border/50 w-full">
                                   <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
-                                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
+                                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1958,7 +2052,7 @@ const Pipeline: React.FC = () => {
                                   <Button
                                     size="sm"
                                     onClick={handleAddComment}
-                                    disabled={!newComment.trim() && !commentAttachment}
+                                    disabled={!newComment.trim() && commentAttachments.length === 0}
                                     className="h-7 px-4 shrink-0 mt-2 sm:mt-0"
                                   >
                                     Save
@@ -1986,55 +2080,98 @@ const Pipeline: React.FC = () => {
                                         <span className="font-semibold text-sm">{comment.user.name}</span>
                                         <span className="text-[10px] text-muted-foreground">{format(parseISO(comment.createdAt), 'MMM d, p')}</span>
                                       </div>
-                                      {/* Edit Button */}
-                                      {hasFullAccess && editingCommentId !== comment.id && (
-                                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100" onClick={() => { setEditingCommentId(comment.id); setEditingCommentText(comment.content); }}>
-                                          <Pencil className="h-3 w-3 text-muted-foreground" />
-                                        </Button>
+
+                                      {/* ONLY show Edit/Delete if the user has full access AND they created the comment */}
+                                      {hasFullAccess && (currentUser?.name === comment.user.name || currentUser?.id === comment.user.id) && editingCommentId !== comment.id && (
+                                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => {
+                                            setEditingCommentId(comment.id);
+                                            setEditingCommentText(comment.content);
+                                            setEditingCommentDueDate(comment.dueDate || '');
+                                            setEditingCommentAttachments(comment.attachmentUrls || (comment.attachmentUrl ? [comment.attachmentUrl] : []));
+                                          }}>
+                                            <Pencil className="h-3 w-3 text-muted-foreground hover:text-primary" />
+                                          </Button>
+                                          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleDeleteComment(comment.id)}>
+                                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                                          </Button>
+                                        </div>
                                       )}
                                     </div>
 
                                     {editingCommentId === comment.id ? (
-                                      <div className="space-y-2">
+                                      <div className="space-y-2 mt-1">
                                         <Textarea
                                           value={editingCommentText}
                                           onChange={e => setEditingCommentText(e.target.value)}
                                           className="min-h-[60px] text-sm"
                                         />
-                                        <div className="flex gap-2">
-                                          <Button size="sm" className="h-7" onClick={() => handleEditComment(comment.id)}>Save</Button>
-                                          <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditingCommentId(null)}>Cancel</Button>
+
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <div className="flex items-center gap-1.5">
+                                            <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
+                                            <input
+                                              type="date"
+                                              value={editingCommentDueDate}
+                                              onChange={e => setEditingCommentDueDate(e.target.value)}
+                                              className="h-7 text-xs border border-input rounded-md px-2 bg-background"
+                                            />
+                                          </div>
+
+                                          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => fileInputRef.current?.click()}>
+                                            <ImageIcon className="h-3.5 w-3.5 mr-1.5" /> Attach Files
+                                          </Button>
+                                        </div>
+
+                                        {/* Edit Mode Attachment Previews */}
+                                        {editingCommentAttachments.length > 0 && (
+                                          <div className="flex flex-wrap gap-2 mt-2">
+                                            {editingCommentAttachments.map((url, idx) => (
+                                              <div key={idx} className="relative group/editimg">
+                                                <img src={getFileUrl(url)} alt="Attachment" className="h-12 w-12 object-cover rounded border" />
+                                                <button
+                                                  onClick={() => setEditingCommentAttachments(prev => prev.filter((_, i) => i !== idx))}
+                                                  className="absolute -top-1.5 -right-1.5 bg-destructive text-white rounded-full p-0.5 opacity-0 group-hover/editimg:opacity-100 transition-opacity shadow-sm"
+                                                >
+                                                  <X className="h-3 w-3" />
+                                                </button>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        <div className="flex gap-2 pt-2">
+                                          <Button size="sm" className="h-7" onClick={() => handleEditComment(comment.id)}>Save Changes</Button>
+                                          <Button size="sm" variant="ghost" className="h-7" onClick={() => {
+                                            setEditingCommentId(null);
+                                            setEditingCommentAttachments([]);
+                                            setEditingCommentDueDate('');
+                                          }}>Cancel</Button>
                                         </div>
                                       </div>
                                     ) : (
                                       <div className="text-sm text-foreground/90 bg-white dark:bg-card p-2.5 rounded-lg border border-border shadow-sm inline-block min-w-[200px] w-full">
-                                        {/* Render @mentions highlighted */}
                                         <p className="whitespace-pre-wrap break-words leading-relaxed text-sm text-foreground/80">
                                           {(() => {
                                             try {
                                               if (!comment.content) return null;
 
-                                              // 1. Gather all employee names in the system to look for tags
                                               const possibleNames = allUsers?.map((u: any) => `@${u.name}`) || [];
 
                                               if (possibleNames.length === 0) {
                                                 return <span>{comment.content}</span>;
                                               }
 
-                                              // 2. Safely prepare names for splitting (longest names first)
                                               const escapedNames = possibleNames
                                                 .filter(Boolean)
                                                 .sort((a: string, b: string) => b.length - a.length)
                                                 .map((name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
-                                              // 3. Create the split rule based ONLY on real employee names
                                               const regex = new RegExp(`(${escapedNames.join('|')})`, 'gi');
 
-                                              // 4. Render the text exactly as typed
                                               return comment.content.split(regex).map((part: string, i: number) => {
                                                 if (!part) return null;
 
-                                                // If this part is exactly an employee's name, make it BLUE
                                                 const isMention = possibleNames.some(
                                                   (name: string) => name.toLowerCase() === part.toLowerCase()
                                                 );
@@ -2047,16 +2184,14 @@ const Pipeline: React.FC = () => {
                                                   );
                                                 }
 
-                                                // CRITICAL FIX: Render everything else as normal text so it never disappears!
                                                 return <span key={i}>{part}</span>;
                                               });
                                             } catch (err) {
-                                              // FOOLPROOF FALLBACK: If anything fails, just show the plain text so the comment never goes missing!
                                               return <span>{comment.content}</span>;
                                             }
                                           })()}
                                         </p>
-                                        {/* Due Date Badge */}
+
                                         {comment.dueDate && (
                                           <div className={cn(
                                             'mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
@@ -2073,7 +2208,6 @@ const Pipeline: React.FC = () => {
                                           </div>
                                         )}
 
-                                        {/* Mentioned Users */}
                                         {comment.mentions && comment.mentions.length > 0 && (
                                           <div className="mt-1.5 flex items-center flex-wrap gap-1">
                                             <Users className="h-3 w-3 text-muted-foreground" />
@@ -2085,19 +2219,30 @@ const Pipeline: React.FC = () => {
                                           </div>
                                         )}
 
-                                        {comment.attachmentUrl && (
-                                          <div className="mt-2 group/img cursor-pointer">
-                                            <div className="rounded-md overflow-hidden border border-border relative">
-                                              <img src={getFileUrl(comment.attachmentUrl)} alt="Attachment" className="max-w-full max-h-[200px] object-contain bg-muted/20" />
-                                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
+                                        {/* Display Multiple Attachments */}
+                                        {(() => {
+                                          const attachments = comment.attachmentUrls || (comment.attachmentUrl ? [comment.attachmentUrl] : []);
+                                          if (attachments.length === 0) return null;
+
+                                          return (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                              {attachments.map((url, idx) => (
+                                                <div key={idx} className="group/img cursor-pointer max-w-[200px]">
+                                                  <div className="rounded-md overflow-hidden border border-border relative">
+                                                    <img src={getFileUrl(url)} alt={`Attachment ${idx + 1}`} className="w-full h-auto object-contain bg-muted/20" />
+                                                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
+                                                  </div>
+                                                </div>
+                                              ))}
                                             </div>
-                                          </div>
-                                        )}
+                                          );
+                                        })()}
                                       </div>
                                     )}
                                   </div>
                                 </div>
                               ))}
+
                             </div>
                           </ScrollArea>
                         </TabsContent>

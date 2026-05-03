@@ -42,6 +42,8 @@ import api from '@/lib/api';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
+// ✅ NEW — smooth searchable select
+import { SearchableSelect, SelectOption } from '@/pages/Selection/Searchableselect';
 
 interface SelectionItem {
   id: string;
@@ -756,7 +758,7 @@ const Selections: React.FC = () => {
 
         {/* Edit / New Version Modal */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-[96vw] w-[1200px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 {isNewVersionMode ? (
@@ -903,127 +905,134 @@ const Selections: React.FC = () => {
                   )}
                 </h3>
 
-                <div className="bg-muted/30 p-4 rounded-lg space-y-4">
+                {/* ── COMPACT SINGLE-ROW PICKER ── */}
+                <div className="bg-muted/30 p-3 rounded-lg">
 
-                  {/* 1. MOVED TO TOP: Area Name (Only show if not editing an existing row's product) */}
-                  {editingItemIndex === null && (
-                    <div className="space-y-2 mb-4">
-                      <Label>Area Name *</Label>
-                      <Input
-                        list="selection-area-options"
-                        placeholder="e.g. Master Bedroom"
-                        value={currentItem.areaName}
-                        onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
-                        className="h-9"
-                      />
-                      <datalist id="selection-area-options">
-                        {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
-                          <option key={area} value={area} />
-                        ))}
-                      </datalist>
-                    </div>
-                  )}
+                  {/* Labels row */}
+                  <div className="flex items-center gap-2 mb-1 px-0.5">
+                    {editingItemIndex === null && (
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[120px] shrink-0">Area Name *</span>
+                    )}
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[150px] shrink-0">Company</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[160px] shrink-0 flex items-center gap-1">
+                      Collection
+                      {selectedCatalogType && (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
+                          {selectedCatalogType}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[130px] shrink-0">🔍 SRL Direct</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[200px] shrink-0">Design</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[140px] shrink-0">SRL No.</span>
+                    <span className="shrink-0 w-[90px]" />
+                  </div>
 
-                  <div className="grid grid-cols-3 gap-4">
-                    {/* COMPANY SELECTION */}
-                    <div className="space-y-2">
-                      <Label>Company</Label>
-                      <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
-                        <SelectTrigger><SelectValue placeholder="Select Company" /></SelectTrigger>
-                        <SelectContent>{companies.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-                      </Select>
-                    </div>
+                  {/* Controls row — all in one line */}
+                  <div className="flex items-center gap-2">
 
-                    {/* CATALOG SELECTION */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <Label>Collection</Label>
-                        {selectedCatalogType && (
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
-                            Type: {selectedCatalogType}
-                          </span>
-                        )}
-                      </div>
-                      <Select value={selectedCatalogId} onValueChange={setSelectedCatalogId} disabled={!selectedCompanyId}>
-                        <SelectTrigger><SelectValue placeholder={catalogs.length ? "Select" : "No collections"} /></SelectTrigger>
-                        <SelectContent>
-                          {catalogs.map(c => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name} <span className="text-muted-foreground opacity-70">({c.type || 'Generic'})</span>
-                            </SelectItem>
+                    {/* Area Name — hidden when replacing a row's product */}
+                    {editingItemIndex === null && (
+                      <div className="w-[120px] shrink-0">
+                        <Input
+                          list="selection-area-options"
+                          placeholder="e.g. Master Bedroom"
+                          value={currentItem.areaName}
+                          onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
+                          className="h-9 text-xs px-2"
+                        />
+                        <datalist id="selection-area-options">
+                          {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance"].map(area => (
+                            <option key={area} value={area} />
                           ))}
-                        </SelectContent>
-                      </Select>
+                        </datalist>
+                      </div>
+                    )}
+
+                    {/* Company */}
+                    <div className="w-[150px] shrink-0">
+                      <SearchableSelect
+                        options={companies.map((c: any) => ({ value: c.id, label: c.name }))}
+                        value={selectedCompanyId}
+                        onChange={setSelectedCompanyId}
+                        placeholder="Company…"
+                        className="h-9 text-xs"
+                      />
                     </div>
 
-                    {/* PRODUCT SELECTION — Direct SRL & Design */}
-                    <div className="space-y-2">
-                      <Label>Product Search</Label>
+                    {/* Collection */}
+                    <div className="w-[160px] shrink-0">
+                      <SearchableSelect
+                        options={catalogs.map((c: any) => ({
+                          value: c.id,
+                          label: `${c.name}${c.type ? ` (${c.type})` : ''}`,
+                        }))}
+                        value={selectedCatalogId}
+                        onChange={setSelectedCatalogId}
+                        placeholder={selectedCompanyId ? "Collection…" : "Select Company"}
+                        disabled={!selectedCompanyId}
+                        className="h-9 text-xs"
+                      />
+                    </div>
 
+                    {/* SRL Direct Search */}
+                    <div className="w-[130px] shrink-0">
                       <Input
-                        placeholder="🔍 Type SRL Number and press Enter..."
+                        placeholder="🔍 Type SRL + Enter"
                         disabled={!selectedCatalogId}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             handleSrlDirectSearch(e.currentTarget.value);
+                            e.currentTarget.value = '';
                           }
                         }}
-                        onBlur={(e) => handleSrlDirectSearch(e.target.value)}
-                        className="border-green-300 bg-green-50 focus:border-green-500 text-green-900 placeholder-green-700/50 font-medium"
+                        onBlur={(e) => {
+                          if (e.target.value) {
+                            handleSrlDirectSearch(e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="h-9 text-xs px-2 border-green-300 bg-green-50 focus:border-green-500 text-green-900 placeholder-green-600/60"
                       />
-
-                      <div className="text-xs text-center text-muted-foreground py-1 font-medium">- OR SEARCH BY DESIGN -</div>
-
-                      <Select
-                        value={selectedDesignName}
-                        onValueChange={handleDesignSelect}
-                        disabled={!selectedCatalogId}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Select Design" /></SelectTrigger>
-                        <SelectContent>
-                          {Array.from(new Set(products.map(p => p.name)))
-                            .sort()
-                            .map(name => (
-                              <SelectItem key={name} value={name}>{name}</SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-
-                      {selectedDesignName && (
-                        <div className="space-y-1 mt-2">
-                          <Label className="text-xs text-muted-foreground">SRL Number</Label>
-                          <Select
-                            value={selectedProduct?.uniqueKey || ''}
-                            onValueChange={handleProductSelect}
-                          >
-                            <SelectTrigger className="border-blue-300 bg-blue-50 text-blue-800">
-                              <SelectValue placeholder="Select SRL" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableSrls.map(p => (
-                                <SelectItem key={p.uniqueKey} value={p.uniqueKey}>
-                                  SRL: {p.srlNo}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
                     </div>
-                  </div>
 
-                  {/* Selected Product Action Block - REMOVED PRICE & QTY */}
-                  {selectedProduct && (
-                    <div className="p-3 bg-background border rounded-lg animate-in fade-in mt-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex-1">
-                          <p className="font-medium text-sm text-primary mb-1">{selectedProduct.name}</p>
-                          <p className="text-xs text-muted-foreground">SRL: {selectedProduct.srlNo}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9">
-                            {editingItemIndex !== null ? 'Update Row' : 'Add Item'}
+                    {/* Design */}
+                    <div className="w-[200px] shrink-0">
+                      <SearchableSelect
+                        options={Array.from(new Set(products.map((p: any) => p.name)))
+                          .sort()
+                          .map(name => ({ value: name as string, label: name as string }))}
+                        value={selectedDesignName}
+                        onChange={handleDesignSelect}
+                        placeholder="Search design…"
+                        disabled={!selectedCatalogId}
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    {/* SRL picker — always visible, disabled until design chosen */}
+                    <div className="w-[140px] shrink-0">
+                      <SearchableSelect
+                        options={availableSrls.map((p: any) => ({
+                          value: p.uniqueKey,
+                          label: `SRL: ${p.srlNo}`,
+                        }))}
+                        value={selectedProduct?.uniqueKey || ''}
+                        onChange={handleProductSelect}
+                        placeholder="SRL…"
+                        colorVariant="blue"
+                        disabled={!selectedDesignName}
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    {/* Action buttons — inline at end */}
+                    <div className="shrink-0 flex gap-1.5">
+                      {selectedProduct ? (
+                        <>
+                          <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9 px-3 text-xs whitespace-nowrap">
+                            {editingItemIndex !== null ? 'Update' : 'Add Item'}
                           </Button>
                           {editingItemIndex !== null && (
                             <Button
@@ -1035,13 +1044,25 @@ const Selections: React.FC = () => {
                                 setSelectedCatalogId('');
                               }}
                               size="sm"
-                              variant="outline" className="h-9"
+                              variant="outline"
+                              className="h-9 px-2 text-xs"
                             >
-                              Cancel Edit
+                              ✕
                             </Button>
                           )}
-                        </div>
-                      </div>
+                        </>
+                      ) : (
+                        <div className="w-[90px]" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Compact confirmation pill */}
+                  {selectedProduct && (
+                    <div className="mt-2 flex items-center gap-2 px-1">
+                      <span className="text-xs text-muted-foreground">Selected:</span>
+                      <span className="text-xs font-semibold text-primary truncate max-w-[200px]">{selectedProduct.name}</span>
+                      <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">SRL: {selectedProduct.srlNo}</span>
                     </div>
                   )}
                 </div>

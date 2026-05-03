@@ -3696,16 +3696,21 @@ app.put('/api/inquiries/:id/stage', authenticateToken, async (req: any, res: Res
     res.status(500).json({ error: 'Failed to update stage' });
   }
 });
+// ==========================================
 // 3. ADD COMMENT TO INQUIRY
+// ==========================================
 app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { content, attachmentUrl, dueDate, mentionedUserIds, stage } = req.body;
+  // ✅ FIX: Extract attachmentUrls correctly
+  const { content, attachmentUrl, attachmentUrls, dueDate, mentionedUserIds, stage } = req.body;
 
   try {
     const comment = await prisma.inquiryComment.create({
       data: {
         content: content || '',
         attachmentUrl: attachmentUrl || null,
+        // ✅ FIX: Save the array of images
+        attachmentUrls: attachmentUrls && attachmentUrls.length > 0 ? attachmentUrls : (attachmentUrl ? [attachmentUrl] : []),
         dueDate: dueDate ? new Date(dueDate) : null,
         stage: stage || null,
         inquiryId: id,
@@ -3730,13 +3735,32 @@ app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res:
     res.status(500).json({ error: 'Failed to post comment' });
   }
 });
-// EDIT COMMENT
+
+// ==========================================
+// EDIT COMMENT (✅ RESTORED to fix 404 Error)
+// ==========================================
 app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) => {
+  // ✅ FIX: Extract all fields
+  const { content, dueDate, attachmentUrl, attachmentUrls } = req.body;
+  
   try {
     const comment = await prisma.inquiryComment.update({
       where: { id: req.params.id },
-      data: { content: req.body.content }
+      data: { 
+        content: content || '',
+        dueDate: dueDate ? new Date(dueDate) : null,
+        attachmentUrl: attachmentUrl || null,
+        // ✅ FIX: Save the array of images
+        attachmentUrls: attachmentUrls && attachmentUrls.length > 0 ? attachmentUrls : (attachmentUrl ? [attachmentUrl] : []),
+      },
+      include: {
+        user: { select: { name: true } },
+        mentions: {
+          include: { user: { select: { id: true, name: true } } }
+        }
+      }
     });
+    
     await logActivity(req.user.id, 'UPDATE', 'COMMENT', comment.id, `Edited a comment`);
     res.json(comment);
   } catch (error) {
@@ -3744,6 +3768,7 @@ app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) 
     res.status(500).json({ error: 'Failed to edit comment' });
   }
 });
+
 
 
 // Mark mentions as read for a specific inquiry card
@@ -3801,6 +3826,21 @@ app.delete('/api/checklists/:id', authenticateToken, async (req: any, res: Respo
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete checklist' });
+  }
+});
+
+// 6.5 DELETE INDIVIDUAL CHECKLIST ITEM
+app.delete('/api/checklist-items/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    await prisma.inquiryChecklistItem.delete({
+      where: { id: req.params.id }
+    });
+    
+    await logActivity(req.user.id, 'DELETE', 'CHECKLIST_ITEM', req.params.id, 'Deleted a checklist item');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting checklist item:', error);
+    res.status(500).json({ error: 'Failed to delete item' });
   }
 });
 // 5. ADD ITEM TO CHECKLIST
@@ -3877,6 +3917,35 @@ app.post('/api/inquiries/:id/payments', authenticateToken, async (req: any, res:
   } catch (error) {
     console.error('Payment create error:', error);
     res.status(500).json({ error: 'Failed to add payment' });
+  }
+});
+
+// Update an existing payment amount and date
+// Update an existing payment amount and date
+app.put('/api/payments/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { amount, date } = req.body;
+
+    if (!amount || !date) {
+      return res.status(400).json({ error: "Amount and date are required" });
+    }
+
+    const updatedPayment = await prisma.inquiryPayment.update({
+      where: { 
+        id: id 
+      },
+      data: {
+        amount: Number(amount),
+        date: new Date(date),
+      },
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'PAYMENT', id, `Updated payment amount to ₹${amount}`);
+    res.json(updatedPayment);
+  } catch (error) {
+    console.error("Error updating payment:", error);
+    res.status(500).json({ error: "Failed to update payment" });
   }
 });
 
@@ -4683,6 +4752,11 @@ app.get('/api/pipeline/todo-items', authenticateToken, async (req: any, res: Res
       dueDate: c.dueDate,
       dueDateStatus: classify(c.dueDate),
       content: c.content,
+      
+      // ✅ FIX: Actually send the images to the To-Do list frontend!
+      attachmentUrl: c.attachmentUrl,
+      attachmentUrls: c.attachmentUrls,
+      
       user: c.user,
       mentions: c.mentions,
       inquiry: c.inquiry,

@@ -55,6 +55,17 @@ const FilterPill: React.FC<{ label: string; onRemove: () => void }> = ({ label, 
   </span>
 );
 
+
+// --- HELPER FUNCTION (Add to both DailyReportPage.tsx and AdminDailyReports.tsx) ---
+const getFileUrl = (path: string | undefined) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  const baseUrl = api.defaults.baseURL || '';
+  const rootUrl = baseUrl.endsWith('/api') ? baseUrl.slice(0, -4) : baseUrl;
+  return `${rootUrl}${path}`;
+};
+
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const AdminDailyReports: React.FC = () => {
@@ -730,6 +741,25 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
                     <p className="text-sm text-foreground/80 bg-white/60 rounded px-3 py-2 border border-border/40">
                       {item.content}
                     </p>
+
+                    {/* ADDED: Show Attachments in Admin Todo (Images added to comments) */}
+                    {(() => {
+                      const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
+                      if (attachments.length === 0) return null;
+
+                      return (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {attachments.map((url: string, idx: number) => (
+                            <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img cursor-pointer max-w-[150px]">
+                              <div className="rounded-md overflow-hidden border border-border relative">
+                                <img src={getFileUrl(url)} alt={`Attachment ${idx + 1}`} className="w-full h-auto object-contain bg-muted/20" />
+                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <div className="flex items-center justify-between mt-2">
                       <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                         <span>Assigned to: <strong>{item.user?.name}</strong></span>

@@ -48,6 +48,15 @@ const emptyBlock = (): TimeBlock => ({
   description: '',
 });
 
+
+const getFileUrl = (path: string | undefined) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  const baseUrl = api.defaults.baseURL || '';
+  const rootUrl = baseUrl.endsWith('/api') ? baseUrl.slice(0, -4) : baseUrl;
+  return `${rootUrl}${path}`;
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const DailyReportPage: React.FC = () => {
@@ -590,6 +599,25 @@ const DailyReportPage: React.FC = () => {
                         <p className="text-sm text-foreground/80 bg-muted/30 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
                           {item.content || <span className="italic text-muted-foreground">No message</span>}
                         </p>
+
+                        {/* ADDED: Show Attachments in Todo (Images added to comments) */}
+                        {(() => {
+                          const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
+                          if (attachments.length === 0) return null;
+
+                          return (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {attachments.map((url: string, idx: number) => (
+                                <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img cursor-pointer max-w-[150px]">
+                                  <div className="rounded-md overflow-hidden border border-border relative">
+                                    <img src={getFileUrl(url)} alt={`Attachment ${idx + 1}`} className="w-full h-auto object-contain bg-muted/20" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
+                                  </div>
+                                </a>
+                              ))}
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex items-center justify-between mt-2">
                           <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">

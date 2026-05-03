@@ -201,14 +201,15 @@ model TimeCorrection {
 // ==========================================
 
 model InquiryComment {
-  id            String    @id @default(uuid())
-  content       String
-  attachmentUrl String?
+  id             String    @id @default(uuid())
+  content        String
+  attachmentUrl  String?
+  attachmentUrls String[]  // <--- ADD THIS LINE FOR MULTIPLE IMAGES
 
   // Due date for task tracking (optional)
-  dueDate       DateTime?
+  dueDate        DateTime?
 
-  createdAt     DateTime  @default(now())
+  createdAt      DateTime  @default(now())
 
   // Link to Inquiry
   inquiryId String
@@ -224,7 +225,6 @@ model InquiryComment {
   // @mentions
   mentions  InquiryCommentMention[]
 }
-
 model InquiryCommentMention {
   id        String         @id @default(uuid())
 
@@ -803,16 +803,19 @@ model Quotation {
 // [ADD THESE NEW MODELS AT THE BOTTOM OF THE FILE]
 
 model QuotationComment {
-  id            String    @id @default(uuid())
-  content       String
-  attachmentUrl String?
-  createdAt     DateTime  @default(now())
+  id             String    @id @default(uuid())
+  content        String
+  attachmentUrl  String?
+  attachmentUrls String[]  // <--- ADD THIS LINE FOR MULTIPLE IMAGES
+  dueDate        DateTime? // <--- ADD THIS LINE FOR DUE DATES
+
+  createdAt      DateTime  @default(now())
   
-  quotationId   String
-  quotation     Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotationId    String
+  quotation      Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
   
-  userId        String
-  user          User      @relation(fields: [userId], references: [id])
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
 }
 
 model QuotationLabel {

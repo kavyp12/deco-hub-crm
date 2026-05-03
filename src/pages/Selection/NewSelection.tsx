@@ -12,6 +12,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import { processProductsForDropdown } from '@/lib/utils';
+// ✅ NEW — import your custom SearchableSelect
+import { SearchableSelect, SelectOption } from '@/pages/Selection/Searchableselect';
 
 const COMMON_AREAS = [
   "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom",
@@ -20,7 +22,6 @@ const COMMON_AREAS = [
   "Puja Room", "Staircase", "Lobby", "Entrance",
   "Bathroom", "Store Room", "Servant Room", "Utility Area"
 ];
-
 
 interface SelectionItem {
   id?: string;
@@ -51,24 +52,40 @@ const NewSelection: React.FC = () => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
 
-  // Catalog & Type State
   const [catalogs, setCatalogs] = useState<any[]>([]);
   const [selectedCatalogId, setSelectedCatalogId] = useState('');
-  const [selectedCatalogType, setSelectedCatalogType] = useState<string>(''); // Stores 'Curtains', 'Rugs', etc.
+  const [selectedCatalogType, setSelectedCatalogType] = useState<string>('');
 
   const [products, setProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
-
   const [selectedProductKey, setSelectedProductKey] = useState<string>('');
 
   const [currentItem, setCurrentItem] = useState({ productId: '', quantity: 1, price: 0, areaName: '' });
   const [items, setItems] = useState<any[]>([]);
 
-  // ADD these 2 new states after line: const [selectedProductKey, setSelectedProductKey] = useState<string>('');
-  const [selectedDesignName, setSelectedDesignName] = useState<string>('');  // ✅ Step 1: chosen design
-  const [availableSrls, setAvailableSrls] = useState<any[]>([]);             // ✅ Step 2: SRL options for that design
+  const [selectedDesignName, setSelectedDesignName] = useState<string>('');
+  const [availableSrls, setAvailableSrls] = useState<any[]>([]);
 
-  // 1. Fetch Inquiries and Companies
+  // ── Derived option arrays for SearchableSelect ──────────────────────────
+
+  const companyOptions: SelectOption[] = companies.map(c => ({ value: c.id, label: c.name }));
+
+  const catalogOptions: SelectOption[] = catalogs.map(c => ({
+    value: c.id,
+    label: `${c.name}${c.type ? ` (${c.type})` : ''}`,
+  }));
+
+  const designOptions: SelectOption[] = Array.from(new Set(products.map(p => p.name)))
+    .sort()
+    .map(name => ({ value: name, label: name }));
+
+  const srlOptions: SelectOption[] = availableSrls.map(p => ({
+    value: p.uniqueKey,
+    label: `SRL: ${p.srlNo}`,
+  }));
+
+  // ── Data fetching ────────────────────────────────────────────────────────
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -93,35 +110,31 @@ const NewSelection: React.FC = () => {
       setSelectedCatalogType('');
       setProducts([]);
       setSelectedProduct(null);
-      setSelectedDesignName('');   // ✅ NEW
-      setAvailableSrls([]);        // ✅ NEW
-      setSelectedProductKey('');   // ✅ NEW
+      setSelectedDesignName('');
+      setAvailableSrls([]);
+      setSelectedProductKey('');
     }
   }, [selectedCompanyId, companies]);
 
-  // 3. Handle Catalog Change (Fetch Products & Set Type)
   useEffect(() => {
     if (selectedCatalogId) {
       const catalog = catalogs.find(c => c.id === selectedCatalogId);
-      if (catalog) {
-        setSelectedCatalogType(catalog.type || 'Generic');
-      }
+      if (catalog) setSelectedCatalogType(catalog.type || 'Generic');
       api.get(`/catalogs/${selectedCatalogId}/products`).then(({ data }) => {
         setProducts(data);
       });
-      setSelectedDesignName('');   // ✅ NEW
-      setAvailableSrls([]);        // ✅ NEW
-      setSelectedProductKey('');   // ✅ NEW
+      setSelectedDesignName('');
+      setAvailableSrls([]);
+      setSelectedProductKey('');
       setSelectedProduct(null);
     } else {
       setProducts([]);
       setSelectedCatalogType('');
-      setSelectedDesignName('');   // ✅ NEW
-      setAvailableSrls([]);        // ✅ NEW
+      setSelectedDesignName('');
+      setAvailableSrls([]);
     }
   }, [selectedCatalogId, catalogs]);
 
-  // 4. Handle Inquiry Change
   useEffect(() => {
     if (selectedInquiryId) {
       const inq = inquiries.find(i => i.id === selectedInquiryId);
@@ -131,7 +144,21 @@ const NewSelection: React.FC = () => {
     }
   }, [selectedInquiryId, inquiries]);
 
-  // ✅ UPDATED: Step 2 — pick specific SRL from the design's SRL list
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleDesignSelect = (designName: string) => {
+    setSelectedDesignName(designName);
+    setSelectedProductKey('');
+    setSelectedProduct(null);
+    setCurrentItem(prev => ({ ...prev, productId: '', price: 0 }));
+    if (designName) {
+      const srls = processProductsForDropdown(products.filter(p => p.name === designName));
+      setAvailableSrls(srls);
+    } else {
+      setAvailableSrls([]);
+    }
+  };
+
   const handleProductSelect = (uniqueKey: string) => {
     const prod = availableSrls.find(p => p.uniqueKey === uniqueKey);
     if (prod) {
@@ -141,6 +168,32 @@ const NewSelection: React.FC = () => {
         ? prod.price
         : parseFloat(String(prod.price).replace(/,/g, '')) || 0;
       setCurrentItem(prev => ({ ...prev, productId: prod.originalId, quantity: 1, price }));
+    } else {
+      // cleared
+      setSelectedProductKey('');
+      setSelectedProduct(null);
+    }
+  };
+
+  const handleSrlDirectSearch = (srlTerm: string) => {
+    if (!srlTerm.trim()) return;
+    const processedProducts = processProductsForDropdown(products);
+    const matchedProd = processedProducts.find(
+      p => p.srlNo?.toString().toLowerCase() === srlTerm.trim().toLowerCase()
+    );
+    if (matchedProd) {
+      setSelectedDesignName(matchedProd.name);
+      const srls = processProductsForDropdown(products.filter(p => p.name === matchedProd.name));
+      setAvailableSrls(srls);
+      setSelectedProductKey(matchedProd.uniqueKey);
+      setSelectedProduct(matchedProd);
+      const price = typeof matchedProd.price === 'number'
+        ? matchedProd.price
+        : parseFloat(String(matchedProd.price).replace(/,/g, '')) || 0;
+      setCurrentItem(prev => ({ ...prev, productId: matchedProd.originalId, price }));
+      toast({ title: 'Product Found', description: `Auto-selected ${matchedProd.name} (SRL: ${matchedProd.srlNo})` });
+    } else {
+      toast({ title: 'Not Found', description: `No product found with SRL: ${srlTerm}`, variant: 'destructive' });
     }
   };
 
@@ -157,10 +210,8 @@ const NewSelection: React.FC = () => {
       toast({ title: "Error", description: "Please enter an Area Name.", variant: "destructive" });
       return;
     }
-
     const selectedVariant = availableSrls.find(p => p.uniqueKey === selectedProductKey);
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
-
     if (!selectedVariant) return;
 
     const newItem: SelectionItem = {
@@ -174,32 +225,12 @@ const NewSelection: React.FC = () => {
       price: currentItem.price,
       total: currentItem.price * currentItem.quantity
     };
-
     setItems([...items, newItem]);
-
-    // ✅ Reset all product selection states
     setSelectedDesignName('');
     setAvailableSrls([]);
     setSelectedProductKey('');
     setSelectedProduct(null);
     setCurrentItem({ productId: '', quantity: 1, price: 0, areaName: '' });
-  };
-  // ✅ NEW: Step 1 — employee picks design name, then SRL dropdown populates
-  const handleDesignSelect = (designName: string) => {
-    setSelectedDesignName(designName);
-    setSelectedProductKey('');
-    setSelectedProduct(null);
-    setCurrentItem(prev => ({ ...prev, productId: '', price: 0 }));
-
-    if (designName) {
-      // Get all SRL variants for this design only
-      const srls = processProductsForDropdown(
-        products.filter(p => p.name === designName)
-      );
-      setAvailableSrls(srls);
-    } else {
-      setAvailableSrls([]);
-    }
   };
 
   const handleRemoveItem = (index: number) => {
@@ -218,16 +249,9 @@ const NewSelection: React.FC = () => {
       toast({ title: 'Error', description: 'Please add at least one product', variant: 'destructive' });
       return;
     }
-
     setLoading(true);
     try {
-      const payload = {
-        inquiryId: selectedInquiryId,
-        delivery_date: deliveryDate || null,
-        notes,
-        status,
-        items
-      };
+      const payload = { inquiryId: selectedInquiryId, delivery_date: deliveryDate || null, notes, status, items };
       const { data } = await api.post('/selections', payload);
       toast({ title: 'Selection Created', description: `Selection ${data.selection_number} created.` });
       navigate('/selections');
@@ -238,7 +262,6 @@ const NewSelection: React.FC = () => {
     }
   };
 
-  // Helper for badge color
   const getTypeBadgeColor = (type: string) => {
     switch (type?.toLowerCase()) {
       case 'curtains': return 'bg-orange-100 text-orange-700 border-orange-200';
@@ -248,52 +271,9 @@ const NewSelection: React.FC = () => {
     }
   };
 
-  const handleSrlDirectSearch = (srlTerm: string) => {
-    if (!srlTerm.trim()) return;
-
-    // Note: 'products' state is already filtered by the selected catalog in these files
-    const processedProducts = processProductsForDropdown(products);
-
-    const matchedProd = processedProducts.find(
-      p => p.srlNo?.toString().toLowerCase() === srlTerm.trim().toLowerCase()
-    );
-
-    if (matchedProd) {
-      // 1. Auto-select the design
-      setSelectedDesignName(matchedProd.name);
-
-      // 2. Populate available SRLs for this design
-      const srls = processProductsForDropdown(
-        products.filter(p => p.name === matchedProd.name)
-      );
-      setAvailableSrls(srls);
-
-      // 3. Set the specific product details
-      // Only call setSelectedProductKey if you are in NewSelection.tsx
-      if (typeof setSelectedProductKey === 'function') {
-        setSelectedProductKey(matchedProd.uniqueKey);
-      }
-      setSelectedProduct(matchedProd);
-
-      const price = typeof matchedProd.price === 'number'
-        ? matchedProd.price
-        : parseFloat(String(matchedProd.price).replace(/,/g, '')) || 0;
-
-      setCurrentItem(prev => ({
-        ...prev,
-        productId: matchedProd.originalId,
-        price: price
-      }));
-
-      toast({ title: 'Product Found', description: `Auto-selected ${matchedProd.name} (SRL: ${matchedProd.srlNo})` });
-    } else {
-      toast({ title: 'Not Found', description: `No product found with SRL: ${srlTerm}`, variant: 'destructive' });
-    }
-  };
-
   return (
     <DashboardLayout>
-      <div className="max-w-5xl animate-fade-in pb-20">
+      <div className="max-w-[1300px] w-full animate-fade-in pb-20">
         <div className="flex items-center gap-4 mb-8">
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}><ArrowLeft className="h-5 w-5" /></Button>
           <div>
@@ -303,7 +283,7 @@ const NewSelection: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Inquiry Selection Section */}
+          {/* Inquiry Selection */}
           <div className="card-premium p-6">
             <h2 className="text-lg font-semibold text-foreground mb-6">Select Inquiry</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -318,7 +298,6 @@ const NewSelection: React.FC = () => {
                   </SelectContent>
                 </Select>
               </div>
-
               {selectedInquiry && (
                 <div className="md:col-span-2 p-4 bg-muted/30 rounded-lg">
                   <h3 className="font-semibold mb-2">Inquiry Details</h3>
@@ -332,138 +311,176 @@ const NewSelection: React.FC = () => {
             </div>
           </div>
 
+          {/* Selection Details */}
+          <div className="card-premium p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-6">Selection Details</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="confirmed">Confirmed</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Delivery Date</Label>
+                <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+              </div>
+              <div className="md:col-span-3 space-y-2">
+                <Label>Notes</Label>
+                <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes..." />
+              </div>
+            </div>
+          </div>
+
           {/* Product Selection Section */}
           <div className="card-premium p-6 border-2 border-primary/10">
             <h2 className="text-lg font-semibold text-foreground mb-6 flex items-center gap-2">
               <Plus className="h-5 w-5 text-accent" /> Add Products
             </h2>
 
-            <div className="bg-muted/30 p-4 rounded-lg space-y-4">
+            {/* ── COMPACT SINGLE-ROW PICKER ── */}
+            <div className="bg-muted/30 p-3 rounded-lg">
 
-              {/* 1. MOVED TO TOP: Area Name */}
-              <div className="space-y-2 mb-4">
-                <Label>Area Name *</Label>
-                <Input
-                  list="common-areas-list"
-                  placeholder="e.g. Living Room"
-                  value={currentItem.areaName}
-                  onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
-                />
-                <datalist id="common-areas-list">
-                  {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby", "Home Theater"].map(area => (
-                    <option key={area} value={area} />
-                  ))}
-                </datalist>
+              {/* Labels row */}
+              <div className="flex items-center gap-2 mb-1 px-0.5">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[120px] shrink-0">Area Name *</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[160px] shrink-0">Company</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[160px] shrink-0 flex items-center gap-1">
+                  Collection
+                  {selectedCatalogType && (
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
+                      {selectedCatalogType}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[140px] shrink-0">🔍 SRL Direct</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex-1">Design</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[120px] shrink-0">SRL No.</span>
+                <span className="w-[76px] shrink-0" />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Company Search */}
-                <div className="space-y-2">
-                  <Label>Company</Label>
+              {/* Controls row — all in one line */}
+              <div className="flex items-center gap-2">
+
+                {/* Area Name */}
+                <div className="w-[120px] shrink-0">
                   <Input
-                    list="company-list-selection"
-                    placeholder="Type to search company..."
-                    onChange={(e) => {
-                      const match = companies.find(c => c.name.toLowerCase() === e.target.value.toLowerCase());
-                      if (match) setSelectedCompanyId(match.id);
-                    }}
+                    list="common-areas-list"
+                    placeholder="e.g. Living Room"
+                    value={currentItem.areaName}
+                    onChange={(e) => setCurrentItem({ ...currentItem, areaName: e.target.value })}
+                    className="h-9 text-xs px-2"
                   />
-                  <datalist id="company-list-selection">
-                    {companies.map(c => <option key={c.id} value={c.name} />)}
+                  <datalist id="common-areas-list">
+                    {COMMON_AREAS.map(area => <option key={area} value={area} />)}
                   </datalist>
                 </div>
 
-                {/* Collection/Catalog Search */}
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <Label>Collection</Label>
-                    {selectedCatalogType && (
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
-                        {selectedCatalogType}
-                      </span>
-                    )}
-                  </div>
-                  <Input
-                    list="catalog-list-selection"
-                    placeholder={selectedCompanyId ? "Type to search..." : "Select Company First"}
+                {/* Company */}
+                <div className="w-[160px] shrink-0">
+                  <SearchableSelect
+                    options={companyOptions}
+                    value={selectedCompanyId}
+                    onChange={setSelectedCompanyId}
+                    placeholder="Company…"
+                    className="h-9 text-xs"
+                  />
+                </div>
+
+                {/* Collection */}
+                <div className="w-[160px] shrink-0">
+                  <SearchableSelect
+                    options={catalogOptions}
+                    value={selectedCatalogId}
+                    onChange={setSelectedCatalogId}
+                    placeholder={selectedCompanyId ? "Collection…" : "Select Company"}
                     disabled={!selectedCompanyId}
-                    value={catalogs.find(c => c.id === selectedCatalogId)?.name || ''}
-                    onChange={(e) => {
-                      const match = catalogs.find(c => c.name.toLowerCase() === e.target.value.toLowerCase());
-                      if (match) setSelectedCatalogId(match.id);
-                    }}
+                    className="h-9 text-xs"
                   />
-                  <datalist id="catalog-list-selection">
-                    {catalogs.map(c => <option key={c.id} value={c.name} />)}
-                  </datalist>
                 </div>
 
-                {/* Product Selection — Direct SRL & Design */}
-                <div className="space-y-2">
-                  <Label>Product Search</Label>
-
+                {/* SRL direct search */}
+                <div className="w-[140px] shrink-0">
                   <Input
-                    placeholder="🔍 Type SRL Number & press Enter"
+                    placeholder="🔍 Type SRL + Enter"
                     disabled={!selectedCatalogId}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         handleSrlDirectSearch(e.currentTarget.value);
+                        e.currentTarget.value = '';
                       }
                     }}
-                    onBlur={(e) => handleSrlDirectSearch(e.target.value)}
-                    className="border-green-300 bg-green-50 focus:border-green-500 text-green-900 placeholder-green-700/50 font-medium"
+                    onBlur={(e) => {
+                      if (e.target.value) {
+                        handleSrlDirectSearch(e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                    className="h-9 text-xs px-2 border-green-300 bg-green-50 focus:border-green-500 text-green-900 placeholder-green-600/60"
                   />
+                </div>
 
-                  <div className="text-xs text-center text-muted-foreground py-1 font-medium">- OR SEARCH BY DESIGN -</div>
-
-                  <select
+                {/* Design */}
+                <div className="flex-1 min-w-0">
+                  <SearchableSelect
+                    options={designOptions}
                     value={selectedDesignName}
-                    onChange={(e) => handleDesignSelect(e.target.value)}
+                    onChange={handleDesignSelect}
+                    placeholder="Search design…"
                     disabled={!selectedCatalogId}
-                    className="w-full h-10 px-3 border border-input rounded-md bg-background text-sm disabled:opacity-50"
-                  >
-                    <option value="">-- Select Design --</option>
-                    {Array.from(new Set(products.map(p => p.name)))
-                      .sort()
-                      .map(name => <option key={name} value={name}>{name}</option>)}
-                  </select>
+                    className="h-9 text-xs"
+                  />
+                </div>
 
-                  {selectedDesignName && (
-                    <div className="space-y-1 mt-2">
-                      <Label className="text-xs text-muted-foreground">SRL Number</Label>
-                      <select
-                        value={selectedProductKey}
-                        onChange={(e) => handleProductSelect(e.target.value)}
-                        className="w-full h-10 px-3 border border-blue-300 bg-blue-50 rounded-md text-sm text-blue-800 font-medium"
-                      >
-                        <option value="">-- Select SRL --</option>
-                        {availableSrls.map(p => (
-                          <option key={p.uniqueKey} value={p.uniqueKey}>SRL: {p.srlNo}</option>
-                        ))}
-                      </select>
-                    </div>
+                {/* SRL picker — always visible, disabled until design chosen */}
+                <div className="w-[120px] shrink-0">
+                  <SearchableSelect
+                    options={srlOptions}
+                    value={selectedProductKey}
+                    onChange={handleProductSelect}
+                    placeholder="SRL…"
+                    colorVariant="blue"
+                    disabled={!selectedDesignName}
+                    className="h-9 text-xs"
+                  />
+                </div>
+
+                {/* Add Item button — only when product is ready */}
+                <div className="shrink-0">
+                  {selectedProduct ? (
+                    <Button
+                      type="button"
+                      onClick={handleAddItem}
+                      variant="accent"
+                      className="h-9 px-4 text-xs whitespace-nowrap"
+                    >
+                      Add Item
+                    </Button>
+                  ) : (
+                    <div className="w-[80px]" />
                   )}
                 </div>
               </div>
 
-              {/* Selected Product Action Block - REMOVED PRICE & QTY */}
+              {/* Confirmation pill — compact, below the row */}
               {selectedProduct && (
-                <div className="mt-4 p-4 bg-background border border-border rounded-lg animate-in fade-in slide-in-from-top-2">
-                  <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-primary">Ready to add: {selectedProduct.name}</p>
-                      <p className="text-xs text-muted-foreground">SRL: {selectedProduct.srlNo}</p>
-                    </div>
-                    <Button type="button" onClick={handleAddItem} variant="accent" className="w-full md:w-auto">
-                      Add Item to Area
-                    </Button>
-                  </div>
+                <div className="mt-2 flex items-center gap-2 px-1">
+                  <span className="text-xs text-muted-foreground">Selected:</span>
+                  <span className="text-xs font-semibold text-primary truncate max-w-[200px]">{selectedProduct.name}</span>
+                  <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">SRL: {selectedProduct.srlNo}</span>
                 </div>
               )}
             </div>
 
-            {/* Added Items List */}
+            {/* Items List */}
             {items.length > 0 && (
               <div className="mt-6 border rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
@@ -482,9 +499,7 @@ const NewSelection: React.FC = () => {
                         <td className="py-2 px-4">
                           {item.catalogName}
                           {item.catalogType && (
-                            <span className="ml-2 text-[10px] bg-muted px-1.5 py-0.5 rounded border">
-                              {item.catalogType}
-                            </span>
+                            <span className="ml-2 text-[10px] bg-muted px-1.5 py-0.5 rounded border">{item.catalogType}</span>
                           )}
                         </td>
                         <td className="py-2 px-4">
@@ -504,7 +519,7 @@ const NewSelection: React.FC = () => {
             )}
           </div>
 
-          {/* Final Submission Buttons */}
+          {/* Submit */}
           <div className="flex items-center justify-end gap-4 pt-4 border-t border-border">
             <Button type="button" variant="outline" onClick={() => navigate(-1)}>Cancel</Button>
             <Button type="submit" variant="accent" size="lg" disabled={loading}>
