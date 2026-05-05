@@ -84,7 +84,7 @@ const DailyReportPage: React.FC = () => {
   const [resizingBlockId, setResizingBlockId] = useState<string | null>(null);
 
   // Todo filter
-  const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
+  const [todoFilter, setTodoFilter] = useState<'all' | 'overdue' | 'completed'>('all');
 
   // ── History State ─────────────────────────────────────────────────────────
   const [historyEntries, setHistoryEntries] = useState<any[]>([]);
