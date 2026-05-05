@@ -10,7 +10,7 @@ interface ProtectedRouteProps {
 
 // Default landing page per role
 const getDefaultPageForRole = (role: string | null): string => {
-  if (role === 'sales') return '/pipeline';
+  if (role === 'sales' || role === 'accounting') return '/pipeline';
   return '/dashboard';
 };
 

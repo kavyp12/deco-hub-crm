@@ -39,6 +39,14 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     { name: 'Daily Report',  href: '/daily-report',      icon: ClipboardList },
   ];
 
+  // Accounting-specific nav
+  const accountingNavigation = [
+    { name: 'Pipeline',      href: '/pipeline',          icon: Kanban },
+    { name: 'Quotations',    href: '/quotations',        icon: FileText },
+    { name: 'Daily Report',  href: '/daily-report',      icon: ClipboardList },
+    { name: 'Measurements',  href: '/measurements',      icon: Ruler },
+  ];
+
   const allNavigation = [
     { name: 'Dashboard',     href: '/dashboard',        icon: LayoutDashboard },
     { name: 'Attendance',    href: '/attendance',        icon: Clock },
@@ -79,8 +87,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
     });
   }
 
-  // Catalogs — not for sales
-  if (role !== 'sales') {
+  // Catalogs — not for sales or accounting
+  if (role !== 'sales' && role !== 'accounting') {
     allNavigation.push({
       name: 'Catalogs',
       href: '/catalogs',
@@ -89,8 +97,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   }
 
   // Filter navigation based on role
-  // Sales agents use the CRM-flow-ordered salesNavigation array
-  const navigation = role === 'sales' ? salesNavigation : allNavigation;
+  let navigation = allNavigation;
+  if (role === 'sales') {
+    navigation = salesNavigation;
+  } else if (role === 'accounting') {
+    navigation = accountingNavigation;
+  }
 
   const getRoleLabel = (role: string | null | undefined) => {
     switch (role) {
