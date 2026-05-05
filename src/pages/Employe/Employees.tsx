@@ -126,6 +126,7 @@ const Employees: React.FC = () => {
     try {
         const payload: any = {
             name: formData.name,
+            email: formData.email, // <-- Added email to payload
             mobile_number: formData.mobile_number,
             role: formData.role
         };
@@ -313,7 +314,7 @@ const Employees: React.FC = () => {
           </table>
         </div>
 
-       {/* Edit Dialog */}
+      {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
             <DialogContent className="max-w-[90vw] md:max-w-lg">
                 <DialogHeader><DialogTitle>Edit Employee</DialogTitle></DialogHeader>
@@ -323,7 +324,17 @@ const Employees: React.FC = () => {
                         <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                     </div>
                     
-                    {/* 👇 THIS IS THE NEW PASSWORD FIELD THAT WAS MISSING 👇 */}
+                    {/* 👇 NEW EMAIL FIELD 👇 */}
+                    <div className="space-y-2">
+                        <Label>Email</Label>
+                        <Input 
+                            type="email"
+                            value={formData.email} 
+                            onChange={e => setFormData({...formData, email: e.target.value})} 
+                        />
+                    </div>
+                    {/* 👆 =============== 👆 */}
+
                     <div className="space-y-2">
                         <Label>New Password</Label>
                         <Input 
@@ -333,7 +344,6 @@ const Employees: React.FC = () => {
                             onChange={e => setFormData({...formData, password: e.target.value})} 
                         />
                     </div>
-                    {/* 👆 ============================================== 👆 */}
 
                     <div className="space-y-2">
                         <Label>Mobile</Label>

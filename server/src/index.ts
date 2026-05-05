@@ -476,11 +476,12 @@ app.get('/api/employees', authenticateToken, requireRole(['super_admin', 'admin_
 
 
 // UPDATE EMPLOYEE
+// UPDATE EMPLOYEE
 app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
   const { id } = req.params;
-  const { name, mobile_number, role, password } = req.body;
+  const { name, email, mobile_number, role, password } = req.body; // <-- Added email here
   try {
-    const updateData: any = { name, mobile_number, role };
+    const updateData: any = { name, email, mobile_number, role }; // <-- Added email here
 
     // If a new password was provided in the request, hash it and add it to the update
     if (password && password.trim() !== '') {
@@ -502,7 +503,11 @@ app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), a
     );
 
     res.json(updated);
-  } catch (error) {
+  } catch (error: any) {
+    // Handle Prisma unique constraint error if the new email is already taken
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'This email is already in use by another employee' });
+    }
     res.status(500).json({ error: 'Failed to update employee' });
   }
 });
