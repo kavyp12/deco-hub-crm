@@ -85,7 +85,7 @@ const AdminDailyReports: React.FC = () => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   // ── Tab ───────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'reports' | 'calendar' | 'todo' | 'payments'>('reports');
+  const [tab, setTab] = useState<'reports' | 'calendar' | 'todo' | 'payments'>('todo');
 
   // Add state for payments
   const [pendingPayments, setPendingPayments] = useState<any[]>([]);
@@ -105,7 +105,7 @@ const AdminDailyReports: React.FC = () => {
 const [paymentSearch, setPaymentSearch] = useState('');
 const [paymentFilter, setPaymentFilter] = useState<'all' | 'pending' | 'collected'>('all');
 
-const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
+const [todoFilter, setTodoFilter] = useState<'all' | 'overdue' | 'completed'>('all');
 
   const fetchTodoItems = async () => {
     setTodoLoading(true);
@@ -163,6 +163,11 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
   useEffect(() => {
     api.get('/users/all').then(r => setUsers(r.data)).catch(() => { });
   }, []);
+
+  useEffect(() => {
+    if (tab === 'todo') fetchTodoItems();
+    if (tab === 'payments') fetchPendingPayments();
+  }, [tab]);
 
   // ─── Filtering ────────────────────────────────────────────────────────────
 
@@ -432,27 +437,34 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
         </div>
 
         {/* ── Tabs ── */}
-        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5">
-          {(['reports', 'calendar'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
-                tab === t ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-              {t === 'reports' ? '📋 Reports' : '📅 Calendar'}
-            </button>
-          ))}
+        <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
           <button
-            onClick={() => { setTab('todo'); fetchTodoItems(); }}
+            onClick={() => setTab('todo')}
             className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2',
               tab === 'todo' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
             <ListTodo className="h-4 w-4" /> Pipeline Tasks
           </button>
           <button
-            onClick={() => { setTab('payments'); fetchPendingPayments(); }}
+            onClick={() => setTab('calendar')}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              tab === 'calendar' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+          >
+            📅 Calendar
+          </button>
+          <button
+            onClick={() => setTab('payments')}
             className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2',
               tab === 'payments' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
           >
             💳 Payments
+          </button>
+          <button
+            onClick={() => setTab('reports')}
+            className={cn('px-4 py-1.5 rounded-lg text-sm font-medium transition-colors',
+              tab === 'reports' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+          >
+            📋 Reports
           </button>
         </div>
 
@@ -687,6 +699,7 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
                   <SelectContent>
                     <SelectItem value="all">All Tasks</SelectItem>
                     <SelectItem value="overdue">Overdue Only</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button size="sm" variant="outline" onClick={fetchTodoItems} className="h-7 text-xs gap-1">
@@ -701,78 +714,97 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue'>('all');
               <div className="text-center py-16 text-muted-foreground">No pipeline tasks found.</div>
             ) : (() => {
               let filteredTodos = todoItems;
-              if (todoFilter === 'overdue') {
+              if (todoFilter === 'all') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus !== 'completed');
+              } else if (todoFilter === 'overdue') {
                 filteredTodos = todoItems.filter(t => t.dueDateStatus === 'overdue');
+              } else if (todoFilter === 'completed') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus === 'completed');
               }
               return (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {filteredTodos.map((item: any) => (
                   <div key={item.id} className={cn(
-                    'rounded-xl border p-4 space-y-2',
-                    item.dueDateStatus === 'overdue' && 'border-red-200 bg-red-50/50',
-                    item.dueDateStatus === 'today' && 'border-orange-200 bg-orange-50/50',
-                    item.dueDateStatus === 'upcoming' && 'border-blue-100 bg-blue-50/30',
+                    'rounded-lg border p-3 flex flex-col gap-2 relative shadow-sm hover:shadow-md transition-shadow',
+                    item.dueDateStatus === 'overdue' ? 'border-red-200 bg-red-50/40' :
+                    item.dueDateStatus === 'today' ? 'border-orange-200 bg-orange-50/40' :
+                    item.dueDateStatus === 'completed' ? 'border-green-200 bg-green-50/40 opacity-75' :
+                    'border-blue-100 bg-blue-50/20',
                   )}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold">{item.inquiry?.client_name}</p>
-                        <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">
+                    <div className="flex items-center justify-between gap-2 overflow-hidden">
+                      <div className="flex items-center gap-2 truncate">
+                        <p className="text-[13px] font-semibold truncate">{item.inquiry?.client_name}</p>
+                        <span className="text-[9px] font-mono bg-background/50 px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
                           {item.inquiry?.inquiry_number}
-                        </span>
-                        <span className={cn(
-                          'ml-2 text-[10px] px-2 py-0.5 rounded-full border font-medium',
-                          item.type === 'stage' ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-gray-100 text-gray-600 border-gray-200'
-                        )}>
-                          {item.type === 'stage' ? '📌 Stage Task' : '💬 Comment Task'}
                         </span>
                       </div>
                       <div className={cn(
-                        'shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
-                        item.dueDateStatus === 'overdue' && 'bg-red-100 text-red-600 border-red-200',
-                        item.dueDateStatus === 'today' && 'bg-orange-100 text-orange-600 border-orange-200',
-                        item.dueDateStatus === 'upcoming' && 'bg-blue-100 text-blue-600 border-blue-200',
+                        'shrink-0 text-[9px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap',
+                        item.dueDateStatus === 'overdue' ? 'bg-red-100 text-red-600 border-red-200' :
+                        item.dueDateStatus === 'today' ? 'bg-orange-100 text-orange-600 border-orange-200' :
+                        item.dueDateStatus === 'completed' ? 'bg-green-100 text-green-600 border-green-200' :
+                        'bg-blue-100 text-blue-600 border-blue-200',
                       )}>
-                        <CalendarDays className="h-3 w-3 inline mr-1" />
-                        {format(new Date(item.dueDate), 'dd MMM yyyy')}
-                        {item.dueDateStatus === 'overdue' && ' · Overdue'}
-                        {item.dueDateStatus === 'today' && ' · Today'}
+                        {item.dueDateStatus === 'completed' ? 'Completed' : format(new Date(item.dueDate), 'dd MMM')}
                       </div>
                     </div>
-                    <p className="text-sm text-foreground/80 bg-white/60 rounded px-3 py-2 border border-border/40">
-                      {item.content}
-                    </p>
 
-                    {/* ADDED: Show Attachments in Admin Todo (Images added to comments) */}
-                    {(() => {
-                      const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
-                      if (attachments.length === 0) return null;
-
-                      return (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {attachments.map((url: string, idx: number) => (
-                            <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img cursor-pointer max-w-[150px]">
-                              <div className="rounded-md overflow-hidden border border-border relative">
-                                <img src={getFileUrl(url)} alt={`Attachment ${idx + 1}`} className="w-full h-auto object-contain bg-muted/20" />
-                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
-                              </div>
-                            </a>
-                          ))}
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 bg-background/60 rounded px-2 py-1.5 border border-border/40">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className={cn(
+                            'text-[9px] px-1.5 py-0.5 rounded-full border font-medium',
+                            item.type === 'stage' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-600 border-gray-200'
+                          )}>
+                            {item.type === 'stage' ? '📌 Stage' : '💬 Comment'}
+                          </span>
                         </div>
-                      );
-                    })()}
-                    <div className="flex items-center justify-between mt-2">
-                      <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
-                        <span>Assigned to: <strong>{item.user?.name}</strong></span>
-                        <span className="bg-muted px-2 py-0.5 rounded-full">{item.inquiry?.stage}</span>
+                        <p className="text-xs text-foreground/90 line-clamp-2" title={item.content}>
+                          {item.content}
+                        </p>
+                        
+                        {/* Attachments */}
+                        {(() => {
+                          const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
+                          if (attachments.length === 0) return null;
+
+                          return (
+                            <div className="mt-1.5 flex gap-1.5">
+                              {attachments.slice(0, 3).map((url: string, idx: number) => (
+                                <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img">
+                                  <div className="h-8 w-8 rounded overflow-hidden border border-border bg-background">
+                                    <img src={getFileUrl(url)} alt="Attachment" className="w-full h-full object-cover" />
+                                  </div>
+                                </a>
+                              ))}
+                              {attachments.length > 3 && (
+                                <div className="h-8 w-8 rounded border border-border bg-muted flex items-center justify-center text-[10px] font-medium text-muted-foreground">
+                                  +{attachments.length - 3}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-7 text-xs gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
-                        onClick={() => handleCompleteTodo(item.id, item.type)}
-                      >
-                        <CheckCircle2 className="h-3 w-3" /> Complete
-                      </Button>
+                      
+                      {item.dueDateStatus !== 'completed' && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 text-xs px-2 shrink-0 hover:bg-green-50 hover:text-green-600 hover:border-green-200 bg-background"
+                          onClick={() => handleCompleteTodo(item.id, item.type)}
+                        >
+                          <CheckCircle2 className="h-3 w-3 mr-1" /> Done
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="text-[10px] text-muted-foreground flex items-center justify-between px-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-foreground/70">👤 {item.user?.name}</span>
+                        <span className="opacity-50">•</span>
+                        <span>{item.inquiry?.stage}</span>
+                      </div>
                     </div>
                   </div>
                 ))}

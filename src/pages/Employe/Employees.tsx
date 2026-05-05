@@ -118,18 +118,25 @@ const Employees: React.FC = () => {
     setIsEditOpen(true);
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
+ const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEmployee) return;
     setFormLoading(true);
 
     try {
-        await api.put(`/employees/${selectedEmployee.id}`, {
+        const payload: any = {
             name: formData.name,
             mobile_number: formData.mobile_number,
             role: formData.role
-        });
-        toast({ title: 'Updated', description: 'Employee updated.' });
+        };
+        
+        // Only send the password if the admin actually typed a new one
+        if (formData.password && formData.password.trim() !== '') {
+            payload.password = formData.password;
+        }
+
+        await api.put(`/employees/${selectedEmployee.id}`, payload);
+        toast({ title: 'Updated', description: 'Employee updated successfully.' });
         setIsEditOpen(false);
         fetchEmployees();
     } catch (error: any) {
@@ -138,7 +145,6 @@ const Employees: React.FC = () => {
         setFormLoading(false);
     }
   };
-
   const handleDeleteOpen = (employee: Employee) => {
     setSelectedEmployee(employee);
     setIsDeleteOpen(true);
@@ -307,14 +313,34 @@ const Employees: React.FC = () => {
           </table>
         </div>
 
-        {/* Edit Dialog */}
+       {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
             <DialogContent className="max-w-[90vw] md:max-w-lg">
                 <DialogHeader><DialogTitle>Edit Employee</DialogTitle></DialogHeader>
                 <form onSubmit={handleUpdate} className="space-y-4">
-                    <div className="space-y-2"><Label>Name</Label><Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-                    <div className="space-y-2"><Label>Mobile</Label><Input value={formData.mobile_number} onChange={e => setFormData({...formData, mobile_number: e.target.value})} /></div>
-                    <div className="space-y-2"><Label>Role</Label>
+                    <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                    </div>
+                    
+                    {/* 👇 THIS IS THE NEW PASSWORD FIELD THAT WAS MISSING 👇 */}
+                    <div className="space-y-2">
+                        <Label>New Password</Label>
+                        <Input 
+                            type="password"
+                            placeholder="Leave blank to keep current" 
+                            value={formData.password} 
+                            onChange={e => setFormData({...formData, password: e.target.value})} 
+                        />
+                    </div>
+                    {/* 👆 ============================================== 👆 */}
+
+                    <div className="space-y-2">
+                        <Label>Mobile</Label>
+                        <Input value={formData.mobile_number} onChange={e => setFormData({...formData, mobile_number: e.target.value})} />
+                    </div>
+                    <div className="space-y-2">
+                        <Label>Role</Label>
                         <Select value={formData.role} onValueChange={v => setFormData({...formData, role: v as any})}>
                             <SelectTrigger><SelectValue placeholder="Role"/></SelectTrigger>
                             <SelectContent>
@@ -328,7 +354,6 @@ const Employees: React.FC = () => {
                 </form>
             </DialogContent>
         </Dialog>
-
         {/* Delete Dialog */}
         <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
             <DialogContent className="max-w-[90vw] md:max-w-lg">

@@ -62,7 +62,7 @@ const getFileUrl = (path: string | undefined) => {
 const DailyReportPage: React.FC = () => {
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'log' | 'history' | 'calendar' | 'todo' | 'payments'>('log');
+  const [activeTab, setActiveTab] = useState<'log' | 'history' | 'calendar' | 'todo' | 'payments'>('todo');
 
   const [pendingPayments, setPendingPayments] = useState<any[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
@@ -296,11 +296,11 @@ const DailyReportPage: React.FC = () => {
         {/* Tabs */}
         <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit mb-5 flex-wrap">
           {([
-            { key: 'log', label: '🕐 Log Work' },
-            { key: 'history', label: '📜 My History' },
-            { key: 'calendar', label: '📅 Calendar' },
             { key: 'todo', label: '✅ To-Do' },
+            { key: 'calendar', label: '📅 Calendar' },
+            { key: 'log', label: '🕐 Log Work' },
             { key: 'payments', label: '💳 Payments' },
+            { key: 'history', label: '📜 My History' },
           ] as const).map(t => (
             <button
               key={t.key}
@@ -537,12 +537,13 @@ const DailyReportPage: React.FC = () => {
               </div>
               <div className="flex gap-2 items-center">
                 <Select value={todoFilter} onValueChange={(v: any) => setTodoFilter(v)}>
-                  <SelectTrigger className="h-8 text-xs w-32 bg-background">
+                  <SelectTrigger className="h-8 text-xs w-36 bg-background">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Tasks</SelectItem>
+                    <SelectItem value="all">Active Tasks</SelectItem>
                     <SelectItem value="overdue">Overdue Only</SelectItem>
+                    <SelectItem value="completed">Completed Tasks</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button size="sm" variant="outline" onClick={fetchTodoItems} className="h-8 text-xs gap-1">
@@ -561,106 +562,123 @@ const DailyReportPage: React.FC = () => {
               </div>
             ) : (() => {
               let filteredTodos = todoItems;
-              if (todoFilter === 'overdue') {
+              if (todoFilter === 'all') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus !== 'completed');
+              } else if (todoFilter === 'overdue') {
                 filteredTodos = todoItems.filter(t => t.dueDateStatus === 'overdue');
+              } else if (todoFilter === 'completed') {
+                filteredTodos = todoItems.filter(t => t.dueDateStatus === 'completed');
               }
               const overdue = filteredTodos.filter(t => t.dueDateStatus === 'overdue');
               const today = filteredTodos.filter(t => t.dueDateStatus === 'today');
               const upcoming = filteredTodos.filter(t => t.dueDateStatus === 'upcoming');
+              const completed = filteredTodos.filter(t => t.dueDateStatus === 'completed');
 
               const TodoGroup = ({ items, title, accent }: { items: any[]; title: string; accent: string }) =>
                 items.length === 0 ? null : (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <p className={`text-xs font-bold uppercase tracking-wide ${accent}`}>{title} ({items.length})</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {items.map((item: any) => (
-                      <div key={item.id} className="card-premium p-4 space-y-2 hover:shadow-md transition-shadow">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold truncate">
-                              {item.inquiry?.client_name || 'Unknown Client'}
-                            </p>
-                            <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                      <div key={item.id} className={cn(
+                        'rounded-lg border p-3 flex flex-col gap-2 relative shadow-sm hover:shadow-md transition-shadow',
+                        item.dueDateStatus === 'overdue' ? 'border-red-200 bg-red-50/40' :
+                        item.dueDateStatus === 'today' ? 'border-orange-200 bg-orange-50/40' :
+                        item.dueDateStatus === 'completed' ? 'border-green-200 bg-green-50/40 opacity-75' :
+                        'border-blue-100 bg-blue-50/20',
+                      )}>
+                        <div className="flex items-center justify-between gap-2 overflow-hidden">
+                          <div className="flex items-center gap-2 truncate">
+                            <p className="text-[13px] font-semibold truncate">{item.inquiry?.client_name}</p>
+                            <span className="text-[9px] font-mono bg-background/50 px-1.5 py-0.5 rounded text-muted-foreground shrink-0">
                               {item.inquiry?.inquiry_number}
                             </span>
                           </div>
                           <div className={cn(
-                            'shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
-                            item.dueDateStatus === 'overdue' && 'bg-red-50 text-red-600 border-red-200',
-                            item.dueDateStatus === 'today' && 'bg-orange-50 text-orange-600 border-orange-200',
-                            item.dueDateStatus === 'upcoming' && 'bg-blue-50 text-blue-600 border-blue-200',
+                            'shrink-0 text-[9px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap',
+                            item.dueDateStatus === 'overdue' ? 'bg-red-100 text-red-600 border-red-200' :
+                            item.dueDateStatus === 'today' ? 'bg-orange-100 text-orange-600 border-orange-200' :
+                            item.dueDateStatus === 'completed' ? 'bg-green-100 text-green-600 border-green-200' :
+                            'bg-blue-100 text-blue-600 border-blue-200',
                           )}>
-                            <CalendarDays className="h-3 w-3 inline mr-1" />
-                            {format(new Date(item.dueDate), 'dd MMM yyyy')}
-                            {item.dueDateStatus === 'overdue' && ' · Overdue'}
-                            {item.dueDateStatus === 'today' && ' · Today'}
+                            {item.dueDateStatus === 'completed' ? 'Completed' : format(new Date(item.dueDate), 'dd MMM')}
                           </div>
                         </div>
 
-                        <p className="text-sm text-foreground/80 bg-muted/30 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
-                          {item.content || <span className="italic text-muted-foreground">No message</span>}
-                        </p>
-
-                        {/* ADDED: Show Attachments in Todo (Images added to comments) */}
-                        {(() => {
-                          const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
-                          if (attachments.length === 0) return null;
-
-                          return (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {attachments.map((url: string, idx: number) => (
-                                <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img cursor-pointer max-w-[150px]">
-                                  <div className="rounded-md overflow-hidden border border-border relative">
-                                    <img src={getFileUrl(url)} alt={`Attachment ${idx + 1}`} className="w-full h-auto object-contain bg-muted/20" />
-                                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors"></div>
-                                  </div>
-                                </a>
-                              ))}
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 bg-background/60 rounded px-2 py-1.5 border border-border/40">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className={cn(
+                                'text-[9px] px-1.5 py-0.5 rounded-full border font-medium',
+                                item.type === 'stage' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-600 border-gray-200'
+                              )}>
+                                {item.type === 'stage' ? '📌 Stage' : '💬 Comment'}
+                              </span>
                             </div>
-                          );
-                        })()}
+                            <p className="text-xs text-foreground/90 line-clamp-2" title={item.content}>
+                              {item.content}
+                            </p>
+                            
+                            {/* Attachments */}
+                            {(() => {
+                              const attachments = item.attachmentUrls || (item.attachmentUrl ? [item.attachmentUrl] : []);
+                              if (attachments.length === 0) return null;
 
-                        <div className="flex items-center justify-between mt-2">
-                          <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              By <span className="font-medium text-foreground ml-0.5">{item.user?.name}</span>
-                            </span>
-                            {item.mentions && item.mentions.length > 0 && (
-                              <span className="flex items-center gap-1">
-                                <AtSign className="h-3 w-3" />
-                                {item.mentions.map((m: any) => (
-                                  <span key={m.user?.id || m.id} className="text-[10px] bg-accent/10 text-accent border border-accent/20 px-1.5 py-0.5 rounded-full font-medium">
-                                    @{m.user?.name || 'User'}
-                                  </span>
-                                ))}
-                              </span>
-                            )}
-                            {item.inquiry?.stage && (
-                              <span className="bg-muted px-2 py-0.5 rounded-full text-[10px] font-medium">
-                                {item.inquiry.stage}
-                              </span>
-                            )}
+                              return (
+                                <div className="mt-1.5 flex gap-1.5">
+                                  {attachments.slice(0, 3).map((url: string, idx: number) => (
+                                    <a key={idx} href={getFileUrl(url)} target="_blank" rel="noopener noreferrer" className="group/img">
+                                      <div className="h-8 w-8 rounded overflow-hidden border border-border bg-background">
+                                        <img src={getFileUrl(url)} alt="Attachment" className="w-full h-full object-cover" />
+                                      </div>
+                                    </a>
+                                  ))}
+                                  {attachments.length > 3 && (
+                                    <div className="h-8 w-8 rounded border border-border bg-muted flex items-center justify-center text-[10px] font-medium text-muted-foreground">
+                                      +{attachments.length - 3}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                           
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-7 text-xs gap-1 hover:bg-green-50 hover:text-green-600 hover:border-green-200"
-                            onClick={() => handleCompleteTodo(item.id, item.type)}
-                          >
-                            <CheckCircle2 className="h-3 w-3" /> Complete
-                          </Button>
+                          {item.dueDateStatus !== 'completed' && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-7 text-xs px-2 shrink-0 hover:bg-green-50 hover:text-green-600 hover:border-green-200 bg-background"
+                              onClick={() => handleCompleteTodo(item.id, item.type)}
+                            >
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Done
+                            </Button>
+                          )}
+                        </div>
+
+                        <div className="text-[10px] text-muted-foreground flex items-center justify-between px-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-foreground/70">👤 {item.user?.name}</span>
+                            <span className="opacity-50">•</span>
+                            <span>{item.inquiry?.stage}</span>
+                          </div>
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 );
 
               return (
-                <div className="space-y-5">
-                  <TodoGroup items={overdue} title="⚠️ Overdue" accent="text-red-500" />
-                  <TodoGroup items={today} title="🔥 Due Today" accent="text-orange-500" />
-                  <TodoGroup items={upcoming} title="📋 Upcoming" accent="text-blue-500" />
+                <div className="space-y-6">
+                  {todoFilter === 'completed' ? (
+                    <TodoGroup items={completed} title="✅ Completed" accent="text-green-600" />
+                  ) : (
+                    <>
+                      <TodoGroup items={overdue} title="⚠️ Overdue" accent="text-red-500" />
+                      <TodoGroup items={today} title="🔥 Due Today" accent="text-orange-500" />
+                      <TodoGroup items={upcoming} title="📋 Upcoming" accent="text-blue-500" />
+                    </>
+                  )}
                 </div>
               );
             })()}

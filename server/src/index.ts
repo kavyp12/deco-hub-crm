@@ -475,26 +475,37 @@ app.get('/api/employees', authenticateToken, requireRole(['super_admin', 'admin_
 });
 
 
-
 // UPDATE EMPLOYEE
 app.put('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
   const { id } = req.params;
-  const { name, mobile_number, role } = req.body;
+  const { name, mobile_number, role, password } = req.body;
   try {
+    const updateData: any = { name, mobile_number, role };
+
+    // If a new password was provided in the request, hash it and add it to the update
+    if (password && password.trim() !== '') {
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
     const updated = await prisma.user.update({
       where: { id },
-      data: { name, mobile_number, role },
+      data: updateData,
     });
 
-    // [LOG]
-    await logActivity(req.user.id, 'UPDATE', 'EMPLOYEE', id, `Updated employee: ${name}`);
+    // [LOG] Log if password was changed
+    await logActivity(
+      req.user.id, 
+      'UPDATE', 
+      'EMPLOYEE', 
+      id, 
+      `Updated employee: ${name} ${password ? '(Password reset)' : ''}`
+    );
 
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update employee' });
   }
 });
-
 // DELETE EMPLOYEE
 app.delete('/api/employees/:id', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
   const { id } = req.params;
@@ -3860,6 +3871,38 @@ app.post('/api/checklists/:id/items', authenticateToken, async (req: any, res: R
   }
 });
 
+
+// ==========================================
+// GLOBAL LABEL MANAGEMENT
+// ==========================================
+
+// 1. EDIT LABEL GLOBALLY (Updates all cards with this label)
+app.put('/api/labels/update-global', authenticateToken, async (req: any, res: Response) => {
+  const { oldText, oldColor, newText, newColor } = req.body;
+  try {
+    await prisma.inquiryLabel.updateMany({
+      where: { text: oldText, color: oldColor },
+      data: { text: newText, color: newColor }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update label globally' });
+  }
+});
+
+// 2. DELETE LABEL GLOBALLY (Removes from all cards)
+app.post('/api/labels/delete-global', authenticateToken, async (req: any, res: Response) => {
+  const { text, color } = req.body;
+  try {
+    await prisma.inquiryLabel.deleteMany({
+      where: { text, color }
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete label globally' });
+  }
+});
+
 // 6. TOGGLE CHECKLIST ITEM
 app.put('/api/checklist-items/:id', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -4736,7 +4779,8 @@ app.get('/api/pipeline/todo-items', authenticateToken, async (req: any, res: Res
     });
 
     // Classify helper
-    const classify = (dateVal: Date | string) => {
+    const classify = (dateVal: Date | string, isCompleted: boolean) => {
+      if (isCompleted) return 'completed';
       const d = new Date(dateVal);
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
@@ -4750,7 +4794,7 @@ app.get('/api/pipeline/todo-items', authenticateToken, async (req: any, res: Res
       id: `comment-${c.id}`,
       type: 'comment',
       dueDate: c.dueDate,
-      dueDateStatus: classify(c.dueDate),
+      dueDateStatus: classify(c.dueDate, c.isCompleted),
       content: c.content,
       
       // ✅ FIX: Actually send the images to the To-Do list frontend!
@@ -4768,7 +4812,7 @@ app.get('/api/pipeline/todo-items', authenticateToken, async (req: any, res: Res
       id: `stage-${inq.id}`,
       type: 'stage',
       dueDate: inq.stageDueDate,
-      dueDateStatus: classify(inq.stageDueDate),
+      dueDateStatus: classify(inq.stageDueDate, inq.stageIsCompleted),
       content: `Stage: "${inq.stage}" — follow up required`,
       user: inq.sales_person,
       mentions: (inq.sales_persons || []).map((u: any) => ({ user: u })),
@@ -4802,13 +4846,13 @@ app.put('/api/pipeline/todo-items/:type/:id/complete', authenticateToken, async 
       const dbId = id.replace('comment-', '');
       await (prisma as any).inquiryComment.update({
         where: { id: dbId },
-        data: { dueDate: null }
+        data: { isCompleted: true }
       });
     } else if (type === 'stage') {
       const dbId = id.replace('stage-', '');
       await prisma.inquiry.update({
         where: { id: dbId },
-        data: { stageDueDate: null }
+        data: { stageIsCompleted: true }
       });
     }
     res.json({ success: true });

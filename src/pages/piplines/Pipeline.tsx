@@ -270,6 +270,12 @@ const Pipeline: React.FC = () => {
   const [editPaymentAmount, setEditPaymentAmount] = useState('');
   const [editPaymentDate, setEditPaymentDate] = useState('');
 
+  // Label Edit State
+  const [editingLabelOriginal, setEditingLabelOriginal] = useState<{ text: string, color: string } | null>(null);
+  const [editingLabelText, setEditingLabelText] = useState('');
+  const [editingLabelColor, setEditingLabelColor] = useState('bg-green-600');
+
+
   useEffect(() => {
     fetchPipeline();
     fetchUsers();
@@ -611,6 +617,49 @@ const Pipeline: React.FC = () => {
     await handleToggleLabel({ text: newLabelTitle, color: selectedLabelColor });
     setNewLabelTitle('');
     setIsCreatingLabel(false);
+  };
+
+  const handleGlobalLabelDelete = async (text: string, color: string) => {
+    if (!confirm('Are you sure you want to delete this label from ALL cards?')) return;
+    try {
+      await api.post('/labels/delete-global', { text, color });
+
+      // Update local state to remove this label from all tasks immediately
+      setTasks(prev => prev.map(t => ({
+        ...t,
+        labels: (t.labels || []).filter(l => !(l.text === text && l.color === color))
+      })));
+
+      if (selectedTask) {
+        setSelectedTask(prev => prev ? {
+          ...prev,
+          labels: (prev.labels || []).filter(l => !(l.text === text && l.color === color))
+        } : null);
+      }
+
+      toast({ title: "Deleted", description: "Label removed from all cards." });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to delete label", variant: "destructive" });
+    }
+  };
+
+  const handleGlobalLabelUpdate = async () => {
+    if (!editingLabelOriginal || !editingLabelText.trim()) return;
+    try {
+      await api.put('/labels/update-global', {
+        oldText: editingLabelOriginal.text,
+        oldColor: editingLabelOriginal.color,
+        newText: editingLabelText,
+        newColor: editingLabelColor
+      });
+
+      // Refetch the board to get the updated labels everywhere
+      fetchPipeline();
+      setEditingLabelOriginal(null);
+      toast({ title: "Updated", description: "Label updated successfully." });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to update label", variant: "destructive" });
+    }
   };
 
   const handleAddChecklist = async () => {
@@ -1320,7 +1369,7 @@ const Pipeline: React.FC = () => {
                                             {(task.labels || []).length > 0 && (
                                               <div className="flex gap-1 mb-1.5 flex-wrap">
                                                 {task.labels!.map((l: any) => (
-                                                  <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full`} title={l.text}></div>
+                                                  <div key={l.id} className={`${l.color} h-1.5 w-6 rounded-full capitalize`} title={l.text}></div>
                                                 ))}
                                               </div>
                                             )}
@@ -1591,7 +1640,7 @@ const Pipeline: React.FC = () => {
                                       return (
                                         <div key={user.id} className="flex items-center gap-2 p-2 hover:bg-muted rounded-md cursor-pointer" onClick={() => handleToggleMember(user.id)}>
                                           <Checkbox checked={isAssigned} />
-                                          <span className="text-sm">{user.name}</span>
+                                          <span className="text-sm capitalize">{user.name}</span>
                                         </div>
                                       );
                                     })}
@@ -1639,10 +1688,49 @@ const Pipeline: React.FC = () => {
                                       <p className="text-xs font-semibold text-muted-foreground">Existing Labels</p>
                                       {getUniqueLabels().map((label: any, idx: number) => {
                                         const isActive = (selectedTask.labels || []).some(l => l.text === label.text && l.color === label.color);
+
+                                        // Edit Mode UI
+                                        if (editingLabelOriginal?.text === label.text && editingLabelOriginal?.color === label.color) {
+                                          return (
+                                            <div key={idx} className="flex flex-col gap-2 p-2 border border-border rounded bg-muted/20">
+                                              <Input value={editingLabelText} onChange={e => setEditingLabelText(e.target.value)} className="h-7 text-xs" />
+                                              <div className="flex flex-wrap gap-1">
+                                                {LABEL_COLORS.map(color => (
+                                                  <div key={color} className={`h-4 w-4 rounded cursor-pointer ${color} ${editingLabelColor === color ? 'ring-2 ring-offset-1 ring-primary' : ''}`} onClick={() => setEditingLabelColor(color)} />
+                                                ))}
+                                              </div>
+                                              <div className="flex gap-2 mt-1">
+                                                <Button size="sm" className="h-6 px-2 text-[10px]" onClick={handleGlobalLabelUpdate}>Save</Button>
+                                                <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px]" onClick={() => setEditingLabelOriginal(null)}>Cancel</Button>
+                                              </div>
+                                            </div>
+                                          );
+                                        }
+
+                                        // Default View UI (With Hover Edit/Delete)
                                         return (
-                                          <div key={idx} className="flex items-center gap-2 cursor-pointer p-1 hover:bg-muted rounded" onClick={() => handleToggleLabel(label)}>
-                                            <Checkbox checked={isActive} />
-                                            <div className={`${label.color} text-white px-2 py-0.5 rounded text-xs`}>{label.text}</div>
+                                          <div key={idx} className="flex items-center justify-between p-1 hover:bg-muted rounded group">
+                                            <div className="flex items-center gap-2 cursor-pointer flex-1" onClick={() => handleToggleLabel(label)}>
+                                              <Checkbox checked={isActive} />
+                                              {/* Note the 'capitalize' class added below */}
+                                              <div className={`${label.color} text-white px-2 py-0.5 rounded text-xs capitalize`}>{label.text}</div>
+                                            </div>
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditingLabelOriginal(label);
+                                                setEditingLabelText(label.text);
+                                                setEditingLabelColor(label.color);
+                                              }}>
+                                                <Pencil className="h-3 w-3 text-muted-foreground hover:text-primary" />
+                                              </Button>
+                                              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleGlobalLabelDelete(label.text, label.color);
+                                              }}>
+                                                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                                              </Button>
+                                            </div>
                                           </div>
                                         );
                                       })}
@@ -1797,16 +1885,21 @@ const Pipeline: React.FC = () => {
                               {hasFullAccess && (
                                 addingItemTo === checklist.id ? (
                                   <div className="pl-0 space-y-2 animate-in fade-in slide-in-from-top-1">
-                                    <Textarea
+                                    {/* Replaced Textarea with Input */}
+                                    <Input
                                       value={newItemText}
                                       onChange={e => setNewItemText(e.target.value)}
                                       placeholder="Add an item..."
-                                      className="min-h-[60px] resize-none"
+                                      className="h-8 text-sm"
                                       autoFocus
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') handleAddChecklistItem(checklist.id);
+                                        if (e.key === 'Escape') setAddingItemTo(null);
+                                      }}
                                     />
                                     <div className="flex gap-2">
-                                      <Button size="sm" onClick={() => handleAddChecklistItem(checklist.id)}>Add</Button>
-                                      <Button size="sm" variant="ghost" onClick={() => setAddingItemTo(null)}>Cancel</Button>
+                                      <Button size="sm" className="h-7" onClick={() => handleAddChecklistItem(checklist.id)}>Add</Button>
+                                      <Button size="sm" variant="ghost" className="h-7" onClick={() => setAddingItemTo(null)}>Cancel</Button>
                                     </div>
                                   </div>
                                 ) : (
@@ -1983,7 +2076,7 @@ const Pipeline: React.FC = () => {
                                             <div className={cn('w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0', getMemberColor(user.name))}>
                                               {getInitials(user.name)}
                                             </div>
-                                            <span className="truncate font-medium">{user.name}</span>
+                                            <span className="truncate font-medium capitalize">{user.name}</span>
                                             {mentionedUsers.find(m => m.id === user.id) && <Check className="ml-auto h-3.5 w-3.5 text-accent shrink-0" />}
                                           </button>
                                         ));
@@ -2077,7 +2170,7 @@ const Pipeline: React.FC = () => {
                                   <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1 justify-between">
                                       <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-sm">{comment.user.name}</span>
+                                        <span className="font-semibold text-sm capitalize">{comment.user.name}</span>
                                         <span className="text-[10px] text-muted-foreground">{format(parseISO(comment.createdAt), 'MMM d, p')}</span>
                                       </div>
 

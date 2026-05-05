@@ -66,7 +66,8 @@ model Inquiry {
   id                  String    @id @default(uuid())
   inquiry_number      String    @unique
   client_name         String
-  stageDueDate  DateTime? // ← ADD THIS — due date for the current stage
+  stageDueDate     DateTime? // ← ADD THIS — due date for the current stage
+  stageIsCompleted Boolean   @default(false) // ← NEW: track if stage task is completed
   architect_id_name   String?
 
   client_birth_date       DateTime?
@@ -208,6 +209,7 @@ model InquiryComment {
 
   // Due date for task tracking (optional)
   dueDate        DateTime?
+  isCompleted    Boolean   @default(false)
 
   createdAt      DateTime  @default(now())
 
