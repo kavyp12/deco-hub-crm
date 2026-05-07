@@ -569,10 +569,10 @@ const DailyReportPage: React.FC = () => {
               } else if (todoFilter === 'completed') {
                 filteredTodos = todoItems.filter(t => t.dueDateStatus === 'completed');
               }
-              const overdue = filteredTodos.filter(t => t.dueDateStatus === 'overdue');
+              const overdue = filteredTodos.filter(t => t.dueDateStatus === 'overdue').sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
               const today = filteredTodos.filter(t => t.dueDateStatus === 'today');
-              const upcoming = filteredTodos.filter(t => t.dueDateStatus === 'upcoming');
-              const completed = filteredTodos.filter(t => t.dueDateStatus === 'completed');
+              const upcoming = filteredTodos.filter(t => t.dueDateStatus === 'upcoming').sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+              const completed = filteredTodos.filter(t => t.dueDateStatus === 'completed').sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime());
 
               const TodoGroup = ({ items, title, accent }: { items: any[]; title: string; accent: string }) =>
                 items.length === 0 ? null : (

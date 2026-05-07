@@ -721,9 +721,10 @@ const [todoFilter, setTodoFilter] = useState<'all' | 'overdue' | 'completed'>('a
               } else if (todoFilter === 'completed') {
                 filteredTodos = todoItems.filter(t => t.dueDateStatus === 'completed');
               }
+              const sortedTodos = [...filteredTodos].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
               return (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {filteredTodos.map((item: any) => (
+                {sortedTodos.map((item: any) => (
                   <div key={item.id} className={cn(
                     'rounded-lg border p-3 flex flex-col gap-2 relative shadow-sm hover:shadow-md transition-shadow',
                     item.dueDateStatus === 'overdue' ? 'border-red-200 bg-red-50/40' :
