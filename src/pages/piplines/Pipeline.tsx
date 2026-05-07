@@ -33,7 +33,8 @@ interface Task {
   client_name: string;
   stage: string;
   updated_at: string;
-
+  future_reference?: string;
+  future_reference_updated_at?: string; // ADD THIS LINE
   orderIndex?: number; // ADDED: Ensures Strict Ordering Support
 
   sales_person?: { id: string, name: string };
@@ -112,6 +113,8 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
   { id: "Completed", title: "Completed", color: "border-t-4 border-green-500", isSystem: true },
   { id: "Complaints", title: "Complaints", color: "border-t-4 border-red-500", isSystem: true },
+  // ADD THIS LINE:
+  { id: "Future Reference", title: "Future Reference", color: "border-t-4 border-slate-800", isSystem: true },
 ];
 
 const COLORS_LIST = [
@@ -274,6 +277,11 @@ const Pipeline: React.FC = () => {
   const [editingLabelOriginal, setEditingLabelOriginal] = useState<{ text: string, color: string } | null>(null);
   const [editingLabelText, setEditingLabelText] = useState('');
   const [editingLabelColor, setEditingLabelColor] = useState('bg-green-600');
+
+  // Future Reference State (Super Admin Only)
+  const [futureRefTask, setFutureRefTask] = useState<Task | null>(null);
+  const [futureRefText, setFutureRefText] = useState('');
+
 
 
   useEffect(() => {
@@ -853,6 +861,51 @@ const Pipeline: React.FC = () => {
     setStageSuggestions([]);
   };
 
+
+  const handleSaveFutureReference = async () => {
+    if (!futureRefTask) return;
+
+    try {
+      // 1. Save the future reference notes
+      const { data } = await api.put(`/inquiries/${futureRefTask.id}/future-reference`, {
+        future_reference: futureRefText
+      });
+
+      // 2. Move the card to the "Future Reference" stage
+      await api.put(`/inquiries/${futureRefTask.id}/stage`, {
+        stage: 'Future Reference',
+        orderIndex: 0 // Moves it to the top of the column
+      });
+
+      // 3. Update the task in the local board state
+      setTasks(prev => prev.map(t =>
+        t.id === futureRefTask.id ? {
+          ...t,
+          future_reference: data.future_reference,
+          future_reference_updated_at: data.future_reference_updated_at,
+          stage: 'Future Reference', // <--- Changes the box locally
+          orderIndex: 0
+        } : t
+      ));
+
+      // 4. Update the selected task if the modal is also open
+      if (selectedTask?.id === futureRefTask.id) {
+        setSelectedTask(prev => prev ? {
+          ...prev,
+          future_reference: data.future_reference,
+          future_reference_updated_at: data.future_reference_updated_at,
+          stage: 'Future Reference'
+        } : null);
+      }
+
+      setFutureRefTask(null);
+      setFutureRefText('');
+      toast({ title: "Moved to Future Reference", description: "Card is now hidden from other users." });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to save future reference", variant: "destructive" });
+    }
+  };
+
   const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setNewComment(val);
@@ -1120,6 +1173,11 @@ const Pipeline: React.FC = () => {
       .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
   };
 
+
+  const visibleColumns = columns.filter(col =>
+    col.id !== 'Future Reference' || currentUser?.role === 'super_admin'
+  );
+
   return (
     <DashboardLayout>
       <div className="h-[calc(100vh-6rem)] flex flex-col animate-fade-in">
@@ -1263,7 +1321,8 @@ const Pipeline: React.FC = () => {
                 ref={provided.innerRef}
                 className="flex-1 flex gap-4 overflow-x-auto pb-4 px-1"
               >
-                {columns.map((column, columnIndex) => (
+                {/* CHANGE THIS LINE */}
+                {visibleColumns.map((column, columnIndex) => (
                   <Draggable key={column.id} draggableId={`col-${column.id}`} index={columnIndex} isDragDisabled={!!column.isSystem}>
                     {(provided) => (
                       <div
@@ -1333,6 +1392,9 @@ const Pipeline: React.FC = () => {
                                         >
                                           {/* --- THE ACTUAL CARD --- */}
                                           <div
+
+
+
                                             onClick={() => handleTaskClick(task, column.id)}
                                             className={cn(
                                               "p-2 rounded-lg shadow-sm border transition-all cursor-pointer group relative",
@@ -1343,6 +1405,33 @@ const Pipeline: React.FC = () => {
                                             {/* ACTIONS (Shows on Hover) */}
                                             {hasFullAccess && (
                                               <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+
+                                                {/* ANYONE WITH ACCESS: 3-Dot Menu for Future Reference */}
+                                                {hasFullAccess && (
+                                                  <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                      <Button variant="outline" size="icon" className="h-6 w-6 rounded-full shadow-md hover:scale-110 bg-background text-primary" onClick={e => e.stopPropagation()}>
+                                                        <MoreHorizontal className="h-3 w-3" />
+                                                      </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end">
+                                                      <DropdownMenuItem
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setFutureRefTask(task);
+                                                          // Only Super Admin can see existing notes. Others get a blank box to write a new note.
+                                                          setFutureRefText(currentUser?.role === 'super_admin' ? (task.future_reference || '') : '');
+                                                        }}
+                                                        className="cursor-pointer"
+                                                      >
+                                                        <FileText className="h-3.5 w-3.5 mr-2" />
+                                                        Send to Future Reference
+                                                      </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                  </DropdownMenu>
+                                                )}
+
+                                                {/* Add Card Button */}
                                                 <Button
                                                   variant="outline"
                                                   size="icon"
@@ -1355,6 +1444,8 @@ const Pipeline: React.FC = () => {
                                                 >
                                                   <Plus className="h-3 w-3 text-primary" />
                                                 </Button>
+
+                                                {/* Delete Button */}
                                                 <Button
                                                   variant="destructive"
                                                   size="icon"
@@ -1366,6 +1457,7 @@ const Pipeline: React.FC = () => {
                                               </div>
                                             )}
 
+                                            {/* (Leave the labels mapping right below this untouched) */}
                                             {(task.labels || []).length > 0 && (
                                               <div className="flex gap-1 mb-1.5 flex-wrap">
                                                 {task.labels!.map((l: any) => (
@@ -1454,7 +1546,13 @@ const Pipeline: React.FC = () => {
                                               </div>
                                             </div>
                                             <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
-
+                                            {/* --- PASTE THIS DIRECTLY BELOW THE CLIENT NAME IN THE CARD --- */}
+                                            {column.id === 'Future Reference' && task.future_reference_updated_at && (
+                                              <div className="mb-2 text-[9px] font-medium text-amber-700 bg-amber-50/80 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 w-fit">
+                                                <Clock className="h-2.5 w-2.5" />
+                                                {format(new Date(task.future_reference_updated_at), 'dd MMM yyyy, hh:mm a')}
+                                              </div>
+                                            )}
                                             <div className="flex items-center justify-between">
                                               <div className="flex -space-x-1.5">
                                                 {(() => {
@@ -1798,6 +1896,34 @@ const Pipeline: React.FC = () => {
                       </div>
 
                       <Separator />
+
+                      {/* FUTURE REFERENCE DISPLAY (Super Admin Only) */}
+                      {currentUser?.role === 'super_admin' && selectedTask.future_reference && (
+                        <>
+                          <div className="space-y-3 group bg-amber-50 p-4 rounded-lg border border-amber-200">
+                            <div className="flex justify-between items-center">
+                              <h3 className="font-semibold flex items-center gap-2 text-lg text-amber-800">
+                                <FileText className="h-5 w-5" /> Future Reference Notes
+                              </h3>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-amber-700 border-amber-300 hover:bg-amber-100"
+                                onClick={() => {
+                                  setFutureRefTask(selectedTask);
+                                  setFutureRefText(selectedTask.future_reference || '');
+                                }}
+                              >
+                                Edit Notes
+                              </Button>
+                            </div>
+                            <div className="text-sm text-amber-900 whitespace-pre-wrap leading-relaxed">
+                              {selectedTask.future_reference}
+                            </div>
+                          </div>
+                          <Separator className="my-6" />
+                        </>
+                      )}
 
                       {/* DESCRIPTION */}
                       <div className="space-y-3 group">
@@ -2383,6 +2509,40 @@ const Pipeline: React.FC = () => {
                 </div>
               );
             })()}
+          </DialogContent>
+        </Dialog>
+
+
+        {/* FUTURE REFERENCE MODAL (Super Admin Only) */}
+        <Dialog open={!!futureRefTask} onOpenChange={(open) => !open && setFutureRefTask(null)}>
+          <DialogContent className="sm:max-w-[500px]" onClick={e => e.stopPropagation()}>
+            <DialogTitle className="flex items-center gap-2 text-primary">
+              Future Reference <Badge variant="destructive" className="text-[10px]">Super Admin Only</Badge>
+            </DialogTitle>
+            <div className="space-y-4 pt-2">
+              <p className="text-xs text-muted-foreground">
+                These notes are highly confidential and will only be visible to the main Super Admin.
+              </p>
+
+              {/* LAST UPDATED TIMESTAMP */}
+              {futureRefTask?.future_reference_updated_at && (
+                <div className="flex items-center gap-2 text-xs font-medium text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
+                  <Clock className="h-3.5 w-3.5" />
+                  Last updated: {format(new Date(futureRefTask.future_reference_updated_at), 'dd MMM yyyy, hh:mm a')}
+                </div>
+              )}
+
+              <Textarea
+                placeholder="Add private future reference notes here..."
+                value={futureRefText}
+                onChange={(e) => setFutureRefText(e.target.value)}
+                className="min-h-[150px] resize-none focus-visible:ring-primary"
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setFutureRefTask(null)}>Cancel</Button>
+                <Button onClick={handleSaveFutureReference}>Save Reference</Button>
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

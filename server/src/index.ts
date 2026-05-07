@@ -1419,6 +1419,32 @@ app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
+// Add this to your backend inquiry routes
+app.put('/api/inquiries/:id/future-reference', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Optional: Add an auth check here to ensure req.user.role === 'super_admin'
+
+    const { future_reference } = req.body;
+    
+    const updatedInquiry = await prisma.inquiry.update({
+      where: { id: req.params.id },
+      data: { 
+        future_reference: future_reference,
+        future_reference_updated_at: new Date() // Sets the exact date and time
+      }
+    });
+
+    res.json({
+      future_reference: updatedInquiry.future_reference,
+      future_reference_updated_at: updatedInquiry.future_reference_updated_at
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to save future reference" });
+  }
+});
+
+
 // UPDATE POST /api/inquiries
 app.post('/api/inquiries', authenticateToken, async (req: any, res: Response) => {
   const {

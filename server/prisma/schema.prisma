@@ -82,6 +82,10 @@ model Inquiry {
   
   description         String?   @db.Text
 
+  // === ADD THESE TWO LINES ===
+  future_reference            String?   @db.Text
+  future_reference_updated_at DateTime?
+
   orderIndex          Int       @default(0)
 
   sales_person_id String
