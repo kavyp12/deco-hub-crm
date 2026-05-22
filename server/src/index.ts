@@ -4332,24 +4332,31 @@ app.get('/api/users/all', authenticateToken, async (req: Request, res: Response)
 
 // ==========================================
 // HELPER: Get report window boundaries
-// Report day = 6PM previous day → 6PM current day
+// Report day = 6AM today → midnight (12AM next day)
+// Employees can submit their report any time from 6 AM up to midnight.
+// The 12 AM–5:59 AM gap counts as the PREVIOUS day's window.
 // ==========================================
 
 const getReportWindow = (dateInput?: string) => {
   const base = dateInput ? new Date(dateInput) : new Date();
 
-  // After 6 PM with no explicit date → shift to next day's cycle
-  if (!dateInput && base.getHours() >= 18) {
-    base.setDate(base.getDate() + 1);
+  if (!dateInput) {
+    // Before 6 AM → still in yesterday's report window
+    if (base.getHours() < 6) {
+      base.setDate(base.getDate() - 1);
+    }
+    // 6 AM to midnight → today's window (no shift needed)
   }
 
   const year = base.getFullYear();
   const month = base.getMonth();
   const day = base.getDate();
 
+  // reportDate stored as 6 PM of the calendar day (backward-compatible with existing DB records)
   const reportDate = new Date(year, month, day, 18, 0, 0, 0);
-  const windowStart = new Date(reportDate.getTime() - 24 * 60 * 60 * 1000);
-  const windowEnd = reportDate;
+  // Window: 6 AM of the day → midnight (start of next day)
+  const windowStart = new Date(year, month, day, 6, 0, 0, 0);
+  const windowEnd = new Date(year, month, day + 1, 0, 0, 0, 0); // midnight
 
   return { windowStart, windowEnd, reportDate };
 };
@@ -4524,11 +4531,20 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
     const role = req.user.role;
     const now = new Date();
 
-    // Reporting window end = 6PM today
+    // Report window: 6 AM → midnight of same day
+    // reportDate is stored as 6 PM of the current calendar day (backward-compatible)
     const todayAt6PM = new Date(now);
     todayAt6PM.setHours(18, 0, 0, 0);
 
-    const reportDate = todayAt6PM; // canonical report date
+    // Deadline for submission = midnight (end of the day)
+    const todayAtMidnight = new Date(now);
+    todayAtMidnight.setDate(todayAtMidnight.getDate() + 1);
+    todayAtMidnight.setHours(0, 0, 0, 0);
+
+    // If it's before 6 AM, we're still in yesterday's report window
+    const reportDate = (now.getHours() < 6)
+      ? (() => { const d = new Date(now); d.setDate(d.getDate() - 1); d.setHours(18, 0, 0, 0); return d; })()
+      : todayAt6PM; // canonical report date for today
 
     const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
@@ -4630,18 +4646,24 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
     }
 
     // ── 3. Work Log Reminder (All except Super Admin) ──
-    if (role !== 'super_admin' && now < todayAt6PM) {
+    // Remind employees from 6 AM right up to midnight to submit their daily report
+    const withinReportWindow = now >= (() => { const d = new Date(now); d.setHours(6, 0, 0, 0); return d; })() && now < todayAtMidnight;
+    if (role !== 'super_admin' && withinReportWindow) {
       const myReport = await (prisma as any).dailyReport.findUnique({
         where: { userId_reportDate: { userId, reportDate } },
       });
       if (!myReport) {
+        const msLeft = todayAtMidnight.getTime() - now.getTime();
+        const hoursLeft = Math.floor(msLeft / (1000 * 60 * 60));
+        const minsLeft = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+        const urgency = hoursLeft < 2 ? '🚨' : '📝';
         notifications.push({
           id: 'own-report-missing',
           type: 'missing_report',
-          title: `📝 Daily Report Pending`,
-          message: `Today u forgot to fill the work u have done. Please update your daily report before 6 PM.`,
+          title: `${urgency} Daily Report Pending`,
+          message: `Please fill in today's work log before midnight. ${hoursLeft}h ${minsLeft}m remaining.`,
           link: '/daily-report',
-          severity: 'error',
+          severity: hoursLeft < 2 ? 'error' : 'warning',
           createdAt: now.toISOString(),
         });
       }
