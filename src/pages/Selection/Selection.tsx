@@ -387,6 +387,20 @@ const Selections: React.FC = () => {
         productId: prod.originalId,
         price
       }));
+    } else if (uniqueKey) {
+      // Custom SRL
+      const customProd = {
+        name: selectedDesignName || 'Custom Design',
+        srlNo: uniqueKey,
+        price: 0,
+        originalId: 'manual',
+        uniqueKey: uniqueKey
+      };
+      setSelectedProduct(customProd);
+      setCurrentItem(prev => ({ ...prev, productId: 'manual', price: 0 }));
+    } else {
+      setSelectedProduct(null);
+      setCurrentItem(prev => ({ ...prev, productId: '', price: 0 }));
     }
   };
 
@@ -406,16 +420,29 @@ const Selections: React.FC = () => {
     }
   };
   const handleAddItemOrUpdate = () => {
-    if (!selectedProduct) return;
+    if (!selectedProduct && !selectedDesignName) {
+      toast({ title: 'Error', description: 'Please select a Design or SRL', variant: 'destructive' });
+      return;
+    }
+    
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
+    
+    const productToUse = selectedProduct || {
+      originalId: 'manual',
+      name: selectedDesignName || 'Custom Product',
+      srlNo: '',
+      price: 0,
+      attributes: {}
+    };
+
     const newItemData = {
-      name: selectedProduct.name,
-      srlNo: selectedProduct.srlNo || '',   // ✅ NEW: save SRL
-      catalogName: catalog?.name || '',
-      catalogType: selectedCatalogType,
+      name: productToUse.name,
+      srlNo: productToUse.srlNo || '',   // ✅ NEW: save SRL
+      catalogName: catalog?.name || selectedCatalogId || '',
+      catalogType: selectedCatalogType || 'Generic',
       companyId: selectedCompanyId,
-      price: currentItem.price,
-      attributes: selectedProduct.attributes,
+      price: currentItem.price || productToUse.price,
+      attributes: productToUse.attributes || {},
     };
 
     if (editingItemIndex !== null) {
@@ -424,8 +451,8 @@ const Selections: React.FC = () => {
       newItems[editingItemIndex] = {
         ...existingItem,
         ...newItemData,
-        productId: selectedProduct.originalId || selectedProduct.id,
-        total: existingItem.quantity * currentItem.price
+        productId: productToUse.originalId || productToUse.id || 'manual',
+        total: existingItem.quantity * (currentItem.price || productToUse.price)
       };
       setEditedItems(newItems);
       setEditingItemIndex(null);
@@ -436,11 +463,11 @@ const Selections: React.FC = () => {
         return;
       }
       setEditedItems([...editedItems, {
-        id: selectedProduct.originalId || selectedProduct.id,
-        productId: selectedProduct.originalId || selectedProduct.id,
+        id: productToUse.originalId || productToUse.id || 'manual',
+        productId: productToUse.originalId || productToUse.id || 'manual',
         ...newItemData,
         quantity: currentItem.quantity,
-        total: currentItem.quantity * currentItem.price,
+        total: currentItem.quantity * (currentItem.price || productToUse.price),
         areaName: currentItem.areaName,
         unit: 'mm',
         width: null,
@@ -957,6 +984,7 @@ const Selections: React.FC = () => {
                         onChange={setSelectedCompanyId}
                         placeholder="Company…"
                         className="h-9 text-xs"
+                        allowCreate={true}
                       />
                     </div>
 
@@ -972,6 +1000,7 @@ const Selections: React.FC = () => {
                         placeholder={selectedCompanyId ? "Collection…" : "Select Company"}
                         disabled={!selectedCompanyId}
                         className="h-9 text-xs"
+                        allowCreate={true}
                       />
                     </div>
 
@@ -1008,10 +1037,11 @@ const Selections: React.FC = () => {
                         placeholder="Search design…"
                         disabled={!selectedCatalogId}
                         className="h-9 text-xs"
+                        allowCreate={true}
                       />
                     </div>
 
-                    {/* SRL picker — always visible, disabled until design chosen */}
+                    {/* SRL picker — always visible, optional */}
                     <div className="w-[140px] shrink-0">
                       <SearchableSelect
                         options={availableSrls.map((p: any) => ({
@@ -1022,14 +1052,14 @@ const Selections: React.FC = () => {
                         onChange={handleProductSelect}
                         placeholder="SRL…"
                         colorVariant="blue"
-                        disabled={!selectedDesignName}
                         className="h-9 text-xs"
+                        allowCreate={true}
                       />
                     </div>
 
                     {/* Action buttons — inline at end */}
                     <div className="shrink-0 flex gap-1.5">
-                      {selectedProduct ? (
+                      {(selectedProduct || selectedDesignName) ? (
                         <>
                           <Button type="button" onClick={handleAddItemOrUpdate} size="sm" variant="accent" className="h-9 px-3 text-xs whitespace-nowrap">
                             {editingItemIndex !== null ? 'Update' : 'Add Item'}
@@ -1042,6 +1072,7 @@ const Selections: React.FC = () => {
                                 setSelectedProduct(null);
                                 setSelectedCompanyId('');
                                 setSelectedCatalogId('');
+                                setSelectedDesignName('');
                               }}
                               size="sm"
                               variant="outline"
@@ -1058,11 +1089,17 @@ const Selections: React.FC = () => {
                   </div>
 
                   {/* Compact confirmation pill */}
-                  {selectedProduct && (
+                  {(selectedProduct || selectedDesignName) && (
                     <div className="mt-2 flex items-center gap-2 px-1">
                       <span className="text-xs text-muted-foreground">Selected:</span>
-                      <span className="text-xs font-semibold text-primary truncate max-w-[200px]">{selectedProduct.name}</span>
-                      <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">SRL: {selectedProduct.srlNo}</span>
+                      <span className="text-xs font-semibold text-primary truncate max-w-[200px]">
+                        {selectedProduct?.name || selectedDesignName || 'Custom Product'}
+                      </span>
+                      {(selectedProduct?.srlNo || (selectedProduct?.uniqueKey && selectedProduct?.uniqueKey !== 'manual')) && (
+                        <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">
+                          SRL: {selectedProduct?.srlNo || selectedProduct?.uniqueKey}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

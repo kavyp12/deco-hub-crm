@@ -168,6 +168,18 @@ const NewSelection: React.FC = () => {
         ? prod.price
         : parseFloat(String(prod.price).replace(/,/g, '')) || 0;
       setCurrentItem(prev => ({ ...prev, productId: prod.originalId, quantity: 1, price }));
+    } else if (uniqueKey) {
+      // Custom SRL
+      setSelectedProductKey(uniqueKey);
+      const customProd = {
+        name: selectedDesignName || 'Custom Design',
+        srlNo: uniqueKey,
+        price: 0,
+        originalId: 'manual',
+        uniqueKey: uniqueKey
+      };
+      setSelectedProduct(customProd);
+      setCurrentItem(prev => ({ ...prev, productId: 'manual', quantity: 1, price: 0 }));
     } else {
       // cleared
       setSelectedProductKey('');
@@ -198,33 +210,30 @@ const NewSelection: React.FC = () => {
   };
 
   const handleAddItem = () => {
-    if (!selectedDesignName) {
-      toast({ title: "Error", description: "Please select a design.", variant: "destructive" });
-      return;
-    }
-    if (!selectedProductKey) {
-      toast({ title: "Error", description: "Please select an SRL number.", variant: "destructive" });
+    if (!selectedDesignName && !selectedProductKey) {
+      toast({ title: "Error", description: "Please select a Design or an SRL number.", variant: "destructive" });
       return;
     }
     if (!currentItem.areaName) {
       toast({ title: "Error", description: "Please enter an Area Name.", variant: "destructive" });
       return;
     }
-    const selectedVariant = availableSrls.find(p => p.uniqueKey === selectedProductKey);
+    
     const catalog = catalogs.find(c => c.id === selectedCatalogId);
-    if (!selectedVariant) return;
+    const catalogName = catalog?.name || selectedCatalogId || 'Unknown Collection';
 
     const newItem: SelectionItem = {
-      productId: selectedVariant.originalId,
-      name: selectedVariant.name,
-      catalogName: catalog?.name || '',
-      catalogType: selectedCatalogType,
-      srlNo: selectedVariant.srlNo,
+      productId: selectedProduct?.originalId || 'manual',
+      name: selectedProduct?.name || selectedDesignName || 'Custom Product',
+      catalogName: catalogName,
+      catalogType: selectedCatalogType || 'Generic',
+      srlNo: selectedProduct?.srlNo || selectedProductKey || '',
       areaName: currentItem.areaName,
       quantity: currentItem.quantity,
-      price: currentItem.price,
-      total: currentItem.price * currentItem.quantity
+      price: currentItem.price || selectedProduct?.price || 0,
+      total: (currentItem.price || selectedProduct?.price || 0) * currentItem.quantity
     };
+    
     setItems([...items, newItem]);
     setSelectedDesignName('');
     setAvailableSrls([]);
@@ -391,6 +400,7 @@ const NewSelection: React.FC = () => {
                     onChange={setSelectedCompanyId}
                     placeholder="Company…"
                     className="h-9 text-xs"
+                    allowCreate={true}
                   />
                 </div>
 
@@ -403,6 +413,7 @@ const NewSelection: React.FC = () => {
                     placeholder={selectedCompanyId ? "Collection…" : "Select Company"}
                     disabled={!selectedCompanyId}
                     className="h-9 text-xs"
+                    allowCreate={true}
                   />
                 </div>
 
@@ -437,6 +448,7 @@ const NewSelection: React.FC = () => {
                     placeholder="Search design…"
                     disabled={!selectedCatalogId}
                     className="h-9 text-xs"
+                    allowCreate={true}
                   />
                 </div>
 
@@ -448,14 +460,14 @@ const NewSelection: React.FC = () => {
                     onChange={handleProductSelect}
                     placeholder="SRL…"
                     colorVariant="blue"
-                    disabled={!selectedDesignName}
                     className="h-9 text-xs"
+                    allowCreate={true}
                   />
                 </div>
 
                 {/* Add Item button — only when product is ready */}
                 <div className="shrink-0">
-                  {selectedProduct ? (
+                  {(selectedProduct || selectedDesignName || selectedProductKey) ? (
                     <Button
                       type="button"
                       onClick={handleAddItem}
@@ -471,11 +483,17 @@ const NewSelection: React.FC = () => {
               </div>
 
               {/* Confirmation pill — compact, below the row */}
-              {selectedProduct && (
+              {(selectedProduct || selectedDesignName || selectedProductKey) && (
                 <div className="mt-2 flex items-center gap-2 px-1">
                   <span className="text-xs text-muted-foreground">Selected:</span>
-                  <span className="text-xs font-semibold text-primary truncate max-w-[200px]">{selectedProduct.name}</span>
-                  <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">SRL: {selectedProduct.srlNo}</span>
+                  <span className="text-xs font-semibold text-primary truncate max-w-[200px]">
+                    {selectedProduct?.name || selectedDesignName || 'Custom Product'}
+                  </span>
+                  {(selectedProduct?.srlNo || selectedProductKey) && (
+                    <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded font-medium shrink-0">
+                      SRL: {selectedProduct?.srlNo || selectedProductKey}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

@@ -12,6 +12,7 @@
  *  • Works with plain <option>-style options array
  *  • Disabled state
  *  • Optional colorVariant  ("default" | "green" | "blue")
+ *  • Optional allowCreate prop to let users input custom text
  *
  * Usage
  *  <SearchableSelect
@@ -21,6 +22,7 @@
  *    placeholder="Search or select…"
  *    disabled={false}
  *    colorVariant="default"   // "green" | "blue"
+ *    allowCreate={true}
  *  />
  */
 
@@ -35,6 +37,7 @@ import React, {
 export interface SelectOption {
   value: string;
   label: string;
+  isCreateOption?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -46,6 +49,7 @@ interface SearchableSelectProps {
   colorVariant?: 'default' | 'green' | 'blue';
   className?: string;
   id?: string;
+  allowCreate?: boolean;
 }
 
 const variantStyles = {
@@ -78,6 +82,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   colorVariant = 'default',
   className = '',
   id,
+  allowCreate = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -89,13 +94,23 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
   const styles = variantStyles[colorVariant];
 
-  const selectedOption = options.find((o) => o.value === value);
+  const selectedOption = options.find((o) => o.value === value) || (allowCreate && value ? { value, label: value } : undefined);
 
-  const filtered = query.trim()
+  let filtered = query.trim()
     ? options.filter((o) =>
         o.label.toLowerCase().includes(query.toLowerCase())
       )
     : options;
+
+  if (allowCreate && query.trim()) {
+    const exactMatch = options.some(o => o.label.toLowerCase() === query.trim().toLowerCase());
+    if (!exactMatch) {
+      filtered = [
+        ...filtered,
+        { value: query.trim(), label: `Create "${query.trim()}"`, isCreateOption: true }
+      ];
+    }
+  }
 
   // Reset highlight when filter changes
   useEffect(() => {
@@ -320,6 +335,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                       transition-colors duration-75
                       ${isHighlighted ? styles.highlight : 'hover:bg-muted/50'}
                       ${isSelected ? 'font-medium' : ''}
+                      ${opt.isCreateOption ? 'italic text-primary' : ''}
                     `}
                   >
                     <span className="truncate">{opt.label}</span>
