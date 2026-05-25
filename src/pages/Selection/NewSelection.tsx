@@ -43,11 +43,9 @@ const NewSelection: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [selectedInquiryId, setSelectedInquiryId] = useState('');
-  const [selectedInquiry, setSelectedInquiry] = useState<any>(null);
 
   const [deliveryDate, setDeliveryDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [status, setStatus] = useState('pending');
 
   const [companies, setCompanies] = useState<any[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
@@ -134,15 +132,6 @@ const NewSelection: React.FC = () => {
       setAvailableSrls([]);
     }
   }, [selectedCatalogId, catalogs]);
-
-  useEffect(() => {
-    if (selectedInquiryId) {
-      const inq = inquiries.find(i => i.id === selectedInquiryId);
-      setSelectedInquiry(inq);
-    } else {
-      setSelectedInquiry(null);
-    }
-  }, [selectedInquiryId, inquiries]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -260,7 +249,7 @@ const NewSelection: React.FC = () => {
     }
     setLoading(true);
     try {
-      const payload = { inquiryId: selectedInquiryId, delivery_date: deliveryDate || null, notes, status, items };
+      const payload = { inquiryId: selectedInquiryId, delivery_date: deliveryDate || null, notes: notes || null, items };
       const { data } = await api.post('/selections', payload);
       toast({ title: 'Selection Created', description: `Selection ${data.selection_number} created.` });
       navigate('/selections');
@@ -307,43 +296,9 @@ const NewSelection: React.FC = () => {
                   </SelectContent>
                 </Select>
               </div>
-              {selectedInquiry && (
-                <div className="md:col-span-2 p-4 bg-muted/30 rounded-lg">
-                  <h3 className="font-semibold mb-2">Inquiry Details</h3>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div><span className="text-muted-foreground">Client:</span> <span className="font-medium">{selectedInquiry.client_name}</span></div>
-                    <div><span className="text-muted-foreground">Address:</span> <span className="font-medium">{selectedInquiry.address}</span></div>
-                    <div><span className="text-muted-foreground">Mobile:</span> <span className="font-medium">{selectedInquiry.mobile_number}</span></div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Selection Details */}
-          <div className="card-premium p-6">
-            <h2 className="text-lg font-semibold text-foreground mb-6">Selection Details</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="space-y-2">
-                <Label>Status</Label>
-                <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="confirmed">Confirmed</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Delivery Date</Label>
+                <Label>Selection Date</Label>
                 <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-              </div>
-              <div className="md:col-span-3 space-y-2">
-                <Label>Notes</Label>
-                <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes..." />
               </div>
             </div>
           </div>
@@ -359,9 +314,9 @@ const NewSelection: React.FC = () => {
 
               {/* Labels row */}
               <div className="flex items-center gap-2 mb-1 px-0.5">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[120px] shrink-0">Area Name *</span>
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[160px] shrink-0">Company</span>
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[160px] shrink-0 flex items-center gap-1">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[170px] shrink-0">Area Name *</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[150px] shrink-0">Company</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[150px] shrink-0 flex items-center gap-1">
                   Collection
                   {selectedCatalogType && (
                     <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${getTypeBadgeColor(selectedCatalogType)}`}>
@@ -369,17 +324,18 @@ const NewSelection: React.FC = () => {
                     </span>
                   )}
                 </span>
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[140px] shrink-0">🔍 SRL Direct</span>
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide flex-1">Design</span>
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[120px] shrink-0">SRL No.</span>
-                <span className="w-[76px] shrink-0" />
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[130px] shrink-0">🔍 SRL Direct</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[140px] shrink-0">Design</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[110px] shrink-0">SRL No.</span>
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[70px] shrink-0">Qty</span>
+                <span className="w-[80px] shrink-0" />
               </div>
 
               {/* Controls row — all in one line */}
               <div className="flex items-center gap-2">
 
                 {/* Area Name */}
-                <div className="w-[120px] shrink-0">
+                <div className="w-[170px] shrink-0">
                   <Input
                     list="common-areas-list"
                     placeholder="e.g. Living Room"
@@ -393,7 +349,7 @@ const NewSelection: React.FC = () => {
                 </div>
 
                 {/* Company */}
-                <div className="w-[160px] shrink-0">
+                <div className="w-[150px] shrink-0">
                   <SearchableSelect
                     options={companyOptions}
                     value={selectedCompanyId}
@@ -405,7 +361,7 @@ const NewSelection: React.FC = () => {
                 </div>
 
                 {/* Collection */}
-                <div className="w-[160px] shrink-0">
+                <div className="w-[150px] shrink-0">
                   <SearchableSelect
                     options={catalogOptions}
                     value={selectedCatalogId}
@@ -418,7 +374,7 @@ const NewSelection: React.FC = () => {
                 </div>
 
                 {/* SRL direct search */}
-                <div className="w-[140px] shrink-0">
+                <div className="w-[130px] shrink-0">
                   <Input
                     placeholder="🔍 Type SRL + Enter"
                     disabled={!selectedCatalogId}
@@ -440,7 +396,7 @@ const NewSelection: React.FC = () => {
                 </div>
 
                 {/* Design */}
-                <div className="flex-1 min-w-0">
+                <div className="w-[140px] shrink-0">
                   <SearchableSelect
                     options={designOptions}
                     value={selectedDesignName}
@@ -453,7 +409,7 @@ const NewSelection: React.FC = () => {
                 </div>
 
                 {/* SRL picker — always visible, disabled until design chosen */}
-                <div className="w-[120px] shrink-0">
+                <div className="w-[110px] shrink-0">
                   <SearchableSelect
                     options={srlOptions}
                     value={selectedProductKey}
@@ -462,6 +418,18 @@ const NewSelection: React.FC = () => {
                     colorVariant="blue"
                     className="h-9 text-xs"
                     allowCreate={true}
+                  />
+                </div>
+
+                {/* Qty */}
+                <div className="w-[70px] shrink-0">
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={currentItem.quantity}
+                    onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseInt(e.target.value) || 1 })}
+                    className="h-9 text-xs px-2 text-right"
                   />
                 </div>
 
@@ -507,6 +475,7 @@ const NewSelection: React.FC = () => {
                       <th className="text-left py-2 px-4">Area</th>
                       <th className="text-left py-2 px-4">Catalog / Type</th>
                       <th className="text-left py-2 px-4">Product</th>
+                      <th className="text-left py-2 px-4 w-24">Qty</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -524,6 +493,21 @@ const NewSelection: React.FC = () => {
                           <span className="font-medium">{item.name}</span>
                           <span className="block text-xs text-muted-foreground mt-0.5">SRL: {item.srlNo || 'N/A'}</span>
                         </td>
+                        <td className="py-2 px-4">
+                          <Input
+                            type="number"
+                            min={1}
+                            step={1}
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const q = parseInt(e.target.value) || 1;
+                              const next = [...items];
+                              next[idx] = { ...next[idx], quantity: q, total: q * (next[idx].price || 0) };
+                              setItems(next);
+                            }}
+                            className="h-8 w-20 text-xs text-right"
+                          />
+                        </td>
                         <td className="py-2 px-4 text-right">
                           <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(idx)}>
                             <Trash2 className="h-4 w-4 text-destructive hover:bg-destructive/10" />
@@ -535,6 +519,19 @@ const NewSelection: React.FC = () => {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* Notes / Remark — at end, after Add Products */}
+          <div className="card-premium p-6">
+            <div className="space-y-2">
+              <Label>Remark / Notes</Label>
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Overall remark for this selection..."
+              />
+            </div>
           </div>
 
           {/* Submit */}

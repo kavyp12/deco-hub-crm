@@ -896,28 +896,9 @@ const Selections: React.FC = () => {
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label>Status</Label>
-                  <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="confirmed">Confirmed</SelectItem>
-                      <SelectItem value="in_progress">In Progress</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Delivery Date</Label>
-                  <Input type="date" value={editForm.delivery_date} onChange={(e) => setEditForm({ ...editForm, delivery_date: e.target.value })} />
-                </div>
-                <div className="col-span-3 space-y-2">
-                  <Label>Notes</Label>
-                  <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={2} />
-                </div>
+              <div className="max-w-xs space-y-2">
+                <Label>Selection Date</Label>
+                <Input type="date" value={editForm.delivery_date} onChange={(e) => setEditForm({ ...editForm, delivery_date: e.target.value })} />
               </div>
 
               {/* Product Selector */}
@@ -950,8 +931,9 @@ const Selections: React.FC = () => {
                       )}
                     </span>
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[130px] shrink-0">🔍 SRL Direct</span>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[200px] shrink-0">Design</span>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[140px] shrink-0">SRL No.</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[180px] shrink-0">Design</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[130px] shrink-0">SRL No.</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide w-[70px] shrink-0">Qty</span>
                     <span className="shrink-0 w-[90px]" />
                   </div>
 
@@ -1027,7 +1009,7 @@ const Selections: React.FC = () => {
                     </div>
 
                     {/* Design */}
-                    <div className="w-[200px] shrink-0">
+                    <div className="w-[180px] shrink-0">
                       <SearchableSelect
                         options={Array.from(new Set(products.map((p: any) => p.name)))
                           .sort()
@@ -1042,7 +1024,7 @@ const Selections: React.FC = () => {
                     </div>
 
                     {/* SRL picker — always visible, optional */}
-                    <div className="w-[140px] shrink-0">
+                    <div className="w-[130px] shrink-0">
                       <SearchableSelect
                         options={availableSrls.map((p: any) => ({
                           value: p.uniqueKey,
@@ -1054,6 +1036,18 @@ const Selections: React.FC = () => {
                         colorVariant="blue"
                         className="h-9 text-xs"
                         allowCreate={true}
+                      />
+                    </div>
+
+                    {/* Qty */}
+                    <div className="w-[70px] shrink-0">
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={currentItem.quantity}
+                        onChange={(e) => setCurrentItem({ ...currentItem, quantity: parseInt(e.target.value) || 1 })}
+                        className="h-9 text-xs px-2 text-right"
                       />
                     </div>
 
@@ -1123,9 +1117,10 @@ const Selections: React.FC = () => {
                     <table className="w-full text-sm">
                       <thead className="bg-muted/50">
                         <tr>
-                          <th className="text-left py-2 px-3 w-1/4">Area</th>
-                          <th className="text-left py-2 px-3 w-1/4">Catalog / Type</th>
-                          <th className="text-left py-2 px-3 w-2/4">Product</th>
+                          <th className="text-left py-2 px-3 w-1/5">Area</th>
+                          <th className="text-left py-2 px-3 w-1/5">Catalog / Type</th>
+                          <th className="text-left py-2 px-3">Product</th>
+                          <th className="text-left py-2 px-3 w-24">Qty</th>
                           <th className="py-2 px-3 w-12"></th>
                         </tr>
                       </thead>
@@ -1170,6 +1165,16 @@ const Selections: React.FC = () => {
                                 </Button>
                               </div>
                             </td>
+                            <td className="py-2 px-3">
+                              <Input
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={item.quantity}
+                                onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
+                                className="h-8 w-20 text-xs text-right"
+                              />
+                            </td>
                             <td className="py-2 px-3 text-right">
                               <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleRemoveItem(idx)}>
                                 <X className="h-4 w-4 text-destructive" />
@@ -1181,6 +1186,17 @@ const Selections: React.FC = () => {
                     </table>
                   </div>
                 )}
+              </div>
+
+              {/* Notes — at end of modal, after Selection Items */}
+              <div className="border-t pt-4 space-y-2">
+                <Label>Remark / Notes</Label>
+                <Textarea
+                  value={editForm.notes}
+                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                  rows={3}
+                  placeholder="Overall remark for this selection..."
+                />
               </div>
 
               <DialogFooter>

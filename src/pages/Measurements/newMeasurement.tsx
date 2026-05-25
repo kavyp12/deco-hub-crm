@@ -3,39 +3,51 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, Plus, Trash2, Ruler } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
-import { processProductsForDropdown } from '@/lib/utils';
+import BlindsTable, { BlindRow, createEmptyBlindRow } from './BlindsTable';
+
+type SystemType = 'Motorised' | 'Manual' | '';
+type StyleType = 'Arabian' | 'American Pleat' | 'Box Pleat' | 'Roman' | '';
+type CurtainType = 'Sheer' | 'Main' | 'Roman' | 'Double C-Main' | 'Double C-Sheer' | '';
+type OpeningType = 'Center' | 'One Way: Left' | 'One Way: Right' | '';
+type MotorType = 'RTS' | 'WY' | 'Both' | '';
+type CablePosition = 'L' | 'R' | 'C' | '';
+
 interface MeasurementRow {
   uid: string;
-  companyId: string;
-  companyInput: string;
-  catalogId: string;
-  catalogInput: string;
-  catalogName: string;
-  catalogType: string;
-  productId: string;
-  productName: string;
-  selectedProductName: string;
-  srlNo?: string;
   areaName: string;
-  unit: 'mm' | 'cm' | 'inch';
-  width: string;
+  system: SystemType;
+  style: StyleType;
+  type: CurtainType;
   height: string;
-  type: 'Manual' | 'Automatic / Motorized' | '';
-  motorizationMode: 'Remote' | 'Automation' | 'Both' | '';
-  opsType: 'L' | 'R' | '';
+  width: string;
   pelmet: string;
-  openingType: 'Left' | 'Right' | 'Center' | '';
+  opening: OpeningType;
+  motorType: MotorType;
+  cablePosition: CablePosition;
   quantity: number;
-  price: number;
+  remark: string;
 }
+
 const COMMON_AREAS = [
   "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom",
   "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen",
   "Study Room", "Home Office", "Balcony", "Verandah",
   "Puja Room", "Staircase", "Lobby", "Entrance",
   "Bathroom", "Store Room", "Servant Room", "Utility Area"
+];
+
+const SYSTEM_OPTIONS: SystemType[] = ['Motorised', 'Manual'];
+const STYLE_OPTIONS: StyleType[] = ['Arabian', 'American Pleat', 'Box Pleat', 'Roman'];
+const TYPE_OPTIONS: CurtainType[] = ['Sheer', 'Main', 'Roman', 'Double C-Main', 'Double C-Sheer'];
+const OPENING_OPTIONS: OpeningType[] = ['Center', 'One Way: Left', 'One Way: Right'];
+const MOTOR_TYPE_OPTIONS: MotorType[] = ['RTS', 'WY', 'Both'];
+const CABLE_POSITION_OPTIONS: { value: CablePosition; label: string }[] = [
+  { value: 'L', label: 'L (Left)' },
+  { value: 'R', label: 'R (Right)' },
+  { value: 'C', label: 'C (Center)' },
 ];
 
 const IndependentMeasurementForm: React.FC = () => {
@@ -49,11 +61,10 @@ const IndependentMeasurementForm: React.FC = () => {
   const [inquiry, setInquiry] = useState<any>(null);
   const [selection, setSelection] = useState<any>(null);
 
-  const [companies, setCompanies] = useState<any[]>([]);
-  const [allCatalogs, setAllCatalogs] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
-
   const [rows, setRows] = useState<MeasurementRow[]>([]);
+  const [blindRows, setBlindRows] = useState<BlindRow[]>([]);
+  const [globalRemark, setGlobalRemark] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'curtains' | 'blinds'>('curtains');
 
   useEffect(() => {
     const init = async () => {
@@ -68,91 +79,71 @@ const IndependentMeasurementForm: React.FC = () => {
         }
         setInquiry(currentInquiry);
 
-        // Fetch Companies & Catalogs
-        const companiesRes = await api.get('/companies');
-        setCompanies(companiesRes.data);
-
-        const flatCatalogs = companiesRes.data.flatMap((c: any) =>
-          c.catalogs.map((cat: any) => ({
-            ...cat,
-            companyName: c.name,
-            companyId: c.id,
-            type: cat.type || 'Generic'
-          }))
-        );
-        setAllCatalogs(flatCatalogs);
-
-        // Fetch Products
-        const prodRes = await api.get('/products/all');
-        setProducts(prodRes.data);
-
-        // Load Selection Items
         try {
           const selRes = await api.get(`/selections/by-inquiry/${inquiryId}`);
 
           if (selRes.data && selRes.data.items && selRes.data.items.length > 0) {
             setSelection(selRes.data);
+            setGlobalRemark(selRes.data.notes || '');
 
-            const mappedRows = selRes.data.items.map((item: any) => {
-              const associatedProduct = prodRes.data.find((p: any) => p.id === item.productId);
-
-              let compId = '';
-              let catId = '';
-              let catName = item.details?.catalogName || item.catalogName || '';
-              let catType = item.details?.catalogType || item.catalogType || 'Curtains';
-
-              if (associatedProduct && associatedProduct.catalog) {
-                compId = associatedProduct.catalog.companyId;
-                catId = associatedProduct.catalog.id;
-                catName = associatedProduct.catalog.name;
-                catType = associatedProduct.catalog.type || 'Curtains';
-              } else if (catName) {
-                const matchingCat = flatCatalogs.find((c: any) => c.name === catName);
-                if (matchingCat) {
-                  compId = matchingCat.companyId;
-                  catId = matchingCat.id;
-                  catType = matchingCat.type;
-                }
-              }
-
-              // ✅ NEW: Final fallback — use companyId saved in details if still not found
-              if (!compId && item.details?.companyId) {
-                compId = item.details.companyId;
-              }
-
-              const companyName = compId ? (companiesRes.data.find((c: any) => c.id === compId)?.name || compId) : '';
-              return {
-                uid: item.id || Math.random().toString(36).substr(2, 9),
-                companyId: compId,
-                companyInput: companyName,
-                catalogId: catId,
-                catalogInput: catName,
-                catalogName: catName,
-                catalogType: catType,
-                productId: item.productId || '',
-                productName: item.productName || '',
-                selectedProductName: item.productName || '',
-                srlNo: item.srlNo || item.details?.srlNo || '',
-                areaName: item.details?.areaName || item.areaName || '',
-                unit: item.unit || 'mm',
-                width: item.width?.toString() || '',
-                height: item.height?.toString() || '',
-                type: item.type || '',
-                motorizationMode: item.motorizationMode || '',
-                opsType: item.opsType || '',
-                pelmet: item.pelmet?.toString() || '',
-                openingType: item.openingType || '',
-                quantity: item.quantity || 1,
-                price: item.price || 0
-              };
+            const curtainItems: any[] = [];
+            const blindItems: any[] = [];
+            selRes.data.items.forEach((item: any) => {
+              if (item.details?.catalogType === 'Blinds') blindItems.push(item);
+              else curtainItems.push(item);
             });
-            setRows(mappedRows);
+
+            const mappedRows: MeasurementRow[] = curtainItems.map((item: any) => ({
+              uid: item.id || Math.random().toString(36).substr(2, 9),
+              areaName: item.details?.areaName || item.areaName || '',
+              system: (item.details?.system as SystemType) || '',
+              style: (item.details?.style as StyleType) || '',
+              type: (item.type as CurtainType) || '',
+              height: item.height?.toString() || '',
+              width: item.width?.toString() || '',
+              pelmet: item.pelmet?.toString() || '',
+              opening: (item.openingType as OpeningType) || '',
+              motorType: (item.motorizationMode as MotorType) || '',
+              cablePosition: (item.opsType as CablePosition) || '',
+              quantity: item.quantity || 1,
+              remark: item.details?.remark || '',
+            }));
+            setRows(mappedRows.length ? mappedRows : [createEmptyRow()]);
+
+            const mappedBlinds: BlindRow[] = blindItems.map((item: any) => ({
+              uid: item.id || Math.random().toString(36).substr(2, 9),
+              areaName: item.details?.areaName || '',
+              brand: item.details?.blindBrand || '',
+              type: item.details?.blindType || '',
+              system: item.details?.blindSystem || '',
+              style: item.details?.blindStyle || '',
+              collection: item.details?.blindCollection || '',
+              shadeSRL: item.details?.blindShadeSRL || '',
+              collectionTop: item.details?.blindCollectionTop || '',
+              shadeSRLTop: item.details?.blindShadeSRLTop || '',
+              collectionBottom: item.details?.blindCollectionBottom || '',
+              shadeSRLBottom: item.details?.blindShadeSRLBottom || '',
+              unit: item.unit || 'Inch',
+              width: item.width?.toString() || '',
+              height: item.height?.toString() || '',
+              quantity: item.quantity || 1,
+              operation: item.details?.blindOperation || '',
+              fitting: item.details?.blindFitting || '',
+              ladderTap: item.details?.blindLadderTap || '',
+              motorization: item.details?.blindMotorization || '',
+              motor: item.details?.blindMotor || '',
+              remote: item.details?.blindRemote || '',
+              wire: item.details?.blindWire || '',
+              remark: item.details?.remark || '',
+            }));
+            setBlindRows(mappedBlinds.length ? mappedBlinds : [createEmptyBlindRow()]);
           } else {
             setRows([createEmptyRow()]);
+            setBlindRows([createEmptyBlindRow()]);
           }
         } catch (error: any) {
-          // If 404, assume new selection
           setRows([createEmptyRow()]);
+          setBlindRows([createEmptyBlindRow()]);
         }
       } catch (error) {
         console.error('Init error:', error);
@@ -167,28 +158,20 @@ const IndependentMeasurementForm: React.FC = () => {
 
   const createEmptyRow = (): MeasurementRow => ({
     uid: Math.random().toString(36).substr(2, 9),
-    companyId: '',
-    companyInput: '',
-    catalogId: '',
-    catalogInput: '',
-    catalogName: '',
-    catalogType: '',
-    productId: '',
-    productName: '',
-    selectedProductName: '',
-    srlNo: '',
     areaName: '',
-    unit: 'mm',
-    width: '',
-    height: '',
+    system: '',
+    style: '',
     type: '',
-    motorizationMode: '',
-    opsType: '',
+    height: '',
+    width: '',
     pelmet: '',
-    openingType: '',
+    opening: '',
+    motorType: '',
+    cablePosition: '',
     quantity: 1,
-    price: 0
+    remark: '',
   });
+
   const handleAddRow = () => setRows(prev => [...prev, createEmptyRow()]);
 
   const handleRemoveRow = (index: number) => {
@@ -203,154 +186,102 @@ const IndependentMeasurementForm: React.FC = () => {
     setRows(prev => {
       const newRows = [...prev];
       newRows[index] = { ...newRows[index], [field]: value };
-      if (field === 'type' && value === 'Manual') {
-        newRows[index].motorizationMode = '';
+      // Clear motor fields when switching away from Motorised
+      if (field === 'system' && value !== 'Motorised') {
+        newRows[index].motorType = '';
+        newRows[index].cablePosition = '';
       }
       return newRows;
-    });
-  };
-
-  const handleCompanySelect = (index: number, companyId: string, inputVal?: string) => {
-    setRows(prev => {
-      const newRows = [...prev];
-      newRows[index] = {
-        ...newRows[index],
-        companyId,
-        companyInput: inputVal ?? companyId,
-        catalogId: '',
-        catalogInput: '',
-        catalogName: '',
-        catalogType: '',
-        productId: '',
-        productName: '',
-        selectedProductName: '',
-        srlNo: '',
-        price: 0
-      };
-      return newRows;
-    });
-  };
-
-  const handleCatalogSelect = (index: number, catalogId: string, inputVal?: string) => {
-    const catalog = allCatalogs.find(c => c.id === catalogId);
-    setRows(prev => {
-      const newRows = [...prev];
-      newRows[index] = {
-        ...newRows[index],
-        catalogId: catalog ? catalog.id : catalogId,
-        catalogInput: inputVal ?? (catalog ? catalog.name : catalogId),
-        catalogName: catalog ? catalog.name : (inputVal || catalogId),
-        catalogType: catalog ? (catalog.type || 'Curtains') : 'Generic',
-        productId: '',
-        productName: '',
-        selectedProductName: '',
-        srlNo: '',
-        price: 0
-      };
-      return newRows;
-    });
-  };
-
-  // ✅ NEW: Step 1 — pick design name only, clears SRL
-  const handleDesignSelect = (index: number, designName: string) => {
-    setRows(prev => {
-      const newRows = [...prev];
-      newRows[index] = {
-        ...newRows[index],
-        selectedProductName: designName,
-        productId: '',
-        srlNo: '',
-        price: 0
-      };
-      return newRows;
-    });
-  };
-
-  // ✅ UPDATED: Step 2 — pick specific SRL
-  const handleProductSelect = (index: number, srlValue: string) => {
-    if (!srlValue) {
-      setRows(prev => {
-        const newRows = [...prev];
-        newRows[index] = { ...newRows[index], productId: '', srlNo: '', price: 0 };
-        return newRows;
-      });
-      return;
-    }
-
-    setRows(prev => {
-      const catalogId = prev[index].catalogId;
-      const selectedDesign = prev[index].selectedProductName;
-      const availableProdList = processProductsForDropdown(
-        products.filter(p => p.catalogId === catalogId && p.name === selectedDesign)
-      );
-      const processedProd = availableProdList.find(p => p.srlNo === srlValue);
-
-      if (processedProd) {
-        const newRows = [...prev];
-        const price = typeof processedProd.price === 'number'
-          ? processedProd.price
-          : parseFloat(String(processedProd.price).replace(/,/g, '')) || 0;
-        newRows[index] = {
-          ...newRows[index],
-          productId: processedProd.originalId,
-          productName: processedProd.name,
-          selectedProductName: processedProd.name,
-          srlNo: processedProd.srlNo !== 'N/A' ? processedProd.srlNo : '',
-          price: price
-        };
-        return newRows;
-      } else {
-        const newRows = [...prev];
-        newRows[index] = {
-          ...newRows[index],
-          productId: 'manual',
-          productName: newRows[index].selectedProductName || 'Custom Design',
-          srlNo: srlValue,
-          price: 0
-        };
-        return newRows;
-      }
     });
   };
 
   const handleSave = async () => {
-    const invalidRows = rows.filter(r => !r.areaName.trim());
-    if (invalidRows.length > 0) {
-      toast({ title: 'Validation Error', description: 'All rows must have an Area Name', variant: 'destructive' });
+    // Only validate rows that have ANY data filled in. Empty placeholder rows are skipped on save.
+    const meaningfulCurtains = rows.filter(r => r.areaName.trim() || r.width || r.height || r.system || r.style || r.type);
+    const meaningfulBlinds = blindRows.filter(r => r.areaName.trim() || r.width || r.height || r.brand || r.type || r.system);
+
+    const invalidCurtains = meaningfulCurtains.filter(r => !r.areaName.trim());
+    const invalidBlinds = meaningfulBlinds.filter(r => !r.areaName.trim());
+    if (invalidCurtains.length > 0 || invalidBlinds.length > 0) {
+      toast({ title: 'Validation Error', description: 'All filled rows must have an Area Name', variant: 'destructive' });
+      return;
+    }
+    if (meaningfulCurtains.length === 0 && meaningfulBlinds.length === 0) {
+      toast({ title: 'Nothing to save', description: 'Add at least one curtain or blind row.', variant: 'destructive' });
       return;
     }
 
     setSaving(true);
     try {
+      const curtainItems = meaningfulCurtains.map(r => ({
+        productId: null,
+        productName: r.areaName || 'Curtain Item',
+        quantity: r.quantity,
+        price: 0,
+        unit: 'inch',
+        width: r.width ? parseFloat(r.width) : null,
+        height: r.height ? parseFloat(r.height) : null,
+        // Reuse existing DB columns to avoid a schema migration:
+        type: r.type || null,                  // Sheer / Main / Roman / Double C-Main / Double C-Sheer
+        motorizationMode: r.motorType || null, // RTS / WY / Both
+        opsType: r.cablePosition || null,      // L / R / C
+        pelmet: r.pelmet ? parseFloat(r.pelmet) : null,
+        openingType: r.opening || null,        // Center / One Way: Left / One Way: Right
+        areaName: r.areaName,
+        catalogName: 'Curtains',
+        catalogType: 'Curtains',
+        details: {
+          areaName: r.areaName,
+          catalogName: 'Curtains',
+          catalogType: 'Curtains',
+          system: r.system,
+          style: r.style,
+          remark: r.remark,
+        },
+      }));
+
+      const blindItems = meaningfulBlinds.map(r => ({
+        productId: null,
+        productName: r.areaName || 'Blind Item',
+        quantity: r.quantity,
+        price: 0,
+        unit: r.unit,
+        width: r.width ? parseFloat(r.width) : null,
+        height: r.height ? parseFloat(r.height) : null,
+        areaName: r.areaName,
+        catalogName: 'Blinds',
+        catalogType: 'Blinds',
+        details: {
+          areaName: r.areaName,
+          catalogName: 'Blinds',
+          catalogType: 'Blinds',
+          blindBrand: r.brand,
+          blindType: r.type,
+          blindSystem: r.system,
+          blindStyle: r.style,
+          blindCollection: r.collection,
+          blindShadeSRL: r.shadeSRL,
+          blindCollectionTop: r.collectionTop,
+          blindShadeSRLTop: r.shadeSRLTop,
+          blindCollectionBottom: r.collectionBottom,
+          blindShadeSRLBottom: r.shadeSRLBottom,
+          blindOperation: r.operation,
+          blindFitting: r.fitting,
+          blindLadderTap: r.ladderTap,
+          blindMotorization: r.motorization,
+          blindMotor: r.motor,
+          blindRemote: r.remote,
+          blindWire: r.wire,
+          remark: r.remark,
+        },
+      }));
+
       const payload = {
         inquiryId,
         status: selection?.status || 'pending',
         delivery_date: selection?.delivery_date || null,
-        notes: selection?.notes || null,
-        items: rows.map(r => ({
-          productId: r.productId || null,
-          productName: r.productName || 'Custom Item',
-          quantity: r.quantity,
-          price: r.price,
-          unit: r.unit,
-          width: r.width ? parseFloat(r.width) : null,
-          height: r.height ? parseFloat(r.height) : null,
-          type: r.catalogType === 'Curtains' ? (r.type || null) : null,
-          motorizationMode: r.catalogType === 'Curtains' ? (r.motorizationMode || null) : null,
-          opsType: r.catalogType === 'Curtains' ? (r.opsType || null) : null,
-          pelmet: r.catalogType === 'Curtains' ? (r.pelmet ? parseFloat(r.pelmet) : null) : null,
-          openingType: r.catalogType === 'Curtains' ? (r.openingType || null) : null,
-          areaName: r.areaName,
-          catalogName: r.catalogName,
-          srlNo: r.srlNo || null,
-          details: {
-            catalogName: r.catalogName,
-            catalogType: r.catalogType,
-            companyId: r.companyId,
-            areaName: r.areaName,        // ✅ ADD THIS
-            srlNo: r.srlNo || null
-          }
-        }))
+        notes: globalRemark || null,
+        items: [...curtainItems, ...blindItems],
       };
 
       if (selection) {
@@ -367,106 +298,6 @@ const IndependentMeasurementForm: React.FC = () => {
     }
   };
 
-  const getBadgeColor = (type: string) => {
-    switch (type?.toLowerCase()) {
-      case 'curtains': return 'bg-orange-100 text-orange-700 border-orange-200';
-      case 'rugs': return 'bg-purple-100 text-purple-700 border-purple-200';
-      case 'blinds': return 'bg-blue-100 text-blue-700 border-blue-200';
-      default: return 'bg-gray-100 text-gray-600 border-gray-200';
-    }
-  };
-
-  // Controlled input handlers for Company
-  const handleCompanyInputChange = (index: number, value: string) => {
-    setRows(prev => {
-      const newRows = [...prev];
-      newRows[index] = { ...newRows[index], companyInput: value };
-      return newRows;
-    });
-    const match = companies.find(c => c.name.toLowerCase() === value.toLowerCase());
-    if (match) handleCompanySelect(index, match.id, value);
-    else if (value === '') handleCompanySelect(index, '', '');
-  };
-
-  const handleCompanyInputBlur = (index: number, value: string) => {
-    const match = companies.find(c => c.name.toLowerCase() === value.toLowerCase());
-    if (match) {
-      handleCompanySelect(index, match.id, match.name);
-    } else if (value.trim()) {
-      setRows(prev => {
-        const newRows = [...prev];
-        newRows[index] = { ...newRows[index], companyId: value, companyInput: value, catalogId: '', catalogInput: '', catalogName: '', catalogType: '', productId: '', productName: '', selectedProductName: '', srlNo: '', price: 0 };
-        return newRows;
-      });
-    }
-  };
-
-  // Controlled input handlers for Catalog
-  const handleCatalogInputChange = (index: number, value: string) => {
-    setRows(prev => {
-      const newRows = [...prev];
-      newRows[index] = { ...newRows[index], catalogInput: value };
-      return newRows;
-    });
-    const row = rows[index];
-    const relevantCatalogs = allCatalogs.filter(c => c.companyId === row.companyId);
-    const match = relevantCatalogs.find(c => c.name.toLowerCase() === value.toLowerCase());
-    if (match) handleCatalogSelect(index, match.id, value);
-    else if (value === '') handleCatalogSelect(index, '', '');
-  };
-
-  const handleCatalogInputBlur = (index: number, value: string) => {
-    const row = rows[index];
-    const relevantCatalogs = allCatalogs.filter(c => c.companyId === row.companyId);
-    const match = relevantCatalogs.find(c => c.name.toLowerCase() === value.toLowerCase());
-    if (match) {
-      handleCatalogSelect(index, match.id, match.name);
-    } else if (value.trim()) {
-      setRows(prev => {
-        const newRows = [...prev];
-        newRows[index] = { ...newRows[index], catalogId: value, catalogInput: value, catalogName: value, catalogType: 'Generic', productId: '', productName: '', selectedProductName: '', srlNo: '', price: 0 };
-        return newRows;
-      });
-    }
-  };
-
-  const handleSrlDirectSearch = (index: number, srlTerm: string) => {
-    const row = rows[index];
-    if (!row.catalogId || !srlTerm.trim()) return;
-
-    // Find all products for the current catalog
-    const relevantProducts = products.filter(p => p.catalogId === row.catalogId);
-    const processedProducts = processProductsForDropdown(relevantProducts);
-
-    // Search for an exact or case-insensitive match on the SRL No
-    const matchedProd = processedProducts.find(
-      p => p.srlNo?.toString().toLowerCase() === srlTerm.trim().toLowerCase()
-    );
-
-    if (matchedProd) {
-      const price = typeof matchedProd.price === 'number'
-        ? matchedProd.price
-        : parseFloat(String(matchedProd.price).replace(/,/g, '')) || 0;
-
-      setRows(prev => {
-        const newRows = [...prev];
-        newRows[index] = {
-          ...newRows[index],
-          selectedProductName: matchedProd.name, // Auto-selects the Design Name
-          productId: matchedProd.originalId,     // Selects the exact product mapping
-          productName: matchedProd.name,
-          srlNo: matchedProd.srlNo,
-          price: price
-        };
-        return newRows;
-      });
-
-      toast({ title: 'Product Found', description: `Auto-selected ${matchedProd.name} (SRL: ${matchedProd.srlNo})` });
-    } else {
-      toast({ title: 'Not Found', description: `No product found with SRL: ${srlTerm} in this catalog.`, variant: 'destructive' });
-    }
-  };
-
   if (loading) {
     return (
       <DashboardLayout>
@@ -477,13 +308,11 @@ const IndependentMeasurementForm: React.FC = () => {
     );
   }
 
-  const totalAmount = rows.reduce((sum, r) => sum + (r.quantity * r.price), 0);
-
   return (
     <DashboardLayout>
       <div className="max-w-[98vw] mx-auto animate-fade-in pb-20">
 
-        {/* Header - Stack on Mobile */}
+        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div className="flex items-start md:items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => navigate('/measurements')}>
@@ -497,6 +326,8 @@ const IndependentMeasurementForm: React.FC = () => {
                 <span className="font-medium text-foreground">{inquiry?.client_name}</span>
                 <span className="hidden md:inline h-1 w-1 bg-muted-foreground rounded-full" />
                 <span className="text-xs bg-muted px-2 py-0.5 rounded">{inquiry?.inquiry_number}</span>
+                <span className="hidden md:inline h-1 w-1 bg-muted-foreground rounded-full" />
+                <span className="text-xs italic text-muted-foreground">Unit: Inch</span>
               </div>
             </div>
           </div>
@@ -505,34 +336,42 @@ const IndependentMeasurementForm: React.FC = () => {
           </Button>
         </div>
 
-        {/* Main Table Container */}
-        <div className="bg-white border rounded-xl shadow-sm overflow-hidden flex flex-col h-full">
-          <div className="overflow-x-auto flex-1">
-            <table className="w-full text-sm border-collapse" style={{ minWidth: '1600px' }}>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'curtains' | 'blinds')}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="curtains">Curtains ({rows.length})</TabsTrigger>
+            <TabsTrigger value="blinds">Blinds ({blindRows.length})</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="curtains">
+        {/* Main Table */}
+        <div className="bg-white border rounded-xl shadow-sm overflow-hidden flex flex-col">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse" style={{ minWidth: '1500px' }}>
               <thead className="bg-gradient-to-r from-primary/10 to-primary/5 sticky top-0 z-10">
+                {/* Group header row */}
                 <tr>
-                  <th className="p-2 w-10 text-center font-bold text-primary border-r border-primary/20 sticky left-0 bg-white z-20 shadow-sm">#</th>
-                  <th className="p-2 w-36 text-left font-bold text-primary border-r border-primary/20">Area *</th>
-                  <th className="p-2 w-36 text-left font-bold text-primary border-r border-primary/20">Company</th>
-                  <th className="p-2 w-44 text-left font-bold text-primary border-r border-primary/20">Catalog</th>
-                  <th className="p-2 w-56 text-left font-bold text-primary border-r border-primary/20">Product / SRL</th>
-                  <th className="p-2 w-16 text-left font-bold text-primary border-r border-primary/20">Unit</th>
-                  <th className="p-2 w-20 text-left font-bold text-primary border-r border-primary/20">Width</th>
-                  <th className="p-2 w-20 text-left font-bold text-primary border-r border-primary/20">Height</th>
-                  <th className="p-2 w-28 text-left font-bold text-primary border-r border-primary/20">Type</th>
-                  <th className="p-2 w-32 text-left font-bold text-primary border-r border-primary/20">Motorization</th>
-                  <th className="p-2 w-16 text-left font-bold text-primary border-r border-primary/20">OPS</th>
-                  <th className="p-2 w-20 text-left font-bold text-primary border-r border-primary/20">Pelmet</th>
-                  <th className="p-2 w-24 text-left font-bold text-primary border-r border-primary/20">Opening</th>
-                  <th className="p-2 w-10 sticky right-0 bg-white z-20 shadow-sm"></th>
+                  <th rowSpan={2} className="p-2 w-10 text-center font-bold text-primary border-r border-b border-primary/20 sticky left-0 bg-primary/10 z-20">#</th>
+                  <th rowSpan={2} className="p-2 w-40 text-left font-bold text-primary border-r border-b border-primary/20">Area Name</th>
+                  <th rowSpan={2} className="p-2 w-32 text-left font-bold text-primary border-r border-b border-primary/20">System</th>
+                  <th rowSpan={2} className="p-2 w-36 text-left font-bold text-primary border-r border-b border-primary/20">Style</th>
+                  <th rowSpan={2} className="p-2 w-40 text-left font-bold text-primary border-r border-b border-primary/20">Type</th>
+                  <th rowSpan={2} className="p-2 w-20 text-left font-bold text-primary border-r border-b border-primary/20">H (in)</th>
+                  <th rowSpan={2} className="p-2 w-20 text-left font-bold text-primary border-r border-b border-primary/20">W (in)</th>
+                  <th rowSpan={2} className="p-2 w-24 text-left font-bold text-primary border-r border-b border-primary/20">Pelmet Size</th>
+                  <th rowSpan={2} className="p-2 w-36 text-left font-bold text-primary border-r border-b border-primary/20">Opening</th>
+                  <th colSpan={2} className="p-2 text-center font-bold text-primary border-r border-b border-primary/20 bg-yellow-100">If Motorised then</th>
+                  <th rowSpan={2} className="p-2 w-20 text-left font-bold text-primary border-r border-b border-primary/20">Quantity</th>
+                  <th rowSpan={2} className="p-2 w-40 text-left font-bold text-primary border-r border-b border-primary/20">Remark</th>
+                  <th rowSpan={2} className="p-2 w-10 sticky right-0 bg-primary/10 z-20 border-b border-primary/20"></th>
+                </tr>
+                <tr>
+                  <th className="p-1 w-28 text-left font-semibold text-primary border-r border-b border-primary/20 bg-yellow-50 text-xs">Motor Type</th>
+                  <th className="p-1 w-28 text-left font-semibold text-primary border-r border-b border-primary/20 bg-yellow-50 text-xs">Cable Position</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((row, idx) => {
-                  const isCurtainRow = row.catalogType === 'Curtains';
-                  const disableCurtainFields = !isCurtainRow;
-                  const rowCatalogs = allCatalogs.filter(c => c.companyId === row.companyId);
-
+                  const isMotorised = row.system === 'Motorised';
                   return (
                     <tr key={row.uid} className="group hover:bg-primary/5 transition-colors">
                       <td className="p-1 text-center text-xs text-muted-foreground border-r bg-muted/10 font-bold sticky left-0 z-10">{idx + 1}</td>
@@ -547,126 +386,145 @@ const IndependentMeasurementForm: React.FC = () => {
                           placeholder="Area Name"
                         />
                         <datalist id={`area-suggestions-${row.uid}`}>
-                          {["Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom", "Guest Bedroom", "Dining Room", "Kitchen", "Study Room", "Balcony", "Puja Room", "Entrance", "Lobby"].map(area => (
-                            <option key={area} value={area} />
-                          ))}
+                          {COMMON_AREAS.map(area => <option key={area} value={area} />)}
                         </datalist>
                       </td>
 
-                      {/* Company — fully controlled */}
+                      {/* System */}
+                      <td className="p-1 border-r">
+                        <select
+                          value={row.system}
+                          onChange={(e) => updateRow(idx, 'system', e.target.value)}
+                          className="w-full h-9 px-1 text-xs border-transparent bg-transparent focus:bg-white rounded"
+                        >
+                          <option value="">-</option>
+                          {SYSTEM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+
+                      {/* Style */}
+                      <td className="p-1 border-r">
+                        <select
+                          value={row.style}
+                          onChange={(e) => updateRow(idx, 'style', e.target.value)}
+                          className="w-full h-9 px-1 text-xs border-transparent bg-transparent focus:bg-white rounded"
+                        >
+                          <option value="">-</option>
+                          {STYLE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+
+                      {/* Type */}
+                      <td className="p-1 border-r">
+                        <select
+                          value={row.type}
+                          onChange={(e) => updateRow(idx, 'type', e.target.value)}
+                          className="w-full h-9 px-1 text-xs border-transparent bg-transparent focus:bg-white rounded"
+                        >
+                          <option value="">-</option>
+                          {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </td>
+
+                      {/* H */}
                       <td className="p-1 border-r">
                         <input
-                          list={`company-list-${row.uid}`}
-                          placeholder="Company..."
-                          value={row.companyInput}
-                          onChange={(e) => handleCompanyInputChange(idx, e.target.value)}
-                          onBlur={(e) => handleCompanyInputBlur(idx, e.target.value)}
-                          className="w-full h-9 px-2 text-xs border-transparent bg-transparent focus:bg-white focus:border-primary rounded"
+                          type="number"
+                          step="0.01"
+                          value={row.height}
+                          onChange={(e) => updateRow(idx, 'height', e.target.value)}
+                          className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded"
                         />
-                        <datalist id={`company-list-${row.uid}`}>
-                          {companies.map(c => <option key={c.id} value={c.name} />)}
-                        </datalist>
                       </td>
 
-                      {/* Catalog — fully controlled */}
+                      {/* W */}
                       <td className="p-1 border-r">
                         <input
-                          list={`catalog-list-${row.uid}`}
-                          placeholder="Catalog..."
-                          value={row.catalogInput}
-                          onChange={(e) => handleCatalogInputChange(idx, e.target.value)}
-                          onBlur={(e) => handleCatalogInputBlur(idx, e.target.value)}
-                          className="w-full h-9 px-2 text-xs border-transparent bg-transparent focus:bg-white focus:border-primary rounded"
+                          type="number"
+                          step="0.01"
+                          value={row.width}
+                          onChange={(e) => updateRow(idx, 'width', e.target.value)}
+                          className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded"
                         />
-                        <datalist id={`catalog-list-${row.uid}`}>
-                          {rowCatalogs.map(cat => <option key={cat.id} value={cat.name} />)}
-                        </datalist>
-                        {row.catalogType && (
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full border mt-0.5 inline-block ${getBadgeColor(row.catalogType)}`}>
-                            {row.catalogType}
-                          </span>
-                        )}
                       </td>
 
-                      {/* Product / SRL — compact 2-row */}
+                      {/* Pelmet Size */}
                       <td className="p-1 border-r">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex gap-1">
-                            <input
-                              type="text"
-                              placeholder="🔍 SRL"
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  handleSrlDirectSearch(idx, (e.target as HTMLInputElement).value);
-                                  (e.target as HTMLInputElement).value = '';
-                                }
-                              }}
-                              onBlur={(e) => { if (e.target.value) { handleSrlDirectSearch(idx, e.target.value); e.target.value = ''; } }}
-                              className="w-24 h-8 px-2 border border-green-300 bg-green-50 focus:border-green-500 rounded text-xs text-green-900 placeholder-green-700/60"
-                            />
-                            <input
-                              list={`design-list-${row.uid}`}
-                              placeholder="Design / Product"
-                              value={row.selectedProductName}
-                              onChange={(e) => handleDesignSelect(idx, e.target.value)}
-                              className="flex-1 h-8 px-2 border border-border bg-transparent focus:bg-white focus:border-primary rounded text-xs"
-                            />
-                            <datalist id={`design-list-${row.uid}`}>
-                              {Array.from(new Set(products.filter(p => p.catalogId === row.catalogId).map(p => p.name)))
-                                .map(name => <option key={name} value={name} />)}
-                            </datalist>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <input
-                              list={`srl-list-${row.uid}`}
-                              placeholder="SRL No. (optional)"
-                              value={row.srlNo || ''}
-                              onChange={(e) => handleProductSelect(idx, e.target.value)}
-                              className="flex-1 h-8 px-2 border border-border bg-white focus:border-primary rounded text-xs text-blue-700 font-medium"
-                            />
-                            <datalist id={`srl-list-${row.uid}`}>
-                              {processProductsForDropdown(
-                                products.filter(p => p.catalogId === row.catalogId && (row.selectedProductName ? p.name === row.selectedProductName : true))
-                              ).map(p => (
-                                <option key={p.uniqueKey} value={p.srlNo} />
-                              ))}
-                            </datalist>
-                          </div>
-                        </div>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={row.pelmet}
+                          onChange={(e) => updateRow(idx, 'pelmet', e.target.value)}
+                          className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded"
+                        />
                       </td>
 
+                      {/* Opening */}
                       <td className="p-1 border-r">
-                        <select value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} className="w-full h-9 px-1 text-xs border-transparent bg-transparent focus:bg-white rounded"><option value="mm">mm</option><option value="cm">cm</option><option value="inch">inch</option></select>
+                        <select
+                          value={row.opening}
+                          onChange={(e) => updateRow(idx, 'opening', e.target.value)}
+                          className="w-full h-9 px-1 text-xs border-transparent bg-transparent focus:bg-white rounded"
+                        >
+                          <option value="">-</option>
+                          {OPENING_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
                       </td>
-                      <td className="p-1 border-r"><input type="number" step="0.01" value={row.width} onChange={(e) => updateRow(idx, 'width', e.target.value)} className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded" /></td>
-                      <td className="p-1 border-r"><input type="number" step="0.01" value={row.height} onChange={(e) => updateRow(idx, 'height', e.target.value)} className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded" /></td>
 
-                      <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-50 opacity-50' : ''}`}>
-                        <select value={row.type} onChange={(e) => updateRow(idx, 'type', e.target.value)} disabled={disableCurtainFields} className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed">
-                          <option value="">-</option><option value="Manual">Manual</option><option value="Automatic / Motorized">Motorized</option>
+                      {/* Motor Type — only enabled when Motorised */}
+                      <td className={`p-1 border-r ${!isMotorised ? 'bg-gray-50 opacity-50' : 'bg-yellow-50/30'}`}>
+                        <select
+                          value={row.motorType}
+                          onChange={(e) => updateRow(idx, 'motorType', e.target.value)}
+                          disabled={!isMotorised}
+                          className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed"
+                        >
+                          <option value="">-</option>
+                          {MOTOR_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                       </td>
-                      <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-50 opacity-50' : ''}`}>
-                        <select value={row.motorizationMode} onChange={(e) => updateRow(idx, 'motorizationMode', e.target.value)} disabled={disableCurtainFields || row.type !== 'Automatic / Motorized'} className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:opacity-30 disabled:cursor-not-allowed">
-                          <option value="">-</option><option value="Remote">Remote</option><option value="Automation">Auto</option><option value="Both">Both</option>
+
+                      {/* Cable Position — only enabled when Motorised */}
+                      <td className={`p-1 border-r ${!isMotorised ? 'bg-gray-50 opacity-50' : 'bg-yellow-50/30'}`}>
+                        <select
+                          value={row.cablePosition}
+                          onChange={(e) => updateRow(idx, 'cablePosition', e.target.value)}
+                          disabled={!isMotorised}
+                          className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed"
+                        >
+                          <option value="">-</option>
+                          {CABLE_POSITION_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                         </select>
                       </td>
-                      <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-50 opacity-50' : ''}`}>
-                        <select value={row.opsType} onChange={(e) => updateRow(idx, 'opsType', e.target.value)} disabled={disableCurtainFields} className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed">
-                          <option value="">-</option><option value="L">L</option><option value="R">R</option>
-                        </select>
+
+                      {/* Quantity */}
+                      <td className="p-1 border-r">
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={row.quantity}
+                          onChange={(e) => updateRow(idx, 'quantity', parseInt(e.target.value) || 1)}
+                          className="w-full h-9 px-2 text-xs text-right border-transparent bg-transparent focus:bg-white rounded"
+                        />
                       </td>
-                      <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-50 opacity-50' : ''}`}>
-                        <input type="number" step="0.01" value={row.pelmet} onChange={(e) => updateRow(idx, 'pelmet', e.target.value)} disabled={disableCurtainFields} className="w-full h-9 px-2 text-xs text-right bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed" />
+
+                      {/* Remark */}
+                      <td className="p-1 border-r">
+                        <input
+                          type="text"
+                          value={row.remark}
+                          onChange={(e) => updateRow(idx, 'remark', e.target.value)}
+                          className="w-full h-9 px-2 text-xs border-transparent bg-transparent focus:bg-white rounded"
+                          placeholder="Notes..."
+                        />
                       </td>
-                      <td className={`p-1 border-r ${disableCurtainFields ? 'bg-gray-50 opacity-50' : ''}`}>
-                        <select value={row.openingType} onChange={(e) => updateRow(idx, 'openingType', e.target.value)} disabled={disableCurtainFields} className="w-full h-9 px-1 text-xs bg-transparent border-transparent focus:bg-white rounded disabled:cursor-not-allowed">
-                          <option value="">-</option><option value="Left">Left</option><option value="Right">Right</option><option value="Center">Center</option>
-                        </select>
-                      </td>
+
+                      {/* Delete */}
                       <td className="p-1 text-center sticky right-0 bg-white z-10 border-l">
-                        <Button variant="ghost" size="icon" onClick={() => handleRemoveRow(idx)} className="h-8 w-8 text-muted-foreground hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleRemoveRow(idx)} className="h-8 w-8 text-muted-foreground hover:text-red-600">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </td>
                     </tr>
                   );
@@ -675,13 +533,35 @@ const IndependentMeasurementForm: React.FC = () => {
             </table>
           </div>
 
-          {/* Footer - Stack on mobile */}
+          {/* Footer */}
           <div className="p-4 border-t flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50/50">
-            <Button variant="outline" onClick={handleAddRow} className="w-full sm:w-auto gap-2 border-dashed border-2"><Plus className="h-4 w-4" /> Add Row</Button>
+            <Button variant="outline" onClick={handleAddRow} className="w-full sm:w-auto gap-2 border-dashed border-2">
+              <Plus className="h-4 w-4" /> Add Row
+            </Button>
             <div className="flex items-center justify-between w-full sm:w-auto gap-6 text-sm text-muted-foreground">
               <div>Total Rows: <span className="text-foreground font-bold">{rows.length}</span></div>
             </div>
           </div>
+        </div>
+          </TabsContent>
+
+          <TabsContent value="blinds">
+            <BlindsTable rows={blindRows} setRows={setBlindRows} />
+          </TabsContent>
+        </Tabs>
+
+        {/* Global Remark — applies to the whole measurement form */}
+        <div className="mt-6 bg-white border rounded-xl shadow-sm p-4">
+          <label className="block text-sm font-semibold text-primary mb-2">
+            Overall Remark <span className="text-xs font-normal text-muted-foreground">(applies to the whole measurement)</span>
+          </label>
+          <textarea
+            value={globalRemark}
+            onChange={(e) => setGlobalRemark(e.target.value)}
+            rows={3}
+            className="w-full px-3 py-2 text-sm border border-border bg-white focus:border-primary rounded"
+            placeholder="Add any notes about the overall site, customer instructions, etc."
+          />
         </div>
       </div>
     </DashboardLayout>
