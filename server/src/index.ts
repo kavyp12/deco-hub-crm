@@ -3782,18 +3782,29 @@ app.post('/api/inquiries/:id/comments', authenticateToken, async (req: any, res:
 // EDIT COMMENT (✅ RESTORED to fix 404 Error)
 // ==========================================
 app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) => {
-  // ✅ FIX: Extract all fields
-  const { content, dueDate, attachmentUrl, attachmentUrls } = req.body;
-  
+  // ✅ FIX: Extract all fields (including mentions so editing can re-tag people)
+  const { content, dueDate, attachmentUrl, attachmentUrls, mentionedUserIds } = req.body;
+
   try {
+    // If the client sent a mentions list, replace the comment's mentions with it.
+    // This grants visibility to ALL newly-tagged users and removes any that were untagged.
+    if (mentionedUserIds && Array.isArray(mentionedUserIds)) {
+      await prisma.inquiryCommentMention.deleteMany({ where: { commentId: req.params.id } });
+    }
+
     const comment = await prisma.inquiryComment.update({
       where: { id: req.params.id },
-      data: { 
+      data: {
         content: content || '',
         dueDate: dueDate ? new Date(dueDate) : null,
         attachmentUrl: attachmentUrl || null,
         // ✅ FIX: Save the array of images
         attachmentUrls: attachmentUrls && attachmentUrls.length > 0 ? attachmentUrls : (attachmentUrl ? [attachmentUrl] : []),
+        ...(mentionedUserIds && Array.isArray(mentionedUserIds) && mentionedUserIds.length > 0 && {
+          mentions: {
+            create: mentionedUserIds.map((uid: string) => ({ userId: uid }))
+          }
+        })
       },
       include: {
         user: { select: { name: true } },
@@ -3802,7 +3813,7 @@ app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) 
         }
       }
     });
-    
+
     await logActivity(req.user.id, 'UPDATE', 'COMMENT', comment.id, `Edited a comment`);
     res.json(comment);
   } catch (error) {

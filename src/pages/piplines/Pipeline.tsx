@@ -225,6 +225,12 @@ const Pipeline: React.FC = () => {
   const [mentionedUsers, setMentionedUsers] = useState<AppUser[]>([]);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
 
+  // @mention state for EDIT comment mode
+  const [editMentionQuery, setEditMentionQuery] = useState<string>('');
+  const [showEditMentionPicker, setShowEditMentionPicker] = useState(false);
+  const [editingMentionedUsers, setEditingMentionedUsers] = useState<AppUser[]>([]);
+  const editCommentInputRef = useRef<HTMLTextAreaElement>(null);
+
   // Checklist State
   const [newChecklistTitle, setNewChecklistTitle] = useState('Checklist');
   const [newItemText, setNewItemText] = useState('');
@@ -954,15 +960,70 @@ const Pipeline: React.FC = () => {
     commentInputRef.current?.focus();
   };
 
+  // Derive the list of mentioned users from the raw text by matching @Name
+  // against the known users. This makes add/remove of mentions work naturally:
+  // remove an "@Name" from the text and the user stops being mentioned.
+  const extractMentionedUsers = (text: string): AppUser[] => {
+    if (!text) return [];
+    const matched: AppUser[] = [];
+    // Match longer names first so "@John Doe" wins over "@John"
+    const sorted = [...allUsers].sort((a, b) => b.name.length - a.name.length);
+    for (const user of sorted) {
+      const escaped = `@${user.name}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // word-ish boundary: not immediately followed by a letter/number
+      const regex = new RegExp(`${escaped}(?![\\p{L}\\p{N}])`, 'iu');
+      if (regex.test(text) && !matched.find(m => m.id === user.id)) {
+        matched.push(user);
+      }
+    }
+    return matched;
+  };
+
+  const handleEditCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setEditingCommentText(val);
+
+    // Keep the mentioned-users list in sync with the text so removing an
+    // "@Name" un-mentions that person.
+    setEditingMentionedUsers(extractMentionedUsers(val));
+
+    const lastAt = val.lastIndexOf('@');
+    if (lastAt !== -1) {
+      const afterAt = val.slice(lastAt + 1);
+      if (!afterAt.includes(' ')) {
+        setEditMentionQuery(afterAt);
+        setShowEditMentionPicker(true);
+        return;
+      }
+    }
+    setShowEditMentionPicker(false);
+    setEditMentionQuery('');
+  };
+
+  const handleSelectEditMention = (user: AppUser) => {
+    const lastAt = editingCommentText.lastIndexOf('@');
+    const before = lastAt !== -1 ? editingCommentText.slice(0, lastAt) : editingCommentText;
+    const nextText = `${before}@${user.name} `;
+    setEditingCommentText(nextText);
+    setEditingMentionedUsers(extractMentionedUsers(nextText));
+    setShowEditMentionPicker(false);
+    setEditMentionQuery('');
+    editCommentInputRef.current?.focus();
+  };
+
   const handleEditComment = async (commentId: string) => {
     if (!selectedTask) return;
 
     try {
+      // Re-derive mentions from the final text so added/removed @mentions are saved
+      const finalMentioned = extractMentionedUsers(editingCommentText);
+
       await api.put(`/comments/${commentId}`, {
         content: editingCommentText,
         dueDate: editingCommentDueDate || null,
         attachmentUrls: editingCommentAttachments,
-        attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : null
+        attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : null,
+        mentionedUserIds: finalMentioned.map(u => u.id)
       });
 
       const currentComments = selectedTask.comments || [];
@@ -972,7 +1033,8 @@ const Pipeline: React.FC = () => {
           content: editingCommentText,
           dueDate: editingCommentDueDate || null,
           attachmentUrls: editingCommentAttachments,
-          attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : undefined
+          attachmentUrl: editingCommentAttachments.length > 0 ? editingCommentAttachments[0] : undefined,
+          mentions: finalMentioned.map(u => ({ user: { id: u.id, name: u.name } }))
         } : c
       );
 
@@ -982,6 +1044,9 @@ const Pipeline: React.FC = () => {
       setEditingCommentId(null);
       setEditingCommentAttachments([]);
       setEditingCommentDueDate('');
+      setEditingMentionedUsers([]);
+      setShowEditMentionPicker(false);
+      setEditMentionQuery('');
 
     } catch (e) {
       toast({ title: "Error", description: "Failed to save comment", variant: "destructive" });
@@ -2308,6 +2373,9 @@ const Pipeline: React.FC = () => {
                                             setEditingCommentText(comment.content);
                                             setEditingCommentDueDate(comment.dueDate || '');
                                             setEditingCommentAttachments(comment.attachmentUrls || (comment.attachmentUrl ? [comment.attachmentUrl] : []));
+                                            setEditingMentionedUsers(extractMentionedUsers(comment.content));
+                                            setShowEditMentionPicker(false);
+                                            setEditMentionQuery('');
                                           }}>
                                             <Pencil className="h-3 w-3 text-muted-foreground hover:text-primary" />
                                           </Button>
@@ -2320,11 +2388,75 @@ const Pipeline: React.FC = () => {
 
                                     {editingCommentId === comment.id ? (
                                       <div className="space-y-2 mt-1">
-                                        <Textarea
-                                          value={editingCommentText}
-                                          onChange={e => setEditingCommentText(e.target.value)}
-                                          className="min-h-[60px] text-sm"
-                                        />
+                                        <div className="relative">
+                                          <Textarea
+                                            ref={editCommentInputRef}
+                                            value={editingCommentText}
+                                            onChange={handleEditCommentChange}
+                                            placeholder="Edit comment… type @ to mention someone"
+                                            className="min-h-[60px] text-sm"
+                                          />
+
+                                          {showEditMentionPicker && (
+                                            <div className="absolute left-0 z-[150] bg-popover border border-border rounded-xl shadow-2xl w-56 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
+                                              style={{ top: '100%', marginTop: 8 }}
+                                            >
+                                              <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide border-b border-border bg-muted/30">
+                                                <AtSign className="h-3 w-3 inline mr-1" />Mention teammate
+                                              </div>
+                                              <div className="py-1 max-h-44 overflow-y-auto">
+                                                {(() => {
+                                                  const visibleUsers = allUsers.filter(u =>
+                                                    u.name.toLowerCase().includes(editMentionQuery.toLowerCase())
+                                                  );
+
+                                                  if (visibleUsers.length === 0) {
+                                                    return <p className="text-xs text-muted-foreground px-3 py-2">No users found</p>;
+                                                  }
+
+                                                  return visibleUsers.map(user => (
+                                                    <button
+                                                      key={user.id}
+                                                      onMouseDown={e => { e.preventDefault(); handleSelectEditMention(user); }}
+                                                      className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-accent text-sm transition-colors"
+                                                    >
+                                                      <div className={cn('w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0', getMemberColor(user.name))}>
+                                                        {getInitials(user.name)}
+                                                      </div>
+                                                      <span className="truncate font-medium capitalize">{user.name}</span>
+                                                      {editingMentionedUsers.find(m => m.id === user.id) && <Check className="ml-auto h-3.5 w-3.5 text-accent shrink-0" />}
+                                                    </button>
+                                                  ));
+                                                })()}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Currently tagged people in this edit */}
+                                        {editingMentionedUsers.length > 0 && (
+                                          <div className="flex items-center flex-wrap gap-1">
+                                            <Users className="h-3 w-3 text-muted-foreground" />
+                                            {editingMentionedUsers.map(u => (
+                                              <span key={u.id} className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-200 font-medium">
+                                                @{u.name}
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    // Remove all "@Name" occurrences from the text and the chip
+                                                    const escaped = `@${u.name}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                                                    const stripped = editingCommentText.replace(new RegExp(`${escaped}\\s?`, 'gi'), '');
+                                                    setEditingCommentText(stripped);
+                                                    setEditingMentionedUsers(extractMentionedUsers(stripped));
+                                                  }}
+                                                  className="hover:text-red-600"
+                                                >
+                                                  <X className="h-2.5 w-2.5" />
+                                                </button>
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
 
                                         <div className="flex items-center gap-2 flex-wrap">
                                           <div className="flex items-center gap-1.5">
@@ -2365,6 +2497,9 @@ const Pipeline: React.FC = () => {
                                             setEditingCommentId(null);
                                             setEditingCommentAttachments([]);
                                             setEditingCommentDueDate('');
+                                            setEditingMentionedUsers([]);
+                                            setShowEditMentionPicker(false);
+                                            setEditMentionQuery('');
                                           }}>Cancel</Button>
                                         </div>
                                       </div>
