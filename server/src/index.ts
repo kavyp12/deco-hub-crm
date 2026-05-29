@@ -3822,6 +3822,21 @@ app.put('/api/comments/:id', authenticateToken, async (req: any, res: Response) 
   }
 });
 
+// ==========================================
+// DELETE COMMENT
+// ==========================================
+app.delete('/api/comments/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Mentions are removed automatically via onDelete: Cascade on the relation.
+    await prisma.inquiryComment.delete({ where: { id: req.params.id } });
+    await logActivity(req.user.id, 'DELETE', 'COMMENT', req.params.id, `Deleted a comment`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Comment delete error:', error);
+    res.status(500).json({ error: 'Failed to delete comment' });
+  }
+});
+
 
 
 // Mark mentions as read for a specific inquiry card
