@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import api from '@/lib/api';
 
-type AppRole = 'super_admin' | 'sales' | 'accounting' | 'admin_hr';
+type AppRole = 'super_admin' | 'sales' | 'sales_manager' | 'accounting' | 'admin_hr';
 
 interface Profile {
   role: string;

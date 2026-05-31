@@ -531,7 +531,7 @@ app.delete('/api/employees/:id', authenticateToken, requireRole(['super_admin'])
 app.get('/api/users/sales-people', authenticateToken, async (req: Request, res: Response) => {
   try {
     const users = await prisma.user.findMany({
-      where: { role: { in: ['sales', 'super_admin'] } },
+      where: { role: { in: ['sales', 'sales_manager', 'super_admin'] } },
       select: { id: true, name: true }
     });
     res.json(users);
@@ -1420,9 +1420,9 @@ app.get('/api/inquiries', authenticateToken, async (req: any, res: Response) => 
 });
 
 // Add this to your backend inquiry routes
-app.put('/api/inquiries/:id/future-reference', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/inquiries/:id/future-reference', authenticateToken, requireRole(['super_admin', 'sales_manager']), async (req: any, res: Response) => {
   try {
-    // Optional: Add an auth check here to ensure req.user.role === 'super_admin'
+    // Only super_admin and sales_manager can write future-reference notes.
 
     const { future_reference } = req.body;
     
@@ -1538,10 +1538,45 @@ app.put('/api/inquiries/:id', authenticateToken, async (req: any, res: Response)
 // DELETE INQUIRY (Fixed: Fetch 'inquiry' before deleting)
 app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
+  const { reason } = req.body || {};
   try {
     // 1. Fetch first so we have the number for the log
     const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+    if (!inquiry) return res.status(404).json({ error: 'Inquiry not found' });
 
+    // 2. Approval gate: if the inquiry has already moved into measurement /
+    // selection (i.e. it has at least one Selection), a non-super-admin can only
+    // REQUEST deletion. Super admins always delete directly.
+    const selectionCount = await prisma.selection.count({ where: { inquiryId: id } });
+    const needsApproval = req.user.role !== 'super_admin' && selectionCount > 0;
+
+    if (needsApproval) {
+      // Don't delete — create (or reuse) a pending request for super admin review.
+      const existing = await prisma.inquiryDeletionRequest.findFirst({
+        where: { inquiryId: id, status: 'PENDING' },
+      });
+
+      if (existing) {
+        return res.json({ pendingApproval: true, message: 'A deletion request for this inquiry is already pending Super Admin approval.' });
+      }
+
+      const request = await prisma.inquiryDeletionRequest.create({
+        data: {
+          inquiryId: id,
+          inquiryNumber: inquiry.inquiry_number,
+          clientName: inquiry.client_name,
+          requestedById: req.user.id,
+          reason: reason || null,
+          status: 'PENDING',
+        },
+      });
+
+      await logActivity(req.user.id, 'CREATE', 'DELETION_REQUEST', request.id, `Requested deletion of Inquiry #${inquiry.inquiry_number} (awaiting Super Admin approval)`);
+
+      return res.json({ pendingApproval: true, message: 'Deletion request sent to Super Admin for approval.' });
+    }
+
+    // 3. Direct delete (super admin, or a plain inquiry with no selection yet).
     await prisma.selection.deleteMany({ where: { inquiryId: id } });
     await prisma.inquiry.delete({ where: { id } });
 
@@ -1552,6 +1587,71 @@ app.delete('/api/inquiries/:id', authenticateToken, async (req: any, res: Respon
   } catch (error) {
     console.error('Delete Error:', error);
     res.status(500).json({ error: 'Failed to delete inquiry' });
+  }
+});
+
+// ==========================================
+// INQUIRY DELETION APPROVAL ROUTES (Super Admin only)
+// ==========================================
+
+// List pending deletion requests
+app.get('/api/deletion-requests', authenticateToken, requireRole(['super_admin']), async (_req: any, res: Response) => {
+  try {
+    const requests = await prisma.inquiryDeletionRequest.findMany({
+      where: { status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        requestedBy: { select: { id: true, name: true, role: true } },
+      },
+    });
+    res.json(requests);
+  } catch (error) {
+    console.error('List Deletion Requests Error:', error);
+    res.status(500).json({ error: 'Failed to load deletion requests' });
+  }
+});
+
+// Approve a deletion request → actually delete the inquiry
+app.put('/api/deletion-requests/:id/approve', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+  const { id } = req.params;
+  try {
+    const request = await prisma.inquiryDeletionRequest.findUnique({ where: { id } });
+    if (!request) return res.status(404).json({ error: 'Deletion request not found' });
+    if (request.status !== 'PENDING') return res.status(400).json({ error: 'This request has already been reviewed.' });
+
+    // Perform the real delete (same as a direct super-admin delete).
+    await prisma.selection.deleteMany({ where: { inquiryId: request.inquiryId } });
+    // The request row itself cascades away with the inquiry, so capture what we need first.
+    await prisma.inquiry.delete({ where: { id: request.inquiryId } });
+
+    await logActivity(req.user.id, 'DELETE', 'INQUIRY', request.inquiryId, `Approved deletion of Inquiry #${request.inquiryNumber} (requested by ${request.requestedById})`);
+
+    res.json({ message: `Inquiry #${request.inquiryNumber} deleted.`, inquiryId: request.inquiryId });
+  } catch (error) {
+    console.error('Approve Deletion Error:', error);
+    res.status(500).json({ error: 'Failed to approve deletion' });
+  }
+});
+
+// Reject a deletion request → keep the inquiry, mark request REJECTED
+app.put('/api/deletion-requests/:id/reject', authenticateToken, requireRole(['super_admin']), async (req: any, res: Response) => {
+  const { id } = req.params;
+  try {
+    const request = await prisma.inquiryDeletionRequest.findUnique({ where: { id } });
+    if (!request) return res.status(404).json({ error: 'Deletion request not found' });
+    if (request.status !== 'PENDING') return res.status(400).json({ error: 'This request has already been reviewed.' });
+
+    await prisma.inquiryDeletionRequest.update({
+      where: { id },
+      data: { status: 'REJECTED', reviewedById: req.user.id },
+    });
+
+    await logActivity(req.user.id, 'UPDATE', 'DELETION_REQUEST', id, `Rejected deletion of Inquiry #${request.inquiryNumber}`);
+
+    res.json({ message: `Deletion request for #${request.inquiryNumber} rejected.`, id });
+  } catch (error) {
+    console.error('Reject Deletion Error:', error);
+    res.status(500).json({ error: 'Failed to reject deletion' });
   }
 });
 // 5. SELECTION ROUTES
@@ -3685,13 +3785,35 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
             }
           },
           orderBy: { createdAt: 'desc' }
-        }
+        },
+        // Latest report entry — used to detect neglected/forgotten leads
+        reportEntries: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } }
       },
       orderBy: { orderIndex: 'asc' }
     });
 
+    // Stages that should never be flagged as "forgotten" (done / parked on purpose)
+    const inactiveExcludedStages = new Set(['Completed', 'Future Reference', 'Completed Reference']);
+    const nowMs = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const twoDaysMs = 2 * dayMs;
+
+    // Compute inactivity flag from FULL data (before per-user comment filtering)
+    const withActivity = inquiries.map((inq: any) => {
+      const lastCommentMs = inq.comments.length ? new Date(inq.comments[0].createdAt).getTime() : 0;
+      const lastReportMs = inq.reportEntries?.length ? new Date(inq.reportEntries[0].createdAt).getTime() : 0;
+      const createdMs = new Date(inq.created_at).getTime();
+      const lastActivityMs = Math.max(lastCommentMs, lastReportMs) || createdMs;
+      const isInactive =
+        !inactiveExcludedStages.has(inq.stage) &&
+        createdMs < nowMs - twoDaysMs &&
+        lastActivityMs < nowMs - twoDaysMs;
+      const daysInactive = isInactive ? Math.floor((nowMs - lastActivityMs) / dayMs) : 0;
+      return { ...inq, isInactive, daysInactive };
+    });
+
     // ✅ MODIFIED: Filter data before sending to the frontend
-    const filteredInquiries = inquiries.map((inq: any) => {
+    const filteredInquiries = withActivity.map((inq: any) => {
       const isAssigned = isAdmin || inq.sales_person_id === req.user.id || inq.sales_persons.some((u: any) => u.id === req.user.id);
 
       if (isAssigned) {
@@ -4508,7 +4630,7 @@ app.get('/api/daily-reports/admin', authenticateToken, async (req: any, res: Res
     let missingUsers: any[] = [];
     if (date) {
       const allUsers = await prisma.user.findMany({
-        where: { role: { in: ['sales', 'accounting', 'admin_hr'] } },
+        where: { role: { in: ['sales', 'sales_manager', 'accounting', 'admin_hr'] } },
         select: { id: true, name: true, role: true },
       });
       const targeted = userId ? allUsers.filter((u: any) => u.id === userId) : allUsers;
@@ -4695,12 +4817,50 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
       }
     }
 
+    // ── 3b. Forgotten Leads (per employee) ──
+    // Remind sales staff about THEIR OWN inquiries that have had no activity
+    // (no daily-report entry AND no pipeline comment) for 2+ days, so leads
+    // don't get neglected. Brand-new and completed inquiries are excluded.
+    if (role === 'sales' || role === 'sales_manager') {
+      const inactiveLeadWhere: any = {
+        stage: { notIn: ['Completed', 'Future Reference', 'Completed Reference'] },
+        created_at: { lt: twoDaysAgo }, // skip brand-new leads
+        OR: [
+          { sales_person_id: userId },
+          { sales_persons: { some: { id: userId } } },
+        ],
+        AND: [
+          { reportEntries: { none: { createdAt: { gte: twoDaysAgo } } } },
+          { comments: { none: { createdAt: { gte: twoDaysAgo } } } },
+        ],
+      };
+
+      const myInactiveCount = await prisma.inquiry.count({ where: inactiveLeadWhere });
+      if (myInactiveCount > 0) {
+        const sample = await prisma.inquiry.findMany({
+          where: inactiveLeadWhere,
+          select: { inquiry_number: true },
+          orderBy: { updated_at: 'asc' },
+          take: 3,
+        });
+        notifications.push({
+          id: 'my-inactive-leads',
+          type: 'inactive_inquiry',
+          title: `🚨 ${myInactiveCount} Lead${myInactiveCount > 1 ? 's' : ''} Need Attention`,
+          message: `No activity for 2+ days: ${sample.map((i: any) => i.inquiry_number).join(', ')}${myInactiveCount > 3 ? ` +${myInactiveCount - 3} more` : ''}. Please follow up!`,
+          link: '/pipeline',
+          severity: 'error',
+          createdAt: now.toISOString(),
+        });
+      }
+    }
+
     // ── 4. SUPER ADMIN / ADMIN HR ──────────────────────────────────────────────
     if (role === 'super_admin' || role === 'admin_hr') {
 
       // Missing daily reports — sales employees who haven't submitted today
       const salesUsers = await prisma.user.findMany({
-        where: { role: { in: ['sales', 'accounting'] } },
+        where: { role: { in: ['sales', 'sales_manager', 'accounting'] } },
         select: { id: true, name: true },
       });
 

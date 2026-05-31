@@ -17,7 +17,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import api from '@/lib/api';
@@ -36,6 +35,9 @@ interface Task {
   future_reference?: string;
   future_reference_updated_at?: string; // ADD THIS LINE
   orderIndex?: number; // ADDED: Ensures Strict Ordering Support
+
+  isInactive?: boolean;   // lead with no activity for 2+ days (from backend)
+  daysInactive?: number;  // how many days since last activity
 
   sales_person?: { id: string, name: string };
   sales_persons?: { id: string, name: string }[];
@@ -113,9 +115,12 @@ const DEFAULT_COLUMNS: ColumnDef[] = [
   { id: "Ongoing Projects", title: "On Going Projects", color: "border-t-4 border-yellow-500", isSystem: true },
   { id: "Completed", title: "Completed", color: "border-t-4 border-green-500", isSystem: true },
   { id: "Complaints", title: "Complaints", color: "border-t-4 border-red-500", isSystem: true },
-  // ADD THIS LINE:
-  { id: "Future Reference", title: "Future Reference", color: "border-t-4 border-slate-800", isSystem: true },
 ];
+
+// --- REFERENCE STAGES (hidden from the Kanban board, shown in their own tabs) ---
+const LOST_STAGE = 'Future Reference';          // lost inquiries kept for future reference
+const COMPLETED_REF_STAGE = 'Completed Reference'; // completed clients kept for future reference
+const HIDDEN_STAGES = new Set<string>([LOST_STAGE, COMPLETED_REF_STAGE]);
 
 const COLORS_LIST = [
   "border-gray-500", "border-red-500", "border-orange-500", "border-amber-500",
@@ -184,6 +189,10 @@ const Pipeline: React.FC = () => {
   const { toast } = useToast();
   const { profile } = useAuth();
   const currentUser = profile;
+  // Who can use the Future Reference feature: super admins and sales managers.
+  const canUseFutureRef = currentUser?.role === 'super_admin' || currentUser?.role === 'sales_manager';
+  // Only the super admin reviews/approves inquiry deletion requests.
+  const isSuperAdmin = currentUser?.role === 'super_admin';
   const [tasks, setTasks] = useState<Task[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,24 +296,95 @@ const Pipeline: React.FC = () => {
   // Future Reference State (Super Admin Only)
   const [futureRefTask, setFutureRefTask] = useState<Task | null>(null);
   const [futureRefText, setFutureRefText] = useState('');
+  const [futureRefTarget, setFutureRefTarget] = useState<string>(LOST_STAGE); // which box to send to
+
+  // Board-level view: the main Kanban board, the Future Reference board, or the
+  // Delete Approvals queue (super admin only).
+  const [boardView, setBoardView] = useState<'board' | 'future' | 'approvals'>('board');
+
+  // Delete-approval queue (super admin only)
+  interface DeletionRequest {
+    id: string;
+    inquiryId: string;
+    inquiryNumber: string;
+    clientName: string;
+    reason?: string | null;
+    createdAt: string;
+    requestedBy?: { id: string; name: string; role: string };
+  }
+  const [deletionRequests, setDeletionRequests] = useState<DeletionRequest[]>([]);
 
 
 
   useEffect(() => {
     fetchPipeline();
     fetchUsers();
+    if (isSuperAdmin) fetchDeletionRequests();
   }, []);
+
+  // Load the pending deletion requests for the Super Admin approval tab.
+  const fetchDeletionRequests = async () => {
+    try {
+      const { data } = await api.get('/deletion-requests');
+      setDeletionRequests(data);
+    } catch (e) { console.error('Failed to load deletion requests', e); }
+  };
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this card?')) return;
+
+    // If this card already moved into measurement/selection (has a Selection),
+    // a non-super-admin can only REQUEST deletion — it goes to the Super Admin's
+    // "Delete Approvals" tab. Super admins always delete directly.
+    const task = tasks.find(t => t.id === taskId);
+    const hasSelection = (task?.selections?.length || 0) > 0;
+    const willNeedApproval = !isSuperAdmin && hasSelection;
+
+    let reason: string | null = null;
+    if (willNeedApproval) {
+      reason = prompt('This inquiry has moved into measurement/selection, so deleting it needs Super Admin approval.\n\nOptionally add a reason, then press OK to send the request:');
+      // prompt returns null only when the user cancels.
+      if (reason === null) return;
+    } else {
+      if (!confirm('Are you sure you want to delete this card?')) return;
+    }
 
     try {
-      await api.delete(`/inquiries/${taskId}`);
+      const { data } = await api.delete(`/inquiries/${taskId}`, { data: { reason } });
+
+      if (data?.pendingApproval) {
+        toast({ title: "Sent for approval", description: data.message || "Deletion request sent to Super Admin." });
+        return; // card stays on the board until approved
+      }
+
       setTasks(prev => prev.filter(t => t.id !== taskId));
       toast({ title: "Deleted", description: "Card deleted successfully." });
     } catch (error) {
       toast({ title: "Error", description: "Failed to delete card", variant: "destructive" });
+    }
+  };
+
+  // Super Admin: approve a pending deletion request → really deletes the inquiry.
+  const handleApproveDeletion = async (request: DeletionRequest) => {
+    if (!confirm(`Approve deletion of Inquiry #${request.inquiryNumber} (${request.clientName})? This permanently deletes it.`)) return;
+    try {
+      await api.put(`/deletion-requests/${request.id}/approve`);
+      setDeletionRequests(prev => prev.filter(r => r.id !== request.id));
+      setTasks(prev => prev.filter(t => t.id !== request.inquiryId));
+      toast({ title: "Deleted", description: `Inquiry #${request.inquiryNumber} permanently deleted.` });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to approve deletion", variant: "destructive" });
+    }
+  };
+
+  // Super Admin: reject a pending deletion request → keeps the inquiry.
+  const handleRejectDeletion = async (request: DeletionRequest) => {
+    try {
+      await api.put(`/deletion-requests/${request.id}/reject`);
+      setDeletionRequests(prev => prev.filter(r => r.id !== request.id));
+      toast({ title: "Rejected", description: `Kept Inquiry #${request.inquiryNumber}.` });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to reject deletion", variant: "destructive" });
     }
   };
 
@@ -323,7 +403,7 @@ const Pipeline: React.FC = () => {
       const customStages: ColumnDef[] = [];
 
       foundStages.forEach((stage: string) => {
-        if (!systemIds.has(stage)) {
+        if (!systemIds.has(stage) && !HIDDEN_STAGES.has(stage)) {
           customStages.push({
             id: stage,
             title: stage,
@@ -388,9 +468,11 @@ const Pipeline: React.FC = () => {
     if (!newCardTitle.trim()) return;
 
     try {
-      const finalAssignees = currentUser
-        ? Array.from(new Set([...newCardAssignees, currentUser.id]))
-        : newCardAssignees;
+      // Use the members picked in the create form. If none were picked, default
+      // to the current user so every card still has an owner.
+      const finalAssignees = newCardAssignees.length > 0
+        ? Array.from(new Set(newCardAssignees))
+        : (currentUser ? [currentUser.id] : []);
 
       const primaryAssignee = finalAssignees.length > 0 ? finalAssignees[0] : null;
 
@@ -457,7 +539,7 @@ const Pipeline: React.FC = () => {
       setTasks(prev => [...prev, newTask]);
 
       setNewCardTitle('');
-      setNewCardAssignees(currentUser ? [currentUser.id] : []);
+      setNewCardAssignees([]);
       setAddingCardToColumn(null);
       setInsertAfterTaskId(null);
       toast({ title: "Card Created", description: "New card added successfully." });
@@ -467,6 +549,68 @@ const Pipeline: React.FC = () => {
       toast({ title: "Error", description: "Failed to create card", variant: "destructive" });
     }
   };
+
+  const toggleNewCardAssignee = (userId: string) => {
+    setNewCardAssignees(prev =>
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
+  // Member picker shown inside the "Add Card" form so the linked person(s) can be
+  // assigned at creation time, instead of opening the card afterwards.
+  const renderAssigneePicker = () => (
+    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-xs gap-1">
+            <Users className="h-3.5 w-3.5" /> Members
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-64 p-0" align="start" onClick={e => e.stopPropagation()}>
+          <div className="p-3 border-b border-border bg-muted/30">
+            <h4 className="text-sm font-semibold">Assign Members</h4>
+          </div>
+          {/* Native overflow scroll so the mouse wheel works (multi-select) */}
+          <div className="p-2 max-h-60 overflow-y-auto">
+            {allUsers.map(u => {
+              const selected = newCardAssignees.includes(u.id);
+              return (
+                <div
+                  key={u.id}
+                  className="flex items-center gap-2 p-2 hover:bg-muted rounded-md cursor-pointer"
+                  onClick={() => toggleNewCardAssignee(u.id)}
+                >
+                  <Checkbox checked={selected} />
+                  <div className={cn("h-6 w-6 rounded-full text-white flex items-center justify-center text-[9px] font-bold", getMemberColor(u.name))}>
+                    {getInitials(u.name)}
+                  </div>
+                  <span className="text-sm capitalize flex-1 truncate">{u.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* Selected member avatars */}
+      <div className="flex -space-x-1.5">
+        {newCardAssignees.map(id => {
+          const u = allUsers.find(x => x.id === id);
+          if (!u) return null;
+          return (
+            <div
+              key={id}
+              className={cn("h-6 w-6 rounded-full text-white flex items-center justify-center text-[9px] font-bold ring-1 ring-background cursor-pointer", getMemberColor(u.name))}
+              title={`${u.name} (click to remove)`}
+              onClick={() => toggleNewCardAssignee(id)}
+            >
+              {getInitials(u.name)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const fetchTimeline = async (inquiryId: string) => {
     setTimelineLoading(true);
@@ -856,7 +1000,12 @@ const Pipeline: React.FC = () => {
       }
     }
 
-    if (hasUpdates) updateLocalTask(updatedTask);
+    if (hasUpdates) {
+      // Activity just happened (comment / stage update) → clear the "needs attention" badge instantly
+      updatedTask.isInactive = false;
+      updatedTask.daysInactive = 0;
+      updateLocalTask(updatedTask);
+    }
 
     // Reset states
     setNewComment('');
@@ -871,15 +1020,19 @@ const Pipeline: React.FC = () => {
   const handleSaveFutureReference = async () => {
     if (!futureRefTask) return;
 
+    // The target box is chosen explicitly from the 3-dot menu (Lost Inquiry vs
+    // Completed Reference), or kept as-is when editing notes from a tab.
+    const targetStage = futureRefTarget;
+
     try {
       // 1. Save the future reference notes
       const { data } = await api.put(`/inquiries/${futureRefTask.id}/future-reference`, {
         future_reference: futureRefText
       });
 
-      // 2. Move the card to the "Future Reference" stage
+      // 2. Move the card to the reference stage
       await api.put(`/inquiries/${futureRefTask.id}/stage`, {
-        stage: 'Future Reference',
+        stage: targetStage,
         orderIndex: 0 // Moves it to the top of the column
       });
 
@@ -889,7 +1042,7 @@ const Pipeline: React.FC = () => {
           ...t,
           future_reference: data.future_reference,
           future_reference_updated_at: data.future_reference_updated_at,
-          stage: 'Future Reference', // <--- Changes the box locally
+          stage: targetStage, // <--- Changes the box locally
           orderIndex: 0
         } : t
       ));
@@ -900,15 +1053,34 @@ const Pipeline: React.FC = () => {
           ...prev,
           future_reference: data.future_reference,
           future_reference_updated_at: data.future_reference_updated_at,
-          stage: 'Future Reference'
+          stage: targetStage
         } : null);
       }
 
       setFutureRefTask(null);
       setFutureRefText('');
-      toast({ title: "Moved to Future Reference", description: "Card is now hidden from other users." });
+      const label = targetStage === COMPLETED_REF_STAGE ? 'Completed References' : 'Lost Inquiries';
+      toast({ title: `Moved to ${label}`, description: "Card is now hidden from the pipeline board." });
     } catch (e) {
       toast({ title: "Error", description: "Failed to save future reference", variant: "destructive" });
+    }
+  };
+
+  // Restore a reference card back onto the Kanban board.
+  // Completed-reference cards return to "Completed"; lost inquiries return to "Inquiry".
+  const handleRestoreFromReference = async (task: Task) => {
+    const targetStage = task.stage === COMPLETED_REF_STAGE ? 'Completed' : 'Inquiry';
+    try {
+      await api.put(`/inquiries/${task.id}/stage`, { stage: targetStage, orderIndex: 0 });
+      setTasks(prev => prev.map(t =>
+        t.id === task.id ? { ...t, stage: targetStage, orderIndex: 0 } : t
+      ));
+      if (selectedTask?.id === task.id) {
+        setSelectedTask(prev => prev ? { ...prev, stage: targetStage } : null);
+      }
+      toast({ title: "Restored", description: `Card moved back to "${targetStage}".` });
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to restore card", variant: "destructive" });
     }
   };
 
@@ -1239,9 +1411,20 @@ const Pipeline: React.FC = () => {
   };
 
 
-  const visibleColumns = columns.filter(col =>
-    col.id !== 'Future Reference' || currentUser?.role === 'super_admin'
-  );
+  // Reference stages never render on the MAIN board — they live in the Future Reference tab.
+  const mainColumns = columns.filter(col => !HIDDEN_STAGES.has(col.id));
+
+  // The Future Reference tab shows the same board layout, but only these two columns.
+  const referenceColumns: ColumnDef[] = [
+    { id: LOST_STAGE, title: "Lost Inquiries", color: "border-t-4 border-slate-800", isSystem: true },
+    { id: COMPLETED_REF_STAGE, title: "Completed References", color: "border-t-4 border-emerald-600", isSystem: true },
+  ];
+
+  // Which columns the board renders depends on the active tab.
+  const visibleColumns = boardView === 'future' ? referenceColumns : mainColumns;
+
+  // Combined count for the Future Reference tab badge.
+  const referenceCount = tasks.filter(t => HIDDEN_STAGES.has(t.stage)).length;
 
   return (
     <DashboardLayout>
@@ -1377,7 +1560,80 @@ const Pipeline: React.FC = () => {
           </div>
         </div>
 
-        {/* Board */}
+        {/* VIEW TABS — main board + the Future Reference board (Super Admin / Sales Manager only) */}
+        {canUseFutureRef && (
+          <div className="flex items-center gap-1 mb-4 px-1">
+            {[
+              { id: 'board', label: 'Pipeline Board' },
+              { id: 'future', label: 'Future Reference', count: referenceCount },
+              // Delete Approvals — Super Admin only
+              ...(isSuperAdmin ? [{ id: 'approvals', label: 'Delete Approvals', count: deletionRequests.length }] : []),
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setBoardView(tab.id as 'board' | 'future' | 'approvals')}
+                className={cn(
+                  "px-4 py-1.5 rounded-md text-sm font-medium border transition-all flex items-center gap-2",
+                  boardView === tab.id
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                {tab.label}
+                {typeof tab.count === 'number' && tab.count > 0 && (
+                  <Badge variant={boardView === tab.id ? "secondary" : "outline"} className="h-5">{tab.count}</Badge>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Delete Approvals queue — Super Admin reviews pending inquiry deletions here */}
+        {boardView === 'approvals' && isSuperAdmin && (
+          <div className="flex-1 overflow-y-auto px-1 pb-4">
+            {deletionRequests.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2 py-20">
+                <Trash2 className="h-10 w-10 opacity-30" />
+                <p className="text-sm font-medium">No pending deletion requests</p>
+                <p className="text-xs">When a sales person deletes an inquiry that has a measurement/selection, it will appear here for your approval.</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-w-3xl">
+                {deletionRequests.map(req => (
+                  <div key={req.id} className="flex items-start justify-between gap-4 rounded-xl border border-border bg-background p-4 shadow-sm">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm">#{req.inquiryNumber}</span>
+                        <span className="text-sm text-muted-foreground">·</span>
+                        <span className="text-sm font-medium truncate">{req.clientName}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Requested by <span className="font-medium">{req.requestedBy?.name || 'Unknown'}</span>
+                        {' · '}{format(parseISO(req.createdAt), 'dd MMM yyyy, h:mm a')}
+                      </p>
+                      {req.reason && (
+                        <p className="text-xs mt-2 bg-muted/50 rounded-md px-2 py-1.5">
+                          <span className="font-medium">Reason:</span> {req.reason}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button size="sm" variant="outline" onClick={() => handleRejectDeletion(req)}>
+                        Reject
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={() => handleApproveDeletion(req)}>
+                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Approve &amp; Delete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Board — renders the main columns or the reference columns depending on the tab */}
+        {boardView !== 'approvals' && (
         <DragDropContext onDragEnd={onDragEnd}>
           <Droppable droppableId="all-columns" direction="horizontal" type="column">
             {(provided) => (
@@ -1464,15 +1720,16 @@ const Pipeline: React.FC = () => {
                                             className={cn(
                                               "p-2 rounded-lg shadow-sm border transition-all cursor-pointer group relative",
                                               snapshot.isDragging ? "bg-background shadow-xl ring-2 ring-primary rotate-1 border-primary/50" : "bg-background border-border hover:border-primary/50",
-                                              hasUnreadMention && "ring-2 ring-blue-500 animate-pulse bg-blue-50/60 shadow-[0_0_15px_rgba(59,130,246,0.5)] border-blue-400"
+                                              hasUnreadMention && "ring-2 ring-blue-500 animate-pulse bg-blue-50/60 shadow-[0_0_15px_rgba(59,130,246,0.5)] border-blue-400",
+                                              task.isInactive && !hasUnreadMention && "ring-1 ring-red-400 border-red-300 bg-red-50/40"
                                             )}
                                           >
                                             {/* ACTIONS (Shows on Hover) */}
                                             {hasFullAccess && (
                                               <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
 
-                                                {/* ANYONE WITH ACCESS: 3-Dot Menu for Future Reference */}
-                                                {hasFullAccess && (
+                                                {/* SUPER ADMIN / SALES MANAGER: 3-Dot Menu for Future Reference */}
+                                                {canUseFutureRef && (
                                                   <DropdownMenu>
                                                     <DropdownMenuTrigger asChild>
                                                       <Button variant="outline" size="icon" className="h-6 w-6 rounded-full shadow-md hover:scale-110 bg-background text-primary" onClick={e => e.stopPropagation()}>
@@ -1484,14 +1741,36 @@ const Pipeline: React.FC = () => {
                                                         onClick={(e) => {
                                                           e.stopPropagation();
                                                           setFutureRefTask(task);
+                                                          setFutureRefTarget(LOST_STAGE);
                                                           // Only Super Admin can see existing notes. Others get a blank box to write a new note.
-                                                          setFutureRefText(currentUser?.role === 'super_admin' ? (task.future_reference || '') : '');
+                                                          setFutureRefText(task.future_reference || '');
                                                         }}
                                                         className="cursor-pointer"
                                                       >
                                                         <FileText className="h-3.5 w-3.5 mr-2" />
-                                                        Send to Future Reference
+                                                        Send to Lost Inquiries
                                                       </DropdownMenuItem>
+                                                      <DropdownMenuItem
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setFutureRefTask(task);
+                                                          setFutureRefTarget(COMPLETED_REF_STAGE);
+                                                          setFutureRefText(task.future_reference || '');
+                                                        }}
+                                                        className="cursor-pointer"
+                                                      >
+                                                        <FileText className="h-3.5 w-3.5 mr-2" />
+                                                        Send to Completed References
+                                                      </DropdownMenuItem>
+                                                      {HIDDEN_STAGES.has(task.stage) && (
+                                                        <DropdownMenuItem
+                                                          onClick={(e) => { e.stopPropagation(); handleRestoreFromReference(task); }}
+                                                          className="cursor-pointer"
+                                                        >
+                                                          <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                                                          Restore to Pipeline
+                                                        </DropdownMenuItem>
+                                                      )}
                                                     </DropdownMenuContent>
                                                   </DropdownMenu>
                                                 )}
@@ -1519,6 +1798,17 @@ const Pipeline: React.FC = () => {
                                                 >
                                                   <Trash2 className="h-3 w-3" />
                                                 </Button>
+                                              </div>
+                                            )}
+
+                                            {/* FORGOTTEN-LEAD BADGE — no activity for 2+ days */}
+                                            {task.isInactive && (
+                                              <div
+                                                className="flex items-center gap-1 mb-1.5 px-1.5 py-0.5 rounded bg-red-600 text-white text-[9px] font-semibold leading-none w-fit"
+                                                title={`No activity for ${task.daysInactive} day${task.daysInactive === 1 ? '' : 's'} — please follow up`}
+                                              >
+                                                <BellRing className="h-2.5 w-2.5" />
+                                                Needs attention · {task.daysInactive}d idle
                                               </div>
                                             )}
 
@@ -1612,7 +1902,7 @@ const Pipeline: React.FC = () => {
                                             </div>
                                             <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
                                             {/* --- PASTE THIS DIRECTLY BELOW THE CLIENT NAME IN THE CARD --- */}
-                                            {column.id === 'Future Reference' && task.future_reference_updated_at && (
+                                            {HIDDEN_STAGES.has(column.id) && task.future_reference_updated_at && (
                                               <div className="mb-2 text-[9px] font-medium text-amber-700 bg-amber-50/80 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 w-fit">
                                                 <Clock className="h-2.5 w-2.5" />
                                                 {format(new Date(task.future_reference_updated_at), 'dd MMM yyyy, hh:mm a')}
@@ -1665,12 +1955,13 @@ const Pipeline: React.FC = () => {
                                                 className="h-8 text-xs mb-2"
                                                 onKeyDown={e => {
                                                   if (e.key === 'Enter') handleQuickCreateCard(column.id);
-                                                  if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }
+                                                  if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); setNewCardAssignees([]); }
                                                 }}
                                               />
+                                              {renderAssigneePicker()}
                                               <div className="flex gap-2">
                                                 <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }}>Cancel</Button>
+                                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); setNewCardAssignees([]); }}>Cancel</Button>
                                               </div>
                                             </div>
                                           )}
@@ -1683,8 +1974,8 @@ const Pipeline: React.FC = () => {
                               })}
                               {provided.placeholder}
 
-                              {/* ✅ BOTTOM ADD CARD INPUT */}
-                              {addingCardToColumn === column.id && !insertAfterTaskId ? (
+                              {/* ✅ BOTTOM ADD CARD INPUT (hidden in reference columns) */}
+                              {!HIDDEN_STAGES.has(column.id) && (addingCardToColumn === column.id && !insertAfterTaskId ? (
                                 <div className="p-2 bg-background rounded-lg border border-primary shadow-sm animate-in fade-in zoom-in-95 mt-2">
                                   <Input
                                     autoFocus
@@ -1694,12 +1985,13 @@ const Pipeline: React.FC = () => {
                                     className="h-8 text-xs mb-2"
                                     onKeyDown={e => {
                                       if (e.key === 'Enter') handleQuickCreateCard(column.id);
-                                      if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }
+                                      if (e.key === 'Escape') { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); setNewCardAssignees([]); }
                                     }}
                                   />
+                                  {renderAssigneePicker()}
                                   <div className="flex gap-2">
                                     <Button size="sm" className="h-7 px-3 text-xs" onClick={() => handleQuickCreateCard(column.id)}>Add</Button>
-                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); }}>Cancel</Button>
+                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddingCardToColumn(null); setNewCardTitle(''); setInsertAfterTaskId(null); setNewCardAssignees([]); }}>Cancel</Button>
                                   </div>
                                 </div>
                               ) : (
@@ -1710,7 +2002,7 @@ const Pipeline: React.FC = () => {
                                 >
                                   <Plus className="h-3.5 w-3.5 mr-2" /> Add Card
                                 </Button>
-                              )}
+                              ))}
                             </div>
                           )}
                         </Droppable>
@@ -1723,6 +2015,7 @@ const Pipeline: React.FC = () => {
             )}
           </Droppable>
         </DragDropContext>
+        )}
 
         {/* --- DETAIL MODAL --- */}
         <Dialog open={!!selectedTask} onOpenChange={(open) => {
@@ -1794,7 +2087,14 @@ const Pipeline: React.FC = () => {
                                   <div className="p-3 border-b border-border bg-muted/30">
                                     <h4 className="text-sm font-semibold">Assign Members</h4>
                                   </div>
-                                  <div className="p-2 max-h-60 overflow-y-auto">
+                                  {/* Drive scroll manually: this popover portals outside the Dialog,
+                                      where Radix's scroll-lock blocks the mouse wheel. */}
+                                  <div
+                                    className="p-2 max-h-60 overflow-y-auto"
+                                    onWheel={(e) => {
+                                      e.currentTarget.scrollTop += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+                                    }}
+                                  >
                                     {allUsers.map(user => {
                                       const isAssigned = [
                                         ...(selectedTask.sales_person ? [selectedTask.sales_person] : []),
@@ -1963,7 +2263,7 @@ const Pipeline: React.FC = () => {
                       <Separator />
 
                       {/* FUTURE REFERENCE DISPLAY (Super Admin Only) */}
-                      {currentUser?.role === 'super_admin' && selectedTask.future_reference && (
+                      {canUseFutureRef && selectedTask.future_reference && (
                         <>
                           <div className="space-y-3 group bg-amber-50 p-4 rounded-lg border border-amber-200">
                             <div className="flex justify-between items-center">
@@ -1976,6 +2276,7 @@ const Pipeline: React.FC = () => {
                                 className="h-7 text-amber-700 border-amber-300 hover:bg-amber-100"
                                 onClick={() => {
                                   setFutureRefTask(selectedTask);
+                                  setFutureRefTarget(selectedTask.stage);
                                   setFutureRefText(selectedTask.future_reference || '');
                                 }}
                               >
@@ -2207,7 +2508,7 @@ const Pipeline: React.FC = () => {
                           </TabsList>
                         </div>
                         <TabsContent value="comments" className="m-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=inactive]:hidden flex-col">
-                          <ScrollArea className="flex-1 p-4">
+                          <div className="flex-1 p-4 overflow-y-auto">
 
                             {hasFullAccess ? (
                               <div className="bg-background border border-border rounded-lg shadow-sm p-3 mb-6 focus-within:ring-2 focus-within:ring-primary/20 transition-all relative flex flex-col z-50">
@@ -2598,11 +2899,11 @@ const Pipeline: React.FC = () => {
                               ))}
 
                             </div>
-                          </ScrollArea>
+                          </div>
                         </TabsContent>
 
                         <TabsContent value="reports" className="m-0 flex-1 overflow-hidden data-[state=active]:flex data-[state=inactive]:hidden flex-col">
-                          <ScrollArea className="flex-1 p-4">
+                          <div className="flex-1 p-4 overflow-y-auto">
                             {timelineLoading ? (
                               <div className="text-center py-10 text-muted-foreground text-sm">Loading reports...</div>
                             ) : (!timelineData || timelineData.length === 0) ? (
@@ -2636,7 +2937,7 @@ const Pipeline: React.FC = () => {
                                 </div>
                               </div>
                             )}
-                          </ScrollArea>
+                          </div>
                         </TabsContent>
                       </Tabs>
                     </div>
@@ -2652,11 +2953,11 @@ const Pipeline: React.FC = () => {
         <Dialog open={!!futureRefTask} onOpenChange={(open) => !open && setFutureRefTask(null)}>
           <DialogContent className="sm:max-w-[500px]" onClick={e => e.stopPropagation()}>
             <DialogTitle className="flex items-center gap-2 text-primary">
-              Future Reference <Badge variant="destructive" className="text-[10px]">Super Admin Only</Badge>
+              Future Reference <Badge variant="destructive" className="text-[10px]">Restricted Access</Badge>
             </DialogTitle>
             <div className="space-y-4 pt-2">
               <p className="text-xs text-muted-foreground">
-                These notes are highly confidential and will only be visible to the main Super Admin.
+                These notes are confidential and only visible to Super Admins and Sales Managers.
               </p>
 
               {/* LAST UPDATED TIMESTAMP */}

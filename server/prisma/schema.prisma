@@ -16,6 +16,7 @@ datasource db {
 enum Role {
   super_admin
   sales
+  sales_manager
   accounting
   admin_hr
 }
@@ -60,6 +61,10 @@ model User {
   leaveBalance  LeaveBalance? // <--- ADD THIS
   corrections   TimeCorrection[] // <--- ADD THIS
   inquiry_payments InquiryPayment[]
+
+  // Deletion approval workflow
+  deletion_requests_made     InquiryDeletionRequest[] @relation("DeletionRequestedBy")
+  deletion_requests_reviewed InquiryDeletionRequest[] @relation("DeletionReviewedBy")
 }
 
 model Inquiry {
@@ -110,6 +115,37 @@ model Inquiry {
   labels      InquiryLabel[]
   catalogMovements CatalogMovement[]
   payments    InquiryPayment[]
+  deletionRequests InquiryDeletionRequest[]
+}
+
+// ==========================================
+// INQUIRY DELETION APPROVAL WORKFLOW
+// ==========================================
+// When sales / sales_manager deletes an inquiry that has already moved into
+// measurement or selection (i.e. it has a Selection), the delete becomes a
+// PENDING request that only super_admin can approve (real delete) or reject.
+model InquiryDeletionRequest {
+  id          String   @id @default(uuid())
+
+  inquiryId   String
+  inquiry     Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  // Snapshot fields so the request still shows useful info even if details change
+  inquiryNumber String
+  clientName    String
+
+  requestedById String
+  requestedBy   User   @relation("DeletionRequestedBy", fields: [requestedById], references: [id])
+
+  reason      String?  @db.Text
+
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+
+  reviewedById String?
+  reviewedBy   User?    @relation("DeletionReviewedBy", fields: [reviewedById], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 // ==========================================
 // ATTENDANCE, HR & REPORTING MODELS

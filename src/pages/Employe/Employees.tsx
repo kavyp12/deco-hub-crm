@@ -20,7 +20,7 @@ const employeeSchema = z.object({
   email: z.string().email('Valid email required'),
   password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
   mobile_number: z.string().optional(),
-  role: z.enum(['sales', 'accounting', 'admin_hr'], {
+  role: z.enum(['sales', 'sales_manager', 'accounting', 'admin_hr'], {
     required_error: 'Please select a role',
   }),
 });
@@ -54,7 +54,7 @@ const Employees: React.FC = () => {
     email: '',
     password: '',
     mobile_number: '',
-    role: '' as 'sales' | 'accounting' | 'admin_hr' | '',
+    role: '' as 'sales' | 'sales_manager' | 'accounting' | 'admin_hr' | '',
   });
 
   useEffect(() => {
@@ -170,6 +170,7 @@ const Employees: React.FC = () => {
     const styles: Record<string, string> = {
       super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
       sales: 'bg-blue-100 text-blue-700 border-blue-200',
+      sales_manager: 'bg-indigo-100 text-indigo-700 border-indigo-200',
       accounting: 'bg-green-100 text-green-700 border-green-200',
       admin_hr: 'bg-orange-100 text-orange-700 border-orange-200',
     };
@@ -231,6 +232,7 @@ const Employees: React.FC = () => {
                        <SelectTrigger><SelectValue placeholder="Select Role"/></SelectTrigger>
                        <SelectContent>
                           <SelectItem value="sales">Sales</SelectItem>
+                          <SelectItem value="sales_manager">Sales Manager</SelectItem>
                           <SelectItem value="accounting">Accounting</SelectItem>
                           <SelectItem value="admin_hr">Admin/HR</SelectItem>
                        </SelectContent>
@@ -355,6 +357,7 @@ const Employees: React.FC = () => {
                             <SelectTrigger><SelectValue placeholder="Role"/></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="sales">Sales</SelectItem>
+                                <SelectItem value="sales_manager">Sales Manager</SelectItem>
                                 <SelectItem value="accounting">Accounting</SelectItem>
                                 <SelectItem value="admin_hr">Admin/HR</SelectItem>
                             </SelectContent>

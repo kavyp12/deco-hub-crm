@@ -88,7 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
   }
 
   // Catalogs — not for sales or accounting
-  if (role !== 'sales' && role !== 'accounting') {
+  if (role !== 'sales' && role !== 'sales_manager' && role !== 'accounting') {
     allNavigation.push({
       name: 'Catalogs',
       href: '/catalogs',
@@ -98,7 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
   // Filter navigation based on role
   let navigation = allNavigation;
-  if (role === 'sales') {
+  if (role === 'sales' || role === 'sales_manager') {
     navigation = salesNavigation;
   } else if (role === 'accounting') {
     navigation = accountingNavigation;
@@ -106,8 +106,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
 
   const getRoleLabel = (role: string | null | undefined) => {
     switch (role) {
-      case 'super_admin': return 'Super Admin';
-      case 'sales':       return 'Sales';
+      case 'super_admin':   return 'Super Admin';
+      case 'sales':         return 'Sales';
+      case 'sales_manager': return 'Sales Manager';
       case 'accounting':  return 'Accounting';
       case 'admin_hr':    return 'Admin / HR';
       default:            return 'User';

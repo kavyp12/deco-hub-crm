@@ -25,6 +25,8 @@ const MeasurementsList: React.FC = () => {
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedInquiryId, setSelectedInquiryId] = useState('');
+  // Search text typed inside the inquiry dropdown.
+  const [pickerSearch, setPickerSearch] = useState('');
 
   useEffect(() => {
     const fetchInquiries = async () => {
@@ -155,7 +157,7 @@ const MeasurementsList: React.FC = () => {
           </table>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) setPickerSearch(''); }}>
           <DialogContent className="max-w-[90vw] sm:max-w-md">
             <DialogHeader>
               <DialogTitle>New Measurement</DialogTitle>
@@ -166,10 +168,45 @@ const MeasurementsList: React.FC = () => {
                 <label className="text-sm font-medium">Select Inquiry</label>
                 <Select value={selectedInquiryId} onValueChange={setSelectedInquiryId}>
                   <SelectTrigger><SelectValue placeholder="Choose an inquiry..." /></SelectTrigger>
-                  <SelectContent>
-                    {inquiries.map((inq) => (
-                      <SelectItem key={inq.id} value={inq.id}>{inq.inquiry_number} - {inq.client_name}</SelectItem>
-                    ))}
+                  {/* Force the list to open BELOW the trigger (a little down) and
+                      never flip up over the page. Cap height so it scrolls. */}
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    sideOffset={6}
+                    avoidCollisions={false}
+                    className="max-h-72"
+                  >
+                    {/* Search box pinned at the top of the dropdown */}
+                    <div className="sticky top-0 z-10 bg-popover p-2 border-b border-border">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          autoFocus
+                          placeholder="Search inquiry or client..."
+                          value={pickerSearch}
+                          onChange={(e) => setPickerSearch(e.target.value)}
+                          // Stop Radix Select's built-in typeahead from stealing keystrokes
+                          onKeyDown={(e) => e.stopPropagation()}
+                          className="pl-8 h-9"
+                        />
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const q = pickerSearch.toLowerCase();
+                      const filtered = inquiries.filter((inq) =>
+                        !q ||
+                        inq.inquiry_number?.toLowerCase().includes(q) ||
+                        inq.client_name?.toLowerCase().includes(q)
+                      );
+                      if (filtered.length === 0) {
+                        return <div className="px-3 py-6 text-center text-sm text-muted-foreground">No inquiries found.</div>;
+                      }
+                      return filtered.map((inq) => (
+                        <SelectItem key={inq.id} value={inq.id}>{inq.inquiry_number} - {inq.client_name}</SelectItem>
+                      ));
+                    })()}
                   </SelectContent>
                 </Select>
               </div>
