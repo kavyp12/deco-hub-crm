@@ -1748,7 +1748,7 @@ const Pipeline: React.FC = () => {
                                                         className="cursor-pointer"
                                                       >
                                                         <FileText className="h-3.5 w-3.5 mr-2" />
-                                                        Send to Lost Inquiries
+                                                        For future refrence
                                                       </DropdownMenuItem>
                                                       <DropdownMenuItem
                                                         onClick={(e) => {
@@ -1760,7 +1760,7 @@ const Pipeline: React.FC = () => {
                                                         className="cursor-pointer"
                                                       >
                                                         <FileText className="h-3.5 w-3.5 mr-2" />
-                                                        Send to Completed References
+                                                        100% complete
                                                       </DropdownMenuItem>
                                                       {HIDDEN_STAGES.has(task.stage) && (
                                                         <DropdownMenuItem

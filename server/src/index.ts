@@ -2804,13 +2804,57 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
   const { items } = req.body;
 
   try {
-    // Update widths first
+    // Resolve each row to a real SelectionItem:
+    //  - manually-added rows (isNew / "new-" temp id) get a SelectionItem created
+    //  - existing rows get their dimensions / area name / gsm updated
+    const resolvedItems: any[] = [];
+    let nextOrderIndex: number | null = null;
+
     for (const item of items) {
-      if (item.selectionItemId && item.width !== undefined) {
-        await prisma.selectionItem.update({
-          where: { id: item.selectionItemId },
-          data: { width: parseFloat(item.width || 0) }
+      const isNew = item.isNew || !item.selectionItemId || String(item.selectionItemId).startsWith('new-');
+
+      if (isNew) {
+        if (nextOrderIndex === null) {
+          const last = await prisma.selectionItem.findFirst({
+            where: { selectionId },
+            orderBy: { orderIndex: 'desc' },
+            select: { orderIndex: true }
+          });
+          nextOrderIndex = (last?.orderIndex ?? -1) + 1;
+        }
+
+        const created = await prisma.selectionItem.create({
+          data: {
+            selectionId,
+            orderIndex: nextOrderIndex++,
+            productName: item.areaName?.trim() || 'Manual Area',
+            calculationType: 'Forest (Auto)',
+            unit: item.unit || 'mm',
+            width: parseFloat(item.width || 0),
+            height: parseFloat(item.height || 0),
+            details: { areaName: item.areaName?.trim() || 'Area', gsm: parseFloat(item.gsm || 0) }
+          }
         });
+
+        resolvedItems.push({ ...item, selectionItemId: created.id });
+      } else {
+        const existing = await prisma.selectionItem.findUnique({ where: { id: item.selectionItemId } });
+        if (existing) {
+          const mergedDetails = {
+            ...((existing.details as any) || {}),
+            areaName: item.areaName?.trim() || (existing.details as any)?.areaName || 'Area',
+            gsm: parseFloat(item.gsm || 0)
+          };
+          await prisma.selectionItem.update({
+            where: { id: item.selectionItemId },
+            data: {
+              width: item.width !== undefined ? parseFloat(item.width || 0) : existing.width,
+              height: item.height !== undefined ? parseFloat(item.height || 0) : existing.height,
+              details: mergedDetails
+            }
+          });
+        }
+        resolvedItems.push(item);
       }
     }
 
@@ -2819,7 +2863,7 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
       update: {
         items: {
           deleteMany: {},
-          create: items.map((item: any) => ({
+          create: resolvedItems.map((item: any) => ({
             selectionItemId: item.selectionItemId,
             trackType: item.trackType || 'white',
             trackPrice: parseFloat(item.trackPrice || 0),
@@ -2845,7 +2889,7 @@ app.post('/api/calculations/forest/:selectionId', authenticateToken, async (req:
       create: {
         selectionId,
         items: {
-          create: items.map((item: any) => ({
+          create: resolvedItems.map((item: any) => ({
             selectionItemId: item.selectionItemId,
             trackType: item.trackType || 'white',
             trackPrice: parseFloat(item.trackPrice || 0),

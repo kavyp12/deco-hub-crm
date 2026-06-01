@@ -1,7 +1,7 @@
 // [FILE: src/pages/Calculation/ForestCalculation.tsx]
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2, Calculator } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, Calculator, Plus, Trash2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,51 +11,59 @@ import api from '@/lib/api';
 
 // --- CONSTANTS & RATES ---
 
+const COMMON_AREAS = [
+    "Living Room", "Drawing Room", "Master Bedroom", "Kids Bedroom",
+    "Guest Bedroom", "Parents Bedroom", "Dining Room", "Kitchen",
+    "Study Room", "Home Office", "Balcony", "Verandah",
+    "Puja Room", "Staircase", "Lobby", "Entrance",
+    "Bathroom", "Store Room", "Servant Room", "Utility Area"
+];
+
 const RUNNER_RATES = [
-    { name: 'FES BASE AND FLEX HOOK', rate: 355 },
-    { name: 'EASY WAVE AND END HOOK', rate: 240 },
-    { name: 'EASY WAVE AND WAVE HOOK', rate: 295 },
-    { name: 'FES BASE AND SNAP', rate: 265 }
+    { name: 'FES BASE AND FLEX HOOK', rate: 385 },
+    { name: 'EASY WAVE AND END HOOK', rate: 255 },
+    { name: 'EASY WAVE AND WAVE HOOK', rate: 320 },
+    { name: 'FES BASE AND SNAP', rate: 280 }
 ];
 
 const TAPE_RATES = [
     { name: 'FLEX TAPE TRANSPARENT', rate: 150 },
-    { name: 'EASY FOLD TAPE WHITE', rate: 475 }
+    { name: 'EASY FOLD TAPE WHITE', rate: 455 }
 ];
 
 const TRACK_PRICING = [
-    { range: "UPTO 6.5'", white: 18230, black: 19860, fmsPlus: 17490, fmsPlusRecessWhite: 24390, fmsPlusRecessBlack: 24390, dsXlLed: 21240, dual: 23370 },
-    { range: "ABOVE 6.5' TO 8'", white: 20230, black: 22120, fmsPlus: 19610, fmsPlusRecessWhite: 28020, fmsPlusRecessBlack: 28020, dsXlLed: 24390, dual: 28150 },
-    { range: "ABOVE 8' TO 10'", white: 22120, black: 24390, fmsPlus: 21730, fmsPlusRecessWhite: 31650, fmsPlusRecessBlack: 31650, dsXlLed: 27530, dual: 33930 },
-    { range: "ABOVE 10' TO 11.5'", white: 24130, black: 26640, fmsPlus: 23880, fmsPlusRecessWhite: 35180, fmsPlusRecessBlack: 35180, dsXlLed: 30910, dual: 38320 },
-    { range: "ABOVE 11.5' TO 13'", white: 26130, black: 28910, fmsPlus: 26020, fmsPlusRecessWhite: 38960, fmsPlusRecessBlack: 38960, dsXlLed: 34050, dual: 42720 },
-    { range: "ABOVE 13' TO 14.5'", white: 28400, black: 31290, fmsPlus: 28150, fmsPlusRecessWhite: 41980, fmsPlusRecessBlack: 41980, dsXlLed: 37450, dual: 47120 },
-    { range: "ABOVE 14.5' TO 16'", white: 29660, black: 32800, fmsPlus: 30140, fmsPlusRecessWhite: 46730, fmsPlusRecessBlack: 46730, dsXlLed: 40470, dual: 51380 },
-    { range: "ABOVE 16' TO 17.5'", white: 31160, black: 34050, fmsPlus: 32930, fmsPlusRecessWhite: 51750, fmsPlusRecessBlack: 51750, dsXlLed: 41830, dual: 53510 },
-    { range: "ABOVE 17.5' TO 19'", white: 32250, black: 34800, fmsPlus: 34050, fmsPlusRecessWhite: 52770, fmsPlusRecessBlack: 52770, dsXlLed: 43100, dual: 54020 },
+    { range: "UPTO 6.5'", white: 19270, black: 21140, fmsPlus: 19250, fmsPlusRecessWhite: 25450, fmsPlusRecessBlack: 25450, dsXlLed: 22680, dual: 26550 },
+    { range: "ABOVE 6.5' TO 8'", white: 21510, black: 23640, fmsPlus: 21670, fmsPlusRecessWhite: 29340, fmsPlusRecessBlack: 29340, dsXlLed: 26240, dual: 31570 },
+    { range: "ABOVE 8' TO 10'", white: 23560, black: 25940, fmsPlus: 23970, fmsPlusRecessWhite: 33260, fmsPlusRecessBlack: 33260, dsXlLed: 29590, dual: 36450 },
+    { range: "ABOVE 10' TO 11.5'", white: 25770, black: 28440, fmsPlus: 26390, fmsPlusRecessWhite: 37150, fmsPlusRecessBlack: 37150, dsXlLed: 33150, dual: 41460 },
+    { range: "ABOVE 11.5' TO 13'", white: 27930, black: 30840, fmsPlus: 28790, fmsPlusRecessWhite: 41050, fmsPlusRecessBlack: 41050, dsXlLed: 36700, dual: 46400 },
+    { range: "ABOVE 13' TO 14.5'", white: 30140, black: 33340, fmsPlus: 31210, fmsPlusRecessWhite: 44960, fmsPlusRecessBlack: 44960, dsXlLed: 40270, dual: 51400 },
+    { range: "ABOVE 14.5' TO 16'", white: 32290, black: 35740, fmsPlus: 33600, fmsPlusRecessWhite: 48860, fmsPlusRecessBlack: 48860, dsXlLed: 43810, dual: 56320 },
+    { range: "ABOVE 16' TO 17.5'", white: 34530, black: 38220, fmsPlus: 36000, fmsPlusRecessWhite: 52770, fmsPlusRecessBlack: 52770, dsXlLed: 47380, dual: 61340 },
+    { range: "ABOVE 17.5' TO 19'", white: 35720, black: 39590, fmsPlus: 37400, fmsPlusRecessWhite: 56670, fmsPlusRecessBlack: 56670, dsXlLed: 50720, dual: 66240 },
 ];
 
 const EXCESS_RATES = {
-    white: 1600,
-    black: 1775,
-    fmsPlus: 1790,
-    fmsPlusRecessWhite: 2750,
-    fmsPlusRecessBlack: 2800,
-    dsXlLed: 2100,
-    dual: 2500
+    white: 1690,
+    black: 1875,
+    fmsPlus: 1900,
+    fmsPlusRecessWhite: 3000,
+    fmsPlusRecessBlack: 3000,
+    dsXlLed: 2235,
+    dual: 2655
 };
 
 // --- MOTOR & REMOTE LOGIC ---
 
 const PRICES = {
-    MOTOR_M: 55620,
-    MOTOR_L_WHITE: 41190,
-    MOTOR_L_BLACK: 45730,
-    MOTOR_AC: 31640,
-    MOTOR_ION: 50250,
-    ADAPTER: 7690,
-    RELAY: 3970,
-    SURGE: 2980,
+    MOTOR_M: 58450,
+    MOTOR_L_WHITE: 43280,
+    MOTOR_L_BLACK: 48050,
+    MOTOR_AC: 33250,
+    MOTOR_ION: 52800,
+    ADAPTER: 8090,
+    RELAY: 3900,
+    SURGE: 3110,
 };
 
 const MOTOR_VARIANTS = [
@@ -72,15 +80,16 @@ const MOTOR_VARIANTS = [
 
 const REMOTE_OPTIONS = [
     { id: 'none', label: 'None', price: 0 },
-    { id: 'easy_touch_6', label: 'Easy Touch (6 Ch)', price: 7520 },
-    { id: 'diamond', label: 'Diamond Sense', price: 11870 },
-    { id: 'wall_switch_2', label: 'Wall Switch (2 Ch)', price: 6350 },
-    { id: 'wifi_dongle', label: 'Wifi Dongle', price: 10840 },
-    { id: 'ac_control', label: 'AC Control Set', price: 6990 },
+    { id: 'easy_touch_6', label: 'Easy Touch (6 Ch)', price: 7920 },
+    { id: 'diamond', label: 'Diamond Sense', price: 12470 },
+    { id: 'wall_switch_2', label: 'Wall Switch (2 Ch)', price: 6670 },
+    { id: 'wifi_dongle', label: 'Wifi Dongle', price: 11400 },
+    { id: 'ac_control', label: 'AC Control Set', price: 7340 },
 ];
 
 interface ForestItem {
     selectionItemId: string;
+    isNew?: boolean;
     areaName: string;
     productName: string;
     unit: string;
@@ -128,6 +137,7 @@ export default function ForestCalculation() {
     const [items, setItems] = useState<ForestItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const newRowCounter = useRef(0);
 
     // --- CALCULATION HELPERS ---
 
@@ -287,7 +297,7 @@ export default function ForestCalculation() {
 
                     // --- KG Calculation ---
                     const attributes = i.selectionItem?.product?.attributes || {};
-                    const gsm = findGsmInAttributes(attributes);
+                    const gsm = findGsmInAttributes(attributes) || parseFloat(i.selectionItem?.details?.gsm) || 0;
 
                     const areaName = i.selectionItem?.details?.areaName || i.selectionItem?.areaName || 'Area';
                     const fabricQty = calculateFabricForKg(rawWidth, rawHeight, unit);
@@ -353,7 +363,7 @@ export default function ForestCalculation() {
 
                     // --- KG Calculation ---
                     const attributes = item.product?.attributes || {};
-                    const gsm = findGsmInAttributes(attributes);
+                    const gsm = findGsmInAttributes(attributes) || parseFloat(item.details?.gsm) || 0;
 
                     const areaName = item.details?.areaName || item.areaName || 'Area';
                     const fabricQty = calculateFabricForKg(rawWidth, rawHeight, unit);
@@ -393,6 +403,37 @@ export default function ForestCalculation() {
         }
     };
 
+    // --- ADD / REMOVE ROW (Direct Auto Calculation, no Selection needed) ---
+
+    const addRow = () => {
+        const newItem: ForestItem = {
+            selectionItemId: `new-${++newRowCounter.current}`,
+            isNew: true,
+            areaName: '',
+            productName: 'Manual Area',
+            unit: 'inch',
+            width: 0,
+            height: 0,
+            rft: 0,
+            gsm: 0,
+            fabricQty: 0,
+            motorKg: 0,
+            trackType: 'white', trackPrice: 0,
+            runnerType: 'FES BASE AND FLEX HOOK', runnerPrice: 0,
+            tapeType: 'FLEX TAPE TRANSPARENT', tapePrice: 0,
+            motorType: 'none', motorPrice: 0,
+            remoteType: 'none', remotePrice: 0,
+            trackBasic: 0, trackGst: 0, trackFinal: 0,
+            motorGst: 0, motorFinal: 0,
+            remoteGst: 0, remoteFinal: 0
+        };
+        setItems(prev => [...prev, newItem]);
+    };
+
+    const removeRow = (id: string) => {
+        setItems(prev => prev.filter(item => item.selectionItemId !== id));
+    };
+
     // --- UPDATE HANDLER ---
 
     const handleUpdate = (id: string, field: keyof ForestItem, value: any) => {
@@ -425,6 +466,16 @@ export default function ForestCalculation() {
             if (field === 'rft') {
                 updatedItem.trackPrice = calculateTrackPrice(parseFloat(value) || 0, item.trackType);
                 updatedItem.runnerPrice = calculateRunnerPrice(parseFloat(value) || 0, item.runnerType);
+            }
+
+            // GSM / Area name affect Motor KG (blackout detection uses area name)
+            if (field === 'gsm') {
+                const newGsm = parseFloat(value) || 0;
+                updatedItem.gsm = newGsm;
+                updatedItem.motorKg = calculateMotorKg(item.fabricQty, newGsm, item.areaName);
+            }
+            if (field === 'areaName') {
+                updatedItem.motorKg = calculateMotorKg(item.fabricQty, item.gsm, value);
             }
 
             // 2. Recalculate Prices on Type Change
@@ -477,6 +528,12 @@ export default function ForestCalculation() {
             await api.post(`/calculations/forest/${selectionId}`, {
                 items: items.map(item => ({
                     selectionItemId: item.selectionItemId,
+                    // Flag manually-added rows so the backend creates a SelectionItem for them
+                    isNew: item.isNew || false,
+                    areaName: item.areaName,
+                    unit: item.unit,
+                    gsm: item.gsm,
+                    height: item.height,
                     // Save Dimensions in case they were edited
                     width: item.width,
 
@@ -500,6 +557,10 @@ export default function ForestCalculation() {
                 }))
             });
             toast({ title: "Saved", description: "Forest calculations updated!" });
+            // Reload so manually-added rows pick up their real (DB) ids
+            if (items.some(i => i.isNew)) {
+                await fetchData();
+            }
         } catch (error) {
             toast({ title: "Error", description: "Failed to save.", variant: "destructive" });
         } finally {
@@ -533,6 +594,10 @@ export default function ForestCalculation() {
                             <span className="text-xs text-gray-500 uppercase font-semibold">Invoice Value</span>
                             <div className="text-2xl font-bold text-[#ee4046]">₹{grandTotal.toLocaleString()}</div>
                         </div>
+                        <Button onClick={addRow} variant="outline" className="border-[#ee4046] text-[#ee4046] hover:bg-red-50">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add Area
+                        </Button>
                         <Button onClick={handleSave} disabled={saving} className="bg-[#ee4046] hover:bg-[#d63940]">
                             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                             Save Calculation
@@ -549,7 +614,6 @@ export default function ForestCalculation() {
                                     <tr>
                                         <th className="px-4 py-3 sticky left-0 bg-gray-100 z-10 w-[180px]">Area</th>
                                         <th className="px-2 py-3 text-center bg-blue-50/50">W</th>
-                                        <th className="px-2 py-3 text-center bg-blue-50/50">H</th>
                                         <th className="px-2 py-3 text-center bg-blue-50/50 border-r border-blue-100">RFT</th>
 
                                         {/* TRACK SECTION */}
@@ -578,9 +642,45 @@ export default function ForestCalculation() {
                                         <tr key={item.selectionItemId} className="hover:bg-gray-50 transition-colors">
                                             {/* Area */}
                                             <td className="px-4 py-3 sticky left-0 bg-white z-10 border-r shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                                <div className="font-bold text-gray-900 truncate w-[160px]" title={item.areaName}>{item.areaName}</div>
-                                                <div className="text-xs text-gray-500 truncate w-[160px]" title={item.productName}>{item.productName}</div>
-                                                <div className="text-[10px] text-gray-400 mt-1">GSM: {item.gsm}</div>
+                                                <div className="flex items-start gap-1 w-[160px]">
+                                                    <div className="flex-1 min-w-0">
+                                                        {item.isNew ? (
+                                                            <Select value={item.areaName} onValueChange={(v) => handleUpdate(item.selectionItemId, 'areaName', v)}>
+                                                                <SelectTrigger className="h-7 text-xs font-bold w-full">
+                                                                    <SelectValue placeholder="Select Area" />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {COMMON_AREAS.map(area => <SelectItem key={area} value={area}>{area}</SelectItem>)}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        ) : (
+                                                            <div className="font-bold text-gray-900 truncate" title={item.areaName}>{item.areaName}</div>
+                                                        )}
+                                                        <div className="text-xs text-gray-500 truncate mt-1" title={item.productName}>{item.productName}</div>
+                                                        {item.isNew ? (
+                                                            <div className="flex items-center gap-1 mt-1">
+                                                                <span className="text-[10px] text-gray-400">GSM:</span>
+                                                                <Input
+                                                                    type="number"
+                                                                    className="h-6 text-[10px] w-14 px-1"
+                                                                    value={item.gsm || ''}
+                                                                    onChange={(e) => handleUpdate(item.selectionItemId, 'gsm', e.target.value)}
+                                                                />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-[10px] text-gray-400 mt-1">GSM: {item.gsm}</div>
+                                                        )}
+                                                    </div>
+                                                    {item.isNew && (
+                                                        <button
+                                                            onClick={() => removeRow(item.selectionItemId)}
+                                                            className="text-gray-300 hover:text-red-500 shrink-0 mt-1"
+                                                            title="Remove row"
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
 
                                             {/* Dimensions */}
@@ -591,14 +691,7 @@ export default function ForestCalculation() {
                                                     value={item.width || ''}
                                                     onChange={(e) => handleUpdate(item.selectionItemId, 'width', e.target.value)}
                                                 />
-                                            </td>
-                                            <td className="px-1 py-3 bg-blue-50/10">
-                                                <Input
-                                                    type="number"
-                                                    className="h-8 text-xs text-center w-20 mx-auto" // <--- Changed to w-20
-                                                    value={item.height || ''}
-                                                    onChange={(e) => handleUpdate(item.selectionItemId, 'height', e.target.value)}
-                                                />
+                                                {item.isNew && <div className="text-[9px] text-gray-400 text-center mt-0.5">in inch</div>}
                                             </td>
                                             <td className="px-1 py-3 bg-blue-50/10 border-r border-blue-100 text-center font-bold text-blue-700">
                                                 {item.rft}
@@ -680,7 +773,7 @@ export default function ForestCalculation() {
                                 {/* Footer */}
                                 <tfoot className="bg-gray-800 text-white font-bold text-xs">
                                     <tr>
-                                        <td colSpan={7} className="px-4 py-3 text-right uppercase">Category Totals</td>
+                                        <td colSpan={6} className="px-4 py-3 text-right uppercase">Category Totals</td>
                                         <td className="px-2 py-3 text-right bg-blue-900">₹{items.reduce((s, i) => s + i.trackBasic, 0).toLocaleString()}</td>
                                         <td className="px-2 py-3 text-right bg-blue-900 text-blue-200">₹{items.reduce((s, i) => s + i.trackGst, 0).toLocaleString()}</td>
                                         <td className="px-2 py-3 text-right bg-blue-950 text-[#4ade80]">₹{items.reduce((s, i) => s + i.trackFinal, 0).toLocaleString()}</td>
