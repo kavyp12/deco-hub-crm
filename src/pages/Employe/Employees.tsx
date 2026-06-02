@@ -260,7 +260,7 @@ const Employees: React.FC = () => {
                    {emp.name.charAt(0).toUpperCase()}
                  </div>
                  <div className="min-w-0">
-                    <p className="font-bold text-foreground">{emp.name}</p>
+                    <p className="font-bold text-foreground capitalize">{emp.name}</p>
                     <p className="text-sm text-muted-foreground truncate">{emp.email}</p>
                  </div>
               </div>
@@ -297,7 +297,7 @@ const Employees: React.FC = () => {
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold">{emp.name.charAt(0).toUpperCase()}</div>
-                        <div><p className="font-medium">{emp.name}</p><p className="text-sm text-muted-foreground">{emp.email}</p></div>
+                        <div><p className="font-medium capitalize">{emp.name}</p><p className="text-sm text-muted-foreground">{emp.email}</p></div>
                     </div>
                   </td>
                   <td className="px-6 py-4">

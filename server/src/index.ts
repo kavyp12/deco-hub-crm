@@ -3815,6 +3815,9 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
         sales_person: { select: { id: true, name: true } },
         sales_persons: { select: { id: true, name: true } },
 
+        // Architect/designer reference — shown on the pipeline card
+        architect: { select: { name: true } },
+
         // ✅ RESTORED THESE LINES! This is what makes the UI remember on refresh!
         labels: true,
         checklists: { include: { items: true } },

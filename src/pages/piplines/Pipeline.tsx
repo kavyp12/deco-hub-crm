@@ -42,6 +42,9 @@ interface Task {
   sales_person?: { id: string, name: string };
   sales_persons?: { id: string, name: string }[];
 
+  architect_id_name?: string;          // manually entered architect/designer name
+  architect?: { name: string } | null; // linked architect/designer reference
+
   comments?: Comment[];
   checklists?: Checklist[];
   labels?: Label[];
@@ -262,7 +265,7 @@ const Pipeline: React.FC = () => {
   const [timelineLoading, setTimelineLoading] = useState(false);
 
   // --- FILTER STATE ---
-  const [filterUser, setFilterUser] = useState<string>('all');
+  const [filterUser, setFilterUser] = useState<string[]>([]); // multiple assigned users; empty = all
   const [filterLabel, setFilterLabel] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('');
   const [filterStage, setFilterStage] = useState<string>('all');
@@ -1354,12 +1357,12 @@ const Pipeline: React.FC = () => {
           t.inquiry_number.toLowerCase().includes(search.toLowerCase());
 
         let matchesUser = true;
-        if (filterUser !== 'all') {
+        if (filterUser.length > 0) {
           const members = [
             ...(t.sales_person ? [t.sales_person] : []),
             ...(t.sales_persons || [])
           ];
-          matchesUser = members.some(m => m.id === filterUser);
+          matchesUser = members.some(m => filterUser.includes(m.id));
         }
 
         let matchesLabel = true;
@@ -1443,7 +1446,7 @@ const Pipeline: React.FC = () => {
                 onClick={() => setIsFilterOpen(prev => !prev)}
               >
                 <Filter className="h-4 w-4" /> Filters
-                {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all') && (
+                {(filterUser.length > 0 || filterDate) && (
                   <span className="ml-1 h-2 w-2 rounded-full bg-primary inline-block" />
                 )}
               </Button>
@@ -1462,8 +1465,7 @@ const Pipeline: React.FC = () => {
                       <Button
                         variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground hover:text-foreground px-2"
                         onClick={() => {
-                          setFilterUser('all'); setFilterLabel('all'); setFilterDate('');
-                          setFilterActivity('all'); setFilterChecklist('all');
+                          setFilterUser([]); setFilterDate('');
                         }}
                       >
                         Clear all
@@ -1478,60 +1480,52 @@ const Pipeline: React.FC = () => {
                     {/* Filter Forms */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-foreground flex items-center gap-1.5">👤 Assigned User</label>
-                      <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
-                        <option value="all">All Users</option>
-                        {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">🏷️ Label</label>
-                      <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={filterLabel} onChange={e => setFilterLabel(e.target.value)}>
-                        <option value="all">All Labels</option>
-                        {getUniqueLabels().map((l: any, i) => (
-                          <option key={i} value={l.text}>{l.text}</option>
-                        ))}
-                      </select>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex w-full h-9 items-center justify-between rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                          >
+                            <span className={cn("truncate capitalize", filterUser.length === 0 && "text-muted-foreground")}>
+                              {filterUser.length === 0
+                                ? 'All Users'
+                                : filterUser.length === 1
+                                  ? (allUsers.find(u => u.id === filterUser[0])?.name || '1 selected')
+                                  : `${filterUser.length} users selected`}
+                            </span>
+                            <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
+                          <div className="max-h-56 overflow-y-auto">
+                            {allUsers.map(u => {
+                              const checked = filterUser.includes(u.id);
+                              return (
+                                <label key={u.id} className="flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer hover:bg-muted/60">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border-input accent-primary"
+                                    checked={checked}
+                                    onChange={() => setFilterUser(prev => checked ? prev.filter(id => id !== u.id) : [...prev, u.id])}
+                                  />
+                                  <span className="capitalize">{u.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-foreground flex items-center gap-1.5">📅 Month</label>
                       <Input type="month" className="h-9 text-sm w-full bg-background" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
                     </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">💬 Comments</label>
-                      <div className="flex gap-2 flex-wrap">
-                        {[{ value: 'all', label: 'Any' }, { value: 'has_comments', label: 'Has Comments' }, { value: 'no_comments', label: 'No Comments' }].map(opt => (
-                          <button key={opt.value} onClick={() => setFilterActivity(opt.value)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterActivity === opt.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>{opt.label}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">✅ Checklist</label>
-                      <div className="flex gap-2 flex-wrap">
-                        {[{ value: 'all', label: 'Any' }, { value: 'has_checklist', label: 'Has Checklist' }, { value: 'incomplete', label: 'Has Incomplete' }].map(opt => (
-                          <button key={opt.value} onClick={() => setFilterChecklist(opt.value)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterChecklist === opt.value ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>{opt.label}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-foreground flex items-center gap-1.5">📌 Stage</label>
-                      <div className="flex gap-2 flex-wrap">
-                        {['all', ...columns.map(c => c.id)].map(stageId => (
-                          <button key={stageId} onClick={() => setFilterStage(stageId)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium border transition-all", filterStage === stageId ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border text-muted-foreground hover:border-primary/50 hover:text-foreground")}>
-                            {stageId === 'all' ? 'All Stages' : columns.find(c => c.id === stageId)?.title || stageId}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
                   </div>
 
                   <div className="px-4 py-3 border-t border-border bg-muted/20 rounded-b-xl flex justify-between items-center">
                     <span className="text-xs text-muted-foreground">
-                      {(filterUser !== 'all' || filterLabel !== 'all' || filterDate || filterActivity !== 'all' || filterChecklist !== 'all' || filterStage !== 'all') ? '🔵 Filters active' : 'No filters applied'}
+                      {(filterUser.length > 0 || filterDate) ? '🔵 Filters active' : 'No filters applied'}
                     </span>
                     <Button size="sm" className="h-7 px-4 text-xs" onClick={() => setIsFilterOpen(false)}>Done</Button>
                   </div>
@@ -1900,7 +1894,14 @@ const Pipeline: React.FC = () => {
                                                 )}
                                               </div>
                                             </div>
-                                            <h4 className="font-semibold text-xs mb-2 leading-tight">{task.client_name}</h4>
+                                            <h4 className="font-semibold text-xs mb-2 leading-tight">
+                                              {task.client_name}
+                                              {(task.architect?.name || task.architect_id_name) && (
+                                                <span className="ml-1 text-[9px] font-normal text-muted-foreground">
+                                                  · {task.architect?.name || task.architect_id_name}
+                                                </span>
+                                              )}
+                                            </h4>
                                             {/* --- PASTE THIS DIRECTLY BELOW THE CLIENT NAME IN THE CARD --- */}
                                             {HIDDEN_STAGES.has(column.id) && task.future_reference_updated_at && (
                                               <div className="mb-2 text-[9px] font-medium text-amber-700 bg-amber-50/80 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 w-fit">
