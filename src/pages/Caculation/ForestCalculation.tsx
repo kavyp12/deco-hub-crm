@@ -68,6 +68,7 @@ const PRICES = {
 
 const MOTOR_VARIANTS = [
     { id: 'none', label: 'None', price: 0 },
+    { id: 'g_motor', label: "Automation Motor (G) With Accessories", price: 31580 },
     { id: 'm_std', label: "Shuttle 'M' 70 KG (Std)", price: PRICES.MOTOR_M + PRICES.ADAPTER },
     { id: 'm_auto', label: "Shuttle 'M' 70 KG (Auto)", price: PRICES.MOTOR_M + PRICES.ADAPTER + PRICES.RELAY },
     { id: 'l_white_std', label: "Shuttle 'L' White 40 KG (Std)", price: PRICES.MOTOR_L_WHITE },

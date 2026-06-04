@@ -3452,20 +3452,88 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       if (deepItem.fitting > 0) totalFittingCost += Number(deepItem.fitting) * Number(deepItem.fittingRate);
     }
 
-    // --- HARDWARE FROM FOREST / SOMFY ---
+    // --- HARDWARE FROM FOREST / SOMFY (Excel "Motorised Quotation" format) ---
+    // The calculators store trackFinal/motorFinal/remoteFinal *GST-inclusive*
+    // (Final = base * 1.18, rounded). The company's quotation format quotes these
+    // GST-inclusive figures with NO separate GST column (gstPercent = 0), exactly like
+    // the reference Excel. Layout we reproduce:
+    //   • one Track line per area (qty respects Main + Sheer)
+    //   • motors GROUPED by type across all areas  ("... With Accessories" × N)
+    //   • one "Motorised Track Installation" line  (qty = number of motorised tracks)
+    //   • one "Transportation (Approx)" line
+    const INSTALLATION_RATE = 2000;       // per motorised track (GST-inclusive)
+    const TRANSPORTATION_CHARGE = 2000;   // approx, GST-inclusive
+
+    // Display labels for motor variants (mirror of ForestCalculation MOTOR_VARIANTS ids)
+    const MOTOR_LABELS: Record<string, string> = {
+      g_motor: 'Automation Motors With Accessories (G)',
+      m_std: "Shuttle 'M' 70 KG Motor With Accessories",
+      m_auto: "Shuttle 'M' 70 KG Motor With Accessories",
+      l_white_std: "Shuttle 'L' White Motor With Accessories",
+      l_white_auto: "Shuttle 'L' White Motor With Accessories",
+      l_black_std: "Shuttle 'L' Black Motor With Accessories",
+      l_black_auto: "Shuttle 'L' Black Motor With Accessories",
+      ac_motor: 'Shuttle AC Motor With Accessories',
+      ion_motor: "Shuttle 'ION' Battery Motor With Accessories",
+    };
+
+    let motorisedTrackCount = 0;
+    type Grp = { description: string; quantity: number; unit: string; unitPrice: number; gstPercent: number };
+    const trackGroups = new Map<string, Grp>();
+    const motorGroups = new Map<string, Grp>();
+    const remoteGroups = new Map<string, Grp>();
+
     const addHardware = (items: any[], type: string) => {
       if (!items) return;
       items.forEach((item: any) => {
         const details = item.selectionItem?.details as any;
-        const area = details?.areaName || 'Area';
-        if (Number(item.trackFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Track`, quantity: 1, unit: 'Set', unitPrice: Number(item.trackFinal), gstPercent: 18 });
-        if (Number(item.motorFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Motor`, quantity: 1, unit: 'Nos', unitPrice: Number(item.motorFinal), gstPercent: 18 });
-        if (Number(item.remoteFinal) > 0) specializedHardwareItems.push({ description: `${area} - ${type} Remote`, quantity: 1, unit: 'Nos', unitPrice: Number(item.remoteFinal), gstPercent: 18 });
+        const area = details?.areaName || item.selectionItem?.productName || 'Area';
+        // Respect the quantity entered on the selection item (e.g. Main + Sheer = 2 tracks)
+        const qty = Number(item.selectionItem?.quantity) || 1;
+
+        // 1. TRACK — grouped per area + price (combines Main + Sheer into one line)
+        if (Number(item.trackFinal) > 0) {
+          const key = `${area}_${item.trackFinal}`;
+          const g = trackGroups.get(key) || { description: `${area} Track`, quantity: 0, unit: 'Nos', unitPrice: Number(item.trackFinal), gstPercent: 0 };
+          g.quantity += qty;
+          trackGroups.set(key, g);
+        }
+
+        // 2. MOTOR — grouped across all areas by motor type
+        if (Number(item.motorFinal) > 0) {
+          const mt = item.motorType || 'motor';
+          const label = MOTOR_LABELS[mt] || `${type} Motor With Accessories`;
+          const key = `${mt}_${item.motorFinal}`;
+          const g = motorGroups.get(key) || { description: label, quantity: 0, unit: 'Nos', unitPrice: Number(item.motorFinal), gstPercent: 0 };
+          g.quantity += qty;
+          motorGroups.set(key, g);
+          motorisedTrackCount += qty; // every motorised track gets installation
+        }
+
+        // 3. REMOTE — grouped across all areas by remote type
+        if (Number(item.remoteFinal) > 0) {
+          const rt = item.remoteType || 'remote';
+          const key = `${rt}_${item.remoteFinal}`;
+          const g = remoteGroups.get(key) || { description: `Remote / Control (${rt})`, quantity: 0, unit: 'Nos', unitPrice: Number(item.remoteFinal), gstPercent: 0 };
+          g.quantity += qty;
+          remoteGroups.set(key, g);
+        }
       });
     };
 
     addHardware(selection.forestCalculation?.items || [], 'Forest');
     addHardware(selection.somfyCalculation?.items || [], 'Somfy');
+
+    // Order: all track lines, then grouped motors, then grouped remotes
+    trackGroups.forEach((g) => specializedHardwareItems.push(g));
+    motorGroups.forEach((g) => specializedHardwareItems.push(g));
+    remoteGroups.forEach((g) => specializedHardwareItems.push(g));
+
+    // installation + transportation lines (only when there is motorised hardware)
+    if (motorisedTrackCount > 0) {
+      specializedHardwareItems.push({ description: 'Motorised Track Installation', quantity: motorisedTrackCount, unit: 'Nos', unitPrice: INSTALLATION_RATE, gstPercent: 0 });
+      specializedHardwareItems.push({ description: 'Transportation (Approx)', quantity: 1, unit: 'Nos', unitPrice: TRANSPORTATION_CHARGE, gstPercent: 0 });
+    }
 
     // ---------------------------------------------------------
     // 4. BUILD FINAL ITEMS ARRAY
