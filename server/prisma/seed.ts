@@ -13,23 +13,30 @@ async function main() {
     },
     {
       email: 'Jaydipdevani@sulit.com',
-      password: 'Jaydipsulitmain@123',
+      password: 'Jaydipdevani@123sulit',
       name: 'Jaydip Devani',
-      mobile_number: '1234567890'
-    },
-    {
-      email: 'nehamudaliar@sulit.com',
-      password: 'Nehasulitmain@123',
-      name: 'Neha Mudaliar',
       mobile_number: '1234567890'
     }
   ];
+
+  // Remove Neha Mudaliar from the database (deleteMany so it's a no-op if she's already gone).
+  const removed = await prisma.user.deleteMany({
+    where: { email: 'nehamudaliar@sulit.com' },
+  });
+  if (removed.count > 0) {
+    console.log('🗑️  Removed user: nehamudaliar@sulit.com');
+  }
 
   for (const admin of superAdmins) {
     const hashedPassword = await bcrypt.hash(admin.password, 10);
     await prisma.user.upsert({
       where: { email: admin.email },
-      update: {},
+      update: {
+        name: admin.name,
+        password: hashedPassword,
+        role: 'super_admin',
+        mobile_number: admin.mobile_number
+      },
       create: {
         email: admin.email,
         name: admin.name,

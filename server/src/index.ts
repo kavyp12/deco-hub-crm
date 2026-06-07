@@ -3479,7 +3479,10 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
 
     let motorisedTrackCount = 0;
     type Grp = { description: string; quantity: number; unit: string; unitPrice: number; gstPercent: number };
-    const trackGroups = new Map<string, Grp>();
+    // Track groups also remember the area + which curtain types (Main / Sheer) it contains,
+    // so the line can read "Living Room Main + Sheer Track" / "Bedroom Main Track" etc.
+    type TrackGrp = Grp & { area: string; types: Set<string> };
+    const trackGroups = new Map<string, TrackGrp>();
     const motorGroups = new Map<string, Grp>();
     const remoteGroups = new Map<string, Grp>();
 
@@ -3491,11 +3494,15 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
         // Respect the quantity entered on the selection item (e.g. Main + Sheer = 2 tracks)
         const qty = Number(item.selectionItem?.quantity) || 1;
 
-        // 1. TRACK — grouped per area + price (combines Main + Sheer into one line)
+        // 1. TRACK — grouped per area + price (combines Main + Sheer into one line).
+        //    Description is built later from the curtain types collected for the area.
         if (Number(item.trackFinal) > 0) {
           const key = `${area}_${item.trackFinal}`;
-          const g = trackGroups.get(key) || { description: `${area} Track`, quantity: 0, unit: 'Nos', unitPrice: Number(item.trackFinal), gstPercent: 0 };
+          const g = trackGroups.get(key) || { area, types: new Set<string>(), description: '', quantity: 0, unit: 'Nos', unitPrice: Number(item.trackFinal), gstPercent: 0 };
           g.quantity += qty;
+          const ct = String(item.selectionItem?.type || '').toLowerCase(); // Main / Sheer / Double C-Main / Double C-Sheer
+          if (ct.includes('main')) g.types.add('Main');
+          if (ct.includes('sheer')) g.types.add('Sheer');
           trackGroups.set(key, g);
         }
 
@@ -3525,7 +3532,14 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
     addHardware(selection.somfyCalculation?.items || [], 'Somfy');
 
     // Order: all track lines, then grouped motors, then grouped remotes
-    trackGroups.forEach((g) => specializedHardwareItems.push(g));
+    trackGroups.forEach((g) => {
+      // "Main + Sheer" if the area has both, otherwise "Main" / "Sheer" (blank if no type set)
+      const part = g.types.has('Main') && g.types.has('Sheer') ? 'Main + Sheer'
+        : g.types.has('Main') ? 'Main'
+        : g.types.has('Sheer') ? 'Sheer' : '';
+      const description = `${g.area}${part ? ' ' + part : ''} Track`;
+      specializedHardwareItems.push({ description, quantity: g.quantity, unit: g.unit, unitPrice: g.unitPrice, gstPercent: g.gstPercent });
+    });
     motorGroups.forEach((g) => specializedHardwareItems.push(g));
     remoteGroups.forEach((g) => specializedHardwareItems.push(g));
 
