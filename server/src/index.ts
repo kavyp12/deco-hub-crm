@@ -3932,7 +3932,19 @@ app.get('/api/pipeline', authenticateToken, async (req: any, res: Response) => {
       const lastCommentMs = inq.comments.length ? new Date(inq.comments[0].createdAt).getTime() : 0;
       const lastReportMs = inq.reportEntries?.length ? new Date(inq.reportEntries[0].createdAt).getTime() : 0;
       const createdMs = new Date(inq.created_at).getTime();
-      const lastActivityMs = Math.max(lastCommentMs, lastReportMs) || createdMs;
+
+      // A follow-up due date (set on a comment or on the stage) protects the card: while the
+      // due date is still in the future the lead is "scheduled, not forgotten", so we treat
+      // that date as the latest activity. The red "needs attention" badge therefore only
+      // appears once the follow-up due date is more than 2 days in the past.
+      const commentDueMs = inq.comments.reduce(
+        (max: number, c: any) => (c.dueDate ? Math.max(max, new Date(c.dueDate).getTime()) : max),
+        0
+      );
+      const stageDueMs = inq.stageDueDate ? new Date(inq.stageDueDate).getTime() : 0;
+      const lastFollowupDueMs = Math.max(commentDueMs, stageDueMs);
+
+      const lastActivityMs = Math.max(lastCommentMs, lastReportMs, lastFollowupDueMs) || createdMs;
       const isInactive =
         !inactiveExcludedStages.has(inq.stage) &&
         createdMs < nowMs - twoDaysMs &&
@@ -4961,6 +4973,10 @@ app.get('/api/notifications', authenticateToken, async (req: any, res: Response)
         AND: [
           { reportEntries: { none: { createdAt: { gte: twoDaysAgo } } } },
           { comments: { none: { createdAt: { gte: twoDaysAgo } } } },
+          // A scheduled follow-up protects the lead: skip it while a comment's
+          // dueDate (or the stage dueDate) is still within the 2-day grace window.
+          { comments: { none: { dueDate: { gte: twoDaysAgo } } } },
+          { OR: [{ stageDueDate: null }, { stageDueDate: { lt: twoDaysAgo } }] },
         ],
       };
 
