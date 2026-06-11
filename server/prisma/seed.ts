@@ -19,11 +19,19 @@ async function main() {
     },
     {
       email: 'nehamudaliar@sulit.com',
-      password: 'Nehasulitmain@123',
+      password: 'Nehasulitmain@#123',
       name: 'Neha Mudaliar',
+      mobile_number: '1234567890'
+    },
+    {
+      email: 'binaldevani@sulit.com',
+      password: 'Binalsulitmain@#123',
+      name: 'Binal Devani',
       mobile_number: '1234567890'
     }
   ];
+
+  
 
   for (const admin of superAdmins) {
     const hashedPassword = await bcrypt.hash(admin.password, 10);

@@ -80,7 +80,19 @@ const DailyReportPage: React.FC = () => {
   // NEW: Date Selection & Drag State
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const isToday = selectedDate === todayStr;
+
+  // ── Report fill window ──────────────────────────────────────────────────────
+  // A day's report can be added/edited from 6 AM that day until 12 PM (noon) the
+  // NEXT day. So yesterday's report stays open until noon today.
+  const canEditDate = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const now = new Date();
+    const windowStart = new Date(y, m - 1, d, 6, 0, 0, 0);      // 6 AM of the day
+    const windowEnd = new Date(y, m - 1, d + 1, 12, 0, 0, 0);   // 12 PM (noon) next day
+    return now >= windowStart && now < windowEnd;
+  };
+  const canEdit = canEditDate(selectedDate);
+
   const [resizingBlockId, setResizingBlockId] = useState<string | null>(null);
 
   // Todo filter
@@ -336,13 +348,13 @@ const DailyReportPage: React.FC = () => {
                     <CheckCircle2 className="h-3.5 w-3.5" /> Submitted
                   </span>
                 )}
-                {!submitted && isToday && (
+                {!submitted && canEdit && (
                   <Button onClick={handleSubmit} disabled={submitting} size="sm" className="gap-2">
                     <Send className="h-4 w-4" />
                     {submitting ? 'Submitting…' : 'Submit Work Log'}
                   </Button>
                 )}
-                {submitted && isToday && (
+                {submitted && canEdit && (
                   <Button variant="outline" size="sm" className="gap-1.5" onClick={startEdit}>
                     <Pencil className="h-3.5 w-3.5" /> Edit Report
                   </Button>
@@ -350,10 +362,10 @@ const DailyReportPage: React.FC = () => {
               </div>
             </div>
 
-            {!isToday && (
+            {!canEdit && (
               <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-xl mb-4 text-sm flex items-center gap-2">
                 <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                You are viewing a past date. You can only add or edit logs for today.
+                This date is locked. A day's report can be filled from 6 AM that day until 12 PM (noon) the next day.
               </div>
             )}
 
@@ -383,7 +395,7 @@ const DailyReportPage: React.FC = () => {
                   <div 
                     className="flex-1 relative"
                     onClick={(e) => {
-                      if (submitted || resizingBlockId || !isToday) return; // Prevent click when dragging or not today
+                      if (submitted || resizingBlockId || !canEdit) return; // Prevent click when dragging or window closed
                       const rect = e.currentTarget.getBoundingClientRect();
                       const y = e.clientY - rect.top + e.currentTarget.scrollTop;
                       
@@ -421,7 +433,7 @@ const DailyReportPage: React.FC = () => {
                           key={block.id}
                           onClick={(e) => {
                             e.stopPropagation(); 
-                            if (!submitted && !resizingBlockId && isToday) {
+                            if (!submitted && !resizingBlockId && canEdit) {
                               setEditingBlock(block);
                               setIsModalOpen(true);
                             }
@@ -442,8 +454,8 @@ const DailyReportPage: React.FC = () => {
                           </p>
 
                           {/* ⬇️ DRAG HANDLE FOR RESIZING ⬇️ */}
-                          {!submitted && isToday && (
-                            <div 
+                          {!submitted && canEdit && (
+                            <div
                               className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize flex items-end justify-center pb-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-blue-200/50 to-transparent"
                               onMouseDown={(e) => {
                                 e.stopPropagation(); // Stop click from opening the edit modal

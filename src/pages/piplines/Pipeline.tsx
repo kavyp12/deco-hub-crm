@@ -192,8 +192,11 @@ const Pipeline: React.FC = () => {
   const { toast } = useToast();
   const { profile } = useAuth();
   const currentUser = profile;
-  // Who can use the Future Reference feature: super admins and sales managers.
-  const canUseFutureRef = currentUser?.role === 'super_admin' || currentUser?.role === 'sales_manager';
+  // Who can SEND a card to Future Reference (the 3-dot "For future reference" /
+  // "100% complete" actions): super admins and sales managers.
+  // VIEWING the Future Reference tab + saved notes stays super-admin only (see
+  // isSuperAdmin below) — so sales managers can add references but not browse them.
+  const canAddFutureRef = currentUser?.role === 'super_admin' || currentUser?.role === 'sales_manager';
   // Only the super admin reviews/approves inquiry deletion requests.
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -1554,8 +1557,8 @@ const Pipeline: React.FC = () => {
           </div>
         </div>
 
-        {/* VIEW TABS — main board + the Future Reference board (Super Admin / Sales Manager only) */}
-        {canUseFutureRef && (
+        {/* VIEW TABS — main board + the Future Reference board (Super Admin only) */}
+        {isSuperAdmin && (
           <div className="flex items-center gap-1 mb-4 px-1">
             {[
               { id: 'board', label: 'Pipeline Board' },
@@ -1723,7 +1726,7 @@ const Pipeline: React.FC = () => {
                                               <div className="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
 
                                                 {/* SUPER ADMIN / SALES MANAGER: 3-Dot Menu for Future Reference */}
-                                                {canUseFutureRef && (
+                                                {canAddFutureRef && (
                                                   <DropdownMenu>
                                                     <DropdownMenuTrigger asChild>
                                                       <Button variant="outline" size="icon" className="h-6 w-6 rounded-full shadow-md hover:scale-110 bg-background text-primary" onClick={e => e.stopPropagation()}>
@@ -1737,7 +1740,7 @@ const Pipeline: React.FC = () => {
                                                           setFutureRefTask(task);
                                                           setFutureRefTarget(LOST_STAGE);
                                                           // Only Super Admin can see existing notes. Others get a blank box to write a new note.
-                                                          setFutureRefText(task.future_reference || '');
+                                                          setFutureRefText(isSuperAdmin ? (task.future_reference || '') : '');
                                                         }}
                                                         className="cursor-pointer"
                                                       >
@@ -1749,7 +1752,7 @@ const Pipeline: React.FC = () => {
                                                           e.stopPropagation();
                                                           setFutureRefTask(task);
                                                           setFutureRefTarget(COMPLETED_REF_STAGE);
-                                                          setFutureRefText(task.future_reference || '');
+                                                          setFutureRefText(isSuperAdmin ? (task.future_reference || '') : '');
                                                         }}
                                                         className="cursor-pointer"
                                                       >
@@ -2264,7 +2267,7 @@ const Pipeline: React.FC = () => {
                       <Separator />
 
                       {/* FUTURE REFERENCE DISPLAY (Super Admin Only) */}
-                      {canUseFutureRef && selectedTask.future_reference && (
+                      {isSuperAdmin && selectedTask.future_reference && (
                         <>
                           <div className="space-y-3 group bg-amber-50 p-4 rounded-lg border border-amber-200">
                             <div className="flex justify-between items-center">
