@@ -3206,7 +3206,7 @@ app.get('/api/quotations/preview/:selectionId', authenticateToken, async (req: R
 
 // 2. CREATE / FREEZE QUOTATION
 app.post('/api/quotations', authenticateToken, async (req: any, res: Response) => {
-  const { selectionId } = req.body;
+  const { selectionId, note } = req.body;
 
   try {
     // 1. Generate Quote Number
@@ -3231,6 +3231,7 @@ app.post('/api/quotations', authenticateToken, async (req: any, res: Response) =
         selectionId,
         clientName: data.selection.inquiry?.client_name || 'Valued Client',
         clientAddress: data.selection.inquiry?.address || '',
+        note: typeof note === 'string' && note.trim() ? note : undefined,
         subTotal: data.financials.subTotal,
         discountTotal: 0,  // Add this
         taxableValue: data.financials.subTotal,  // Add this
@@ -3521,7 +3522,7 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
         if (Number(item.remoteFinal) > 0) {
           const rt = item.remoteType || 'remote';
           const key = `${rt}_${item.remoteFinal}`;
-          const g = remoteGroups.get(key) || { description: `Remote / Control (${rt})`, quantity: 0, unit: 'Nos', unitPrice: Number(item.remoteFinal), gstPercent: 0 };
+          const g = remoteGroups.get(key) || { description: `Remote / Control`, quantity: 0, unit: 'Nos', unitPrice: Number(item.remoteFinal), gstPercent: 0 };
           g.quantity += qty;
           remoteGroups.set(key, g);
         }
@@ -3537,7 +3538,9 @@ app.post('/api/quotations/generate', authenticateToken, async (req: any, res: Re
       const part = g.types.has('Main') && g.types.has('Sheer') ? 'Main + Sheer'
         : g.types.has('Main') ? 'Main'
         : g.types.has('Sheer') ? 'Sheer' : '';
-      const description = `${g.area}${part ? ' ' + part : ''} Track`;
+      const base = `${g.area}${part ? ' ' + part : ''}`.trim();
+      // Area names are often entered already ending in "Track" — don't double it up.
+      const description = /track\s*$/i.test(base) ? base : `${base} Track`;
       specializedHardwareItems.push({ description, quantity: g.quantity, unit: g.unit, unitPrice: g.unitPrice, gstPercent: g.gstPercent });
     });
     motorGroups.forEach((g) => specializedHardwareItems.push(g));
@@ -3713,7 +3716,7 @@ app.get('/api/quotations/:id', authenticateToken, async (req: Request, res: Resp
 // 4. UPDATE QUOTATION
 app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response) => {
   const { id } = req.params;
-  const { clientName, clientAddress, transportationCharge, installationCharge, items } = req.body;
+  const { clientName, clientAddress, note, transportationCharge, installationCharge, items } = req.body;
 
   try {
     const processedItems = items.map((item: any) => {
@@ -3737,6 +3740,7 @@ app.put('/api/quotations/:id', authenticateToken, async (req: any, res: Response
         data: {
           clientName,
           clientAddress,
+          note: typeof note === 'string' ? note : undefined,
           transportationCharge: trans,
           installationCharge: install,
           subTotal,
@@ -4410,6 +4414,23 @@ app.put('/api/quotations/:id/stage', authenticateToken, async (req: any, res: Re
     res.json(updated);
   } catch (error) {
     res.status(500).json({ error: 'Failed to move card' });
+  }
+});
+
+// SAVE EDITABLE NOTE ON QUOTATION
+app.put('/api/quotations/:id/note', authenticateToken, async (req: any, res: Response) => {
+  const { id } = req.params;
+  const { note } = req.body;
+
+  try {
+    const updated = await prisma.quotation.update({
+      where: { id },
+      data: { note: typeof note === 'string' ? note : null }
+    });
+    res.json({ note: updated.note });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to save note' });
   }
 });
 

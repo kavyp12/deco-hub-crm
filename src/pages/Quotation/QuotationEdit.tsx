@@ -5,6 +5,7 @@ import { Save, Printer, Plus, Trash2, ArrowLeft, Loader2 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
@@ -34,6 +35,7 @@ export default function QuotationEdit() {
     selectionId: '',
     clientName: '',
     clientAddress: '',
+    note: '',
     transportationCharge: 0,
     installationCharge: 0
   });
@@ -54,10 +56,11 @@ export default function QuotationEdit() {
           selectionId: data.selectionId || '',
           clientName: data.clientName || '',
           clientAddress: data.clientAddress || '',
+          note: data.note || '',
           transportationCharge: 0,
           installationCharge: 0
         });
-        setItems(data.items || []); 
+        setItems(data.items || []);
         setLoading(false);
       } else {
         toast({ title: "Error", description: "No data found. Please generate quote again.", variant: "destructive" });
@@ -77,6 +80,7 @@ export default function QuotationEdit() {
         selectionId: q.selectionId,
         clientName: q.clientName,
         clientAddress: q.clientAddress || '',
+        note: q.note || '',
         transportationCharge: parseFloat(q.transportationCharge) || 0,
         installationCharge: parseFloat(q.installationCharge) || 0
       });
@@ -247,10 +251,19 @@ export default function QuotationEdit() {
               </div>
               <div className="space-y-2">
                  <Label>Address / Project Ref</Label>
-                 <Input 
-                   value={header.clientAddress} 
-                   onChange={e => setHeader({...header, clientAddress: e.target.value})} 
+                 <Input
+                   value={header.clientAddress}
+                   onChange={e => setHeader({...header, clientAddress: e.target.value})}
                    placeholder="Address or Project Name"
+                 />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                 <Label>Note (shown on quotation)</Label>
+                 <Textarea
+                   value={header.note}
+                   onChange={e => setHeader({...header, note: e.target.value})}
+                   placeholder="e.g. Client needs to provide 'H' Frame for Double-Height installation"
+                   rows={2}
                  />
               </div>
            </CardContent>

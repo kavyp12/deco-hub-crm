@@ -816,6 +816,9 @@ model Quotation {
   clientName           String
   clientAddress        String?
 
+  // Editable note shown on the quotation PDF
+  note                 String?
+
   // Financials
   subTotal             Float @default(0)
   discountTotal        Float @default(0)

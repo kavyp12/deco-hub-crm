@@ -25,6 +25,10 @@ const QuotationPreview: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const DEFAULT_NOTE = "Client needs to provide 'H' Frame for Double-Height installation";
+  const [note, setNote] = useState<string>(DEFAULT_NOTE);
+  const [savingNote, setSavingNote] = useState(false);
+
   // --- FETCH DATA ---
   useEffect(() => {
     const fetchData = async () => {
@@ -33,6 +37,7 @@ const QuotationPreview: React.FC = () => {
         // Fetching the Saved Quotation by ID
         const res = await api.get(`/quotations/${id}`);
         setData(res.data);
+        setNote(res.data?.note ?? DEFAULT_NOTE);
       } catch (error: any) {
         console.error(error);
         setError("Failed to load quotation data");
@@ -49,6 +54,21 @@ const QuotationPreview: React.FC = () => {
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleSaveNote = async () => {
+    if (note === (data?.note ?? DEFAULT_NOTE)) return; // nothing changed
+    setSavingNote(true);
+    try {
+      await api.put(`/quotations/${id}/note`, { note });
+      setData((prev: any) => (prev ? { ...prev, note } : prev));
+      toast({ title: "Saved", description: "Note updated" });
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Failed to save note", variant: "destructive" });
+    } finally {
+      setSavingNote(false);
+    }
   };
 
   const handleDownloadPDF = async () => {
@@ -114,6 +134,7 @@ const QuotationPreview: React.FC = () => {
           }
           @page { size: auto; margin: 5mm; }
           .print\\:hidden { display: none !important; }
+          .no-print { display: none !important; }
         }
       `}</style>
 
@@ -278,17 +299,36 @@ const QuotationPreview: React.FC = () => {
               <div className="flex-grow space-y-5 pt-2">
                 <div className="border border-gray-200 bg-gray-50 p-3 rounded text-xs">
                   <span className="font-bold text-red-600 mr-2">NOTE:-</span>
-                  <span className="italic text-gray-700">"Client needs to provide 'H' Frame for Double-Height installation"</span>
+                  <span
+                    contentEditable
+                    suppressContentEditableWarning
+                    onBlur={(e) => { setNote(e.currentTarget.textContent || ''); }}
+                    className="italic text-gray-700 outline-none focus:bg-yellow-50 rounded px-0.5 cursor-text print:cursor-auto"
+                    title="Click to edit this note"
+                  >
+                    {note}
+                  </span>
+                  {savingNote && <span data-html2canvas-ignore="true" className="ml-2 not-italic text-[10px] text-gray-400 no-print">saving…</span>}
+                  <button
+                    type="button"
+                    data-html2canvas-ignore="true"
+                    onClick={handleSaveNote}
+                    className="ml-2 not-italic text-[10px] text-blue-600 underline no-print"
+                  >
+                    Save note
+                  </button>
                 </div>
                 <div className="text-xs">
                   <h3 className="font-bold text-gray-900 mb-2 underline decoration-gray-300 underline-offset-2">Company's Bank Details</h3>
                   <div className="grid grid-cols-[80px_1fr] gap-y-1 text-gray-700">
+                    <span className="font-medium">A/C Name:</span>
+                    <span>Sulit Decor Private Limited</span>
                     <span className="font-medium">Bank Name:</span>
-                    <span>Punjab National Bank</span>
+                    <span>HDFC Bank Ltd. (Jodhpur Cross Roads)</span>
                     <span className="font-medium">A/C No.:</span>
-                    <span>21211132000655</span>
+                    <span>50200116887152</span>
                     <span className="font-medium">IFSC:</span>
-                    <span>PUNB0212110 (Nehrunagar, Ahmedabad)</span>
+                    <span>HDFC0001285</span>
                   </div>
                 </div>
                 <div className="pt-2">
